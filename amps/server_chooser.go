@@ -7,15 +7,13 @@ type chooserEndpoint struct {
 	authenticator Authenticator
 }
 
-// DefaultServerChooser chooses servers in round-robin order.
 type DefaultServerChooser struct {
-	lock       sync.Mutex
-	endpoints  []chooserEndpoint
-	index      int
-	lastError  string
+	lock      sync.Mutex
+	endpoints []chooserEndpoint
+	index     int
+	lastError string
 }
 
-// NewDefaultServerChooser creates a new chooser with optional URIs.
 func NewDefaultServerChooser(uris ...string) *DefaultServerChooser {
 	chooser := &DefaultServerChooser{
 		endpoints: make([]chooserEndpoint, 0, len(uris)),
@@ -26,7 +24,6 @@ func NewDefaultServerChooser(uris ...string) *DefaultServerChooser {
 	return chooser
 }
 
-// CurrentURI returns the currently selected URI.
 func (chooser *DefaultServerChooser) CurrentURI() string {
 	if chooser == nil {
 		return ""
@@ -42,7 +39,6 @@ func (chooser *DefaultServerChooser) CurrentURI() string {
 	return chooser.endpoints[chooser.index].uri
 }
 
-// CurrentAuthenticator returns authenticator associated with CurrentURI.
 func (chooser *DefaultServerChooser) CurrentAuthenticator() Authenticator {
 	if chooser == nil {
 		return nil
@@ -58,7 +54,6 @@ func (chooser *DefaultServerChooser) CurrentAuthenticator() Authenticator {
 	return chooser.endpoints[chooser.index].authenticator
 }
 
-// ReportFailure reports a connection failure and advances chooser.
 func (chooser *DefaultServerChooser) ReportFailure(err error, info ConnectionInfo) {
 	if chooser == nil {
 		return
@@ -74,7 +69,6 @@ func (chooser *DefaultServerChooser) ReportFailure(err error, info ConnectionInf
 	_ = info
 }
 
-// ReportSuccess reports successful connection.
 func (chooser *DefaultServerChooser) ReportSuccess(info ConnectionInfo) {
 	if chooser == nil {
 		return
@@ -85,7 +79,6 @@ func (chooser *DefaultServerChooser) ReportSuccess(info ConnectionInfo) {
 	_ = info
 }
 
-// Error returns latest chooser error.
 func (chooser *DefaultServerChooser) Error() string {
 	if chooser == nil {
 		return ""
@@ -95,7 +88,6 @@ func (chooser *DefaultServerChooser) Error() string {
 	return chooser.lastError
 }
 
-// Add adds URI to chooser and returns chooser for chaining.
 func (chooser *DefaultServerChooser) Add(uri string) ServerChooser {
 	if chooser == nil {
 		return chooser
@@ -109,7 +101,6 @@ func (chooser *DefaultServerChooser) Add(uri string) ServerChooser {
 	return chooser
 }
 
-// AddWithAuthenticator adds URI with explicit authenticator.
 func (chooser *DefaultServerChooser) AddWithAuthenticator(uri string, authenticator Authenticator) *DefaultServerChooser {
 	if chooser == nil || uri == "" {
 		return chooser
@@ -120,7 +111,6 @@ func (chooser *DefaultServerChooser) AddWithAuthenticator(uri string, authentica
 	return chooser
 }
 
-// Remove removes URI from chooser.
 func (chooser *DefaultServerChooser) Remove(uri string) {
 	if chooser == nil || uri == "" {
 		return

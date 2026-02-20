@@ -15,22 +15,20 @@ type publishStoreRecord struct {
 }
 
 type publishStoreFileState struct {
-	LastPersisted uint64             `json:"last_persisted"`
-	NextSequence  uint64             `json:"next_sequence"`
-	ErrorOnGap    bool               `json:"error_on_gap"`
+	LastPersisted uint64               `json:"last_persisted"`
+	NextSequence  uint64               `json:"next_sequence"`
+	ErrorOnGap    bool                 `json:"error_on_gap"`
 	Records       []publishStoreRecord `json:"records"`
 }
 
-// MemoryPublishStore stores unpersisted publish commands in memory.
 type MemoryPublishStore struct {
-	lock             sync.Mutex
-	entries          map[uint64]*Command
-	lastPersisted    uint64
-	nextSequence     uint64
+	lock              sync.Mutex
+	entries           map[uint64]*Command
+	lastPersisted     uint64
+	nextSequence      uint64
 	errorOnPublishGap bool
 }
 
-// NewMemoryPublishStore creates an in-memory publish store.
 func NewMemoryPublishStore() *MemoryPublishStore {
 	return &MemoryPublishStore{
 		entries:       make(map[uint64]*Command),
@@ -39,7 +37,6 @@ func NewMemoryPublishStore() *MemoryPublishStore {
 	}
 }
 
-// Store stores a publish command and returns its sequence.
 func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 	if store == nil {
 		return 0, errors.New("nil publish store")
@@ -68,7 +65,6 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 	return sequence, nil
 }
 
-// DiscardUpTo discards all entries persisted through the given sequence.
 func (store *MemoryPublishStore) DiscardUpTo(sequence uint64) error {
 	if store == nil {
 		return errors.New("nil publish store")
@@ -93,7 +89,6 @@ func (store *MemoryPublishStore) DiscardUpTo(sequence uint64) error {
 	return nil
 }
 
-// Replay replays all unpersisted commands in sequence order.
 func (store *MemoryPublishStore) Replay(replayer func(*Command) error) error {
 	if store == nil {
 		return errors.New("nil publish store")
@@ -124,7 +119,6 @@ func (store *MemoryPublishStore) Replay(replayer func(*Command) error) error {
 	return nil
 }
 
-// ReplaySingle replays a single stored sequence.
 func (store *MemoryPublishStore) ReplaySingle(replayer func(*Command) error, sequence uint64) (bool, error) {
 	if store == nil {
 		return false, errors.New("nil publish store")
@@ -146,7 +140,6 @@ func (store *MemoryPublishStore) ReplaySingle(replayer func(*Command) error, seq
 	return true, replayer(command)
 }
 
-// UnpersistedCount returns unpersisted command count.
 func (store *MemoryPublishStore) UnpersistedCount() int {
 	if store == nil {
 		return 0
@@ -156,7 +149,6 @@ func (store *MemoryPublishStore) UnpersistedCount() int {
 	return len(store.entries)
 }
 
-// Flush waits until all entries are discarded or timeout occurs.
 func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 	if store == nil {
 		return errors.New("nil publish store")
@@ -183,7 +175,6 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 	}
 }
 
-// GetLowestUnpersisted returns the lowest unpersisted sequence.
 func (store *MemoryPublishStore) GetLowestUnpersisted() uint64 {
 	if store == nil {
 		return 0
@@ -202,7 +193,6 @@ func (store *MemoryPublishStore) GetLowestUnpersisted() uint64 {
 	return lowest
 }
 
-// GetLastPersisted returns the latest persisted sequence.
 func (store *MemoryPublishStore) GetLastPersisted() uint64 {
 	if store == nil {
 		return 0
@@ -212,7 +202,6 @@ func (store *MemoryPublishStore) GetLastPersisted() uint64 {
 	return store.lastPersisted
 }
 
-// SetErrorOnPublishGap enables/disables publish gap errors.
 func (store *MemoryPublishStore) SetErrorOnPublishGap(enabled bool) {
 	if store == nil {
 		return
@@ -222,7 +211,6 @@ func (store *MemoryPublishStore) SetErrorOnPublishGap(enabled bool) {
 	store.lock.Unlock()
 }
 
-// ErrorOnPublishGap reports publish gap behavior.
 func (store *MemoryPublishStore) ErrorOnPublishGap() bool {
 	if store == nil {
 		return false
@@ -232,13 +220,11 @@ func (store *MemoryPublishStore) ErrorOnPublishGap() bool {
 	return store.errorOnPublishGap
 }
 
-// FilePublishStore stores publish records in a Go-native JSON file format.
 type FilePublishStore struct {
 	*MemoryPublishStore
 	path string
 }
 
-// NewFilePublishStore creates a file-backed publish store and recovers existing records.
 func NewFilePublishStore(path string) *FilePublishStore {
 	fileStore := &FilePublishStore{
 		MemoryPublishStore: NewMemoryPublishStore(),

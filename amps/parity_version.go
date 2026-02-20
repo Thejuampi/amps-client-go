@@ -2,7 +2,6 @@ package amps
 
 import "unicode"
 
-// C++ parity bookmark aliases.
 func BOOKMARK_EPOCH() string { return BookmarksEPOCH }
 
 func EPOCH() string { return BookmarksEPOCH }
@@ -19,8 +18,6 @@ func BOOKMARK_NOW() string { return BookmarksNOW }
 
 func NOW() string { return BookmarksNOW }
 
-// ConvertVersionToNumber converts dotted AMPS version strings to a numeric representation.
-// Example: 3.8.1.4 -> 3080104.
 func ConvertVersionToNumber(version string) uint64 {
 	if len(version) == 0 {
 		return 0

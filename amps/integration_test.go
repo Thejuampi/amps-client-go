@@ -81,8 +81,7 @@ func integrationErrorUnsupported(err error) bool {
 	}
 	lower := strings.ToLower(err.Error())
 	return strings.Contains(lower, "invalidtopicerror") ||
-		strings.Contains(lower, "notentitlederror") ||
-		strings.Contains(lower, "unknownerror")
+		strings.Contains(lower, "notentitlederror")
 }
 
 func integrationRequireFeatureOrSkip(t *testing.T, feature string, err error) {
@@ -105,6 +104,44 @@ func integrationRequireAckSuccessOrSkip(t *testing.T, feature string, result int
 		t.Skipf("integration test skipped: %s not supported (%s)", feature, result.reason)
 	}
 	t.Fatalf("%s failed: status=%q reason=%q", feature, result.status, result.reason)
+}
+
+func integrationProcessedAckHandler(out chan<- integrationAck) func(*Message) error {
+	return func(message *Message) error {
+		commandType, _ := message.Command()
+		if commandType != CommandAck {
+			return nil
+		}
+		ackType, hasAckType := message.AckType()
+		if !hasAckType || ackType != AckTypeProcessed {
+			return nil
+		}
+		status, _ := message.Status()
+		reason, _ := message.Reason()
+		select {
+		case out <- integrationAck{status: status, reason: reason, ackType: ackType}:
+		default:
+		}
+		return nil
+	}
+}
+
+func integrationExecuteAndRequireProcessedAck(t *testing.T, client *Client, feature string, command *Command, skipOnTimeout bool) {
+	t.Helper()
+
+	processedAcks := make(chan integrationAck, 4)
+	_, err := client.ExecuteAsync(command.AddAckType(AckTypeProcessed), integrationProcessedAckHandler(processedAcks))
+	integrationRequireFeatureOrSkip(t, feature, err)
+
+	select {
+	case result := <-processedAcks:
+		integrationRequireAckSuccessOrSkip(t, feature, result)
+	case <-time.After(integrationWaitTimeout):
+		if skipOnTimeout {
+			t.Skipf("integration test skipped: %s ack was not returned by endpoint", feature)
+		}
+		t.Fatalf("timed out waiting for %s ack", feature)
+	}
 }
 
 func integrationLogon(t *testing.T, client *Client) {
@@ -519,65 +556,20 @@ func TestIntegrationStartStopTimerCommandPath(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	timerID := integrationUniqueTopic("amps.integration.timer")
-	startAcks := make(chan integrationAck, 4)
-	_, err := client.ExecuteAsync(
-		NewCommand("start_timer").SetTopic(timerID).SetOptions("interval=500ms").AddAckType(AckTypeProcessed),
-		func(message *Message) error {
-			commandType, _ := message.Command()
-			if commandType != CommandAck {
-				return nil
-			}
-			ackType, hasAckType := message.AckType()
-			if hasAckType && ackType == AckTypeProcessed {
-				status, _ := message.Status()
-				reason, _ := message.Reason()
-				select {
-				case startAcks <- integrationAck{status: status, reason: reason, ackType: ackType}:
-				default:
-				}
-			}
-			return nil
-		},
+	integrationExecuteAndRequireProcessedAck(
+		t,
+		client,
+		"start_timer",
+		NewCommand("start_timer").SetTopic(timerID).SetOptions("interval=500ms"),
+		true,
 	)
-	integrationRequireFeatureOrSkip(t, "start_timer", err)
-
-	var startResult integrationAck
-	select {
-	case startResult = <-startAcks:
-		integrationRequireAckSuccessOrSkip(t, "start_timer", startResult)
-	case <-time.After(integrationWaitTimeout):
-		t.Skip("integration test skipped: start_timer ack was not returned by endpoint")
-	}
-
-	stopAcks := make(chan integrationAck, 4)
-	_, err = client.ExecuteAsync(
-		NewCommand("stop_timer").SetTopic(timerID).AddAckType(AckTypeProcessed),
-		func(message *Message) error {
-			commandType, _ := message.Command()
-			if commandType != CommandAck {
-				return nil
-			}
-			ackType, hasAckType := message.AckType()
-			if hasAckType && ackType == AckTypeProcessed {
-				status, _ := message.Status()
-				reason, _ := message.Reason()
-				select {
-				case stopAcks <- integrationAck{status: status, reason: reason, ackType: ackType}:
-				default:
-				}
-			}
-			return nil
-		},
+	integrationExecuteAndRequireProcessedAck(
+		t,
+		client,
+		"stop_timer",
+		NewCommand("stop_timer").SetTopic(timerID),
+		true,
 	)
-	integrationRequireFeatureOrSkip(t, "stop_timer", err)
-
-	var stopResult integrationAck
-	select {
-	case stopResult = <-stopAcks:
-		integrationRequireAckSuccessOrSkip(t, "stop_timer", stopResult)
-	case <-time.After(integrationWaitTimeout):
-		t.Skip("integration test skipped: stop_timer ack was not returned by endpoint")
-	}
 }
 
 func TestIntegrationReconnectDuringInFlightOperation(t *testing.T) {
@@ -585,13 +577,34 @@ func TestIntegrationReconnectDuringInFlightOperation(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	topic := integrationUniqueTopic("amps.integration.inflight")
+	subscribeSent := make(chan struct{}, 1)
+	client.SetTransportFilter(func(direction TransportFilterDirection, payload []byte) []byte {
+		if direction == TransportFilterOutbound && bytes.Contains(payload, []byte(`"c":"subscribe"`)) {
+			select {
+			case subscribeSent <- struct{}{}:
+			default:
+			}
+		}
+		return payload
+	})
+
 	subscribeResult := make(chan error, 1)
 	go func() {
 		_, err := client.SubscribeAsync(func(message *Message) error { return nil }, topic)
 		subscribeResult <- err
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-subscribeSent:
+	case err := <-subscribeResult:
+		if err != nil && !strings.Contains(err.Error(), "DisconnectedError") {
+			t.Fatalf("unexpected early subscribe error: %v", err)
+		}
+		t.Skip("integration test skipped: subscribe completed before in-flight disconnect could be induced")
+	case <-time.After(6 * time.Second):
+		t.Fatalf("timed out waiting for subscribe send event")
+	}
+
 	_ = client.Disconnect()
 
 	select {

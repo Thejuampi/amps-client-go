@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// HAClient provides high-availability reconnect and resubscribe behavior.
 type HAClient struct {
 	lock                   sync.Mutex
 	client                 *Client
@@ -19,7 +18,6 @@ type HAClient struct {
 	stopped                bool
 }
 
-// NewHAClient creates an HA client with reconnect behavior.
 func NewHAClient(clientName ...string) *HAClient {
 	client := NewClient(clientName...)
 	client.SetRetryOnDisconnect(true)
@@ -109,7 +107,6 @@ func (ha *HAClient) reconnectWait(uri string) (time.Duration, error) {
 	return delay, nil
 }
 
-// ConnectAndLogon connects to selected servers and logs on, retrying according to strategy.
 func (ha *HAClient) ConnectAndLogon() error {
 	if ha == nil || ha.client == nil {
 		return NewError(CommandError, "nil HAClient")
@@ -189,7 +186,6 @@ func (ha *HAClient) ConnectAndLogon() error {
 	}
 }
 
-// Disconnected reports whether the wrapped client is disconnected.
 func (ha *HAClient) Disconnected() bool {
 	if ha == nil || ha.client == nil {
 		return true
@@ -197,7 +193,6 @@ func (ha *HAClient) Disconnected() bool {
 	return !ha.client.connected
 }
 
-// SetTimeout sets maximum time for ConnectAndLogon retry loops (0 means no timeout).
 func (ha *HAClient) SetTimeout(timeout time.Duration) *HAClient {
 	if ha == nil {
 		return ha
@@ -211,7 +206,6 @@ func (ha *HAClient) SetTimeout(timeout time.Duration) *HAClient {
 	return ha
 }
 
-// Timeout returns HA connect timeout.
 func (ha *HAClient) Timeout() time.Duration {
 	if ha == nil {
 		return 0
@@ -221,7 +215,6 @@ func (ha *HAClient) Timeout() time.Duration {
 	return ha.timeout
 }
 
-// SetReconnectDelay sets fixed reconnect delay and updates strategy to fixed delay.
 func (ha *HAClient) SetReconnectDelay(delay time.Duration) *HAClient {
 	if ha == nil {
 		return ha
@@ -236,7 +229,6 @@ func (ha *HAClient) SetReconnectDelay(delay time.Duration) *HAClient {
 	return ha
 }
 
-// ReconnectDelay returns configured reconnect delay.
 func (ha *HAClient) ReconnectDelay() time.Duration {
 	if ha == nil {
 		return 0
@@ -246,7 +238,6 @@ func (ha *HAClient) ReconnectDelay() time.Duration {
 	return ha.reconnectDelay
 }
 
-// SetReconnectDelayStrategy sets custom reconnect delay strategy.
 func (ha *HAClient) SetReconnectDelayStrategy(strategy ReconnectDelayStrategy) *HAClient {
 	if ha == nil {
 		return ha
@@ -257,7 +248,6 @@ func (ha *HAClient) SetReconnectDelayStrategy(strategy ReconnectDelayStrategy) *
 	return ha
 }
 
-// ReconnectDelayStrategy returns current reconnect delay strategy.
 func (ha *HAClient) ReconnectDelayStrategy() ReconnectDelayStrategy {
 	if ha == nil {
 		return nil
@@ -267,7 +257,6 @@ func (ha *HAClient) ReconnectDelayStrategy() ReconnectDelayStrategy {
 	return ha.reconnectDelayStrategy
 }
 
-// SetLogonOptions sets options used for logon in reconnect attempts.
 func (ha *HAClient) SetLogonOptions(options LogonParams) *HAClient {
 	if ha == nil {
 		return ha
@@ -279,7 +268,6 @@ func (ha *HAClient) SetLogonOptions(options LogonParams) *HAClient {
 	return ha
 }
 
-// LogonOptions returns current HA logon options.
 func (ha *HAClient) LogonOptions() LogonParams {
 	if ha == nil {
 		return LogonParams{}
@@ -289,7 +277,6 @@ func (ha *HAClient) LogonOptions() LogonParams {
 	return ha.logonOptions
 }
 
-// SetServerChooser sets server chooser used for reconnect behavior.
 func (ha *HAClient) SetServerChooser(chooser ServerChooser) *HAClient {
 	if ha == nil {
 		return ha
@@ -303,7 +290,6 @@ func (ha *HAClient) SetServerChooser(chooser ServerChooser) *HAClient {
 	return ha
 }
 
-// ServerChooser returns configured server chooser.
 func (ha *HAClient) ServerChooser() ServerChooser {
 	if ha == nil {
 		return nil
@@ -313,7 +299,6 @@ func (ha *HAClient) ServerChooser() ServerChooser {
 	return ha.serverChooser
 }
 
-// GetConnectionInfo returns wrapped client connection metadata.
 func (ha *HAClient) GetConnectionInfo() ConnectionInfo {
 	if ha == nil || ha.client == nil {
 		return ConnectionInfo{}
@@ -321,12 +306,10 @@ func (ha *HAClient) GetConnectionInfo() ConnectionInfo {
 	return ha.client.GetConnectionInfo()
 }
 
-// GatherConnectionInfo is an alias for GetConnectionInfo.
 func (ha *HAClient) GatherConnectionInfo() ConnectionInfo {
 	return ha.GetConnectionInfo()
 }
 
-// Client returns wrapped Client.
 func (ha *HAClient) Client() *Client {
 	if ha == nil {
 		return nil
@@ -334,7 +317,6 @@ func (ha *HAClient) Client() *Client {
 	return ha.client
 }
 
-// Disconnect stops reconnect loop and disconnects wrapped client.
 func (ha *HAClient) Disconnect() error {
 	if ha == nil || ha.client == nil {
 		return nil
@@ -345,13 +327,11 @@ func (ha *HAClient) Disconnect() error {
 	return ha.client.Disconnect()
 }
 
-// SetDisconnectHandler is intentionally not supported for HAClient parity.
 func (ha *HAClient) SetDisconnectHandler(handler func(*HAClient, error)) error {
 	_ = handler
 	return NewError(CommandError, "HAClient manages disconnect handling internally")
 }
 
-// CreateMemoryBackedHAClient creates HAClient with memory publish/bookmark stores.
 func CreateMemoryBackedHAClient(clientName ...string) *HAClient {
 	ha := NewHAClient(clientName...)
 	if ha != nil && ha.client != nil {
@@ -361,12 +341,6 @@ func CreateMemoryBackedHAClient(clientName ...string) *HAClient {
 	return ha
 }
 
-// CreateFileBackedHAClient creates HAClient with file-backed publish/bookmark stores.
-//
-// Argument order:
-// 1) publish store path (optional, default: "amps_publish_store.json")
-// 2) bookmark store path (optional, default: "amps_bookmark_store.json")
-// 3) client name (optional)
 func CreateFileBackedHAClient(args ...string) *HAClient {
 	publishStorePath := "amps_publish_store.json"
 	bookmarkStorePath := "amps_bookmark_store.json"

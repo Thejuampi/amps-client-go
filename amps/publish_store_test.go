@@ -61,7 +61,6 @@ func TestFilePublishStoreRoundTrip(t *testing.T) {
 		t.Fatalf("expected non-zero sequence")
 	}
 
-	// Re-open file-backed store and verify state recovery.
 	reloaded := NewFilePublishStore(path)
 	if reloaded.UnpersistedCount() != 1 {
 		t.Fatalf("expected one recovered entry, got %d", reloaded.UnpersistedCount())

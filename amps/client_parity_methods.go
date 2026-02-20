@@ -476,27 +476,22 @@ func (client *Client) postLogonRecovery() {
 	}
 }
 
-// SetName sets the client name (C++ parity alias).
 func (client *Client) SetName(name string) *Client {
 	return client.SetClientName(name)
 }
 
-// Name returns the client name (C++ parity alias).
 func (client *Client) Name() string {
 	return client.ClientName()
 }
 
-// SetLogonCorrelationData sets uninterpreted logon correlation data (C++ parity alias).
 func (client *Client) SetLogonCorrelationData(correlationData string) *Client {
 	return client.SetLogonCorrelationID(correlationData)
 }
 
-// LogonCorrelationData returns the logon correlation data (C++ parity alias).
 func (client *Client) LogonCorrelationData() string {
 	return client.LogonCorrelationID()
 }
 
-// URI returns the configured URI for this client.
 func (client *Client) URI() string {
 	state := ensureClientState(client)
 	if state == nil {
@@ -514,17 +509,14 @@ func (client *Client) URI() string {
 	return ""
 }
 
-// GetConnectionInfo returns best-effort connection metadata.
 func (client *Client) GetConnectionInfo() ConnectionInfo {
 	return client.buildConnectionInfo()
 }
 
-// GatherConnectionInfo is an alias for GetConnectionInfo.
 func (client *Client) GatherConnectionInfo() ConnectionInfo {
 	return client.GetConnectionInfo()
 }
 
-// BookmarkSubscribe issues a bookmark subscribe command synchronously.
 func (client *Client) BookmarkSubscribe(topic string, bookmark string, filter ...string) (*MessageStream, error) {
 	command := NewCommand("subscribe").SetTopic(topic).SetBookmark(bookmark).AddAckType(AckTypeCompleted)
 	if len(filter) > 0 {
@@ -541,7 +533,6 @@ func (client *Client) BookmarkSubscribe(topic string, bookmark string, filter ..
 	return client.Execute(command)
 }
 
-// BookmarkSubscribeAsync issues a bookmark subscribe command asynchronously.
 func (client *Client) BookmarkSubscribeAsync(messageHandler func(*Message) error, topic string, bookmark string, filter ...string) (string, error) {
 	command := NewCommand("subscribe").SetTopic(topic).SetBookmark(bookmark).AddAckType(AckTypeCompleted)
 	if len(filter) > 0 {
@@ -558,7 +549,6 @@ func (client *Client) BookmarkSubscribeAsync(messageHandler func(*Message) error
 	return client.ExecuteAsync(command, messageHandler)
 }
 
-// Ack sends an explicit ack command for a topic/bookmark pair.
 func (client *Client) Ack(topic string, bookmark string, subID ...string) error {
 	if topic == "" {
 		return NewError(CommandError, "topic is required for ack")
@@ -580,7 +570,6 @@ func (client *Client) Ack(topic string, bookmark string, subID ...string) error 
 	return client.send(command)
 }
 
-// AckMessage sends ack for bookmark-enabled messages.
 func (client *Client) AckMessage(message *Message) error {
 	if message == nil {
 		return NewError(CommandError, "nil message")
@@ -594,7 +583,6 @@ func (client *Client) AckMessage(message *Message) error {
 	return client.Ack(topic, bookmark, subID)
 }
 
-// SetAutoAck enables/disables automatic queue ack behavior.
 func (client *Client) SetAutoAck(enabled bool) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -606,7 +594,6 @@ func (client *Client) SetAutoAck(enabled bool) *Client {
 	return client
 }
 
-// AutoAck reports auto-ack behavior.
 func (client *Client) AutoAck() bool {
 	state := ensureClientState(client)
 	if state == nil {
@@ -617,7 +604,6 @@ func (client *Client) AutoAck() bool {
 	return state.autoAck
 }
 
-// SetAckBatchSize sets the auto-ack batch size.
 func (client *Client) SetAckBatchSize(batchSize uint) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -632,7 +618,6 @@ func (client *Client) SetAckBatchSize(batchSize uint) *Client {
 	return client
 }
 
-// AckBatchSize returns auto-ack batch size.
 func (client *Client) AckBatchSize() uint {
 	state := ensureClientState(client)
 	if state == nil {
@@ -643,7 +628,6 @@ func (client *Client) AckBatchSize() uint {
 	return state.ackBatchSize
 }
 
-// SetAckTimeout sets the auto-ack flush timeout.
 func (client *Client) SetAckTimeout(timeout time.Duration) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -655,7 +639,6 @@ func (client *Client) SetAckTimeout(timeout time.Duration) *Client {
 	return client
 }
 
-// AckTimeout returns the auto-ack flush timeout.
 func (client *Client) AckTimeout() time.Duration {
 	state := ensureClientState(client)
 	if state == nil {
@@ -666,7 +649,6 @@ func (client *Client) AckTimeout() time.Duration {
 	return state.ackTimeout
 }
 
-// SetRetryOnDisconnect controls whether eligible commands are queued and retried.
 func (client *Client) SetRetryOnDisconnect(enabled bool) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -678,7 +660,6 @@ func (client *Client) SetRetryOnDisconnect(enabled bool) *Client {
 	return client
 }
 
-// RetryOnDisconnect reports retry-on-disconnect behavior.
 func (client *Client) RetryOnDisconnect() bool {
 	state := ensureClientState(client)
 	if state == nil {
@@ -689,7 +670,6 @@ func (client *Client) RetryOnDisconnect() bool {
 	return state.retryOnDisconnect
 }
 
-// SetDefaultMaxDepth sets default max queue depth for new MessageStreams.
 func (client *Client) SetDefaultMaxDepth(depth uint) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -701,7 +681,6 @@ func (client *Client) SetDefaultMaxDepth(depth uint) *Client {
 	return client
 }
 
-// DefaultMaxDepth returns default max depth for new MessageStreams.
 func (client *Client) DefaultMaxDepth() uint {
 	state := ensureClientState(client)
 	if state == nil {
@@ -712,7 +691,6 @@ func (client *Client) DefaultMaxDepth() uint {
 	return state.defaultMaxDepth
 }
 
-// PublishFlush waits for outstanding publish persistence and/or issues a flush command.
 func (client *Client) PublishFlush(timeout ...time.Duration) error {
 	state := ensureClientState(client)
 	if state == nil {
@@ -736,7 +714,6 @@ func (client *Client) PublishFlush(timeout ...time.Duration) error {
 	return err
 }
 
-// StartTimer sends a start_timer command.
 func (client *Client) StartTimer(timerID string, options ...string) (string, error) {
 	command := NewCommand("start_timer")
 	if timerID != "" {
@@ -748,7 +725,6 @@ func (client *Client) StartTimer(timerID string, options ...string) (string, err
 	return client.ExecuteAsync(command, nil)
 }
 
-// StopTimer sends a stop_timer command.
 func (client *Client) StopTimer(timerID string, options ...string) (string, error) {
 	command := NewCommand("stop_timer")
 	if timerID != "" {
@@ -760,7 +736,6 @@ func (client *Client) StopTimer(timerID string, options ...string) (string, erro
 	return client.ExecuteAsync(command, nil)
 }
 
-// ExecuteAsyncNoResubscribe executes a command and removes it from resubscribe tracking.
 func (client *Client) ExecuteAsyncNoResubscribe(command *Command, messageHandler func(*Message) error) (string, error) {
 	routeID, err := client.ExecuteAsync(command, messageHandler)
 	if err != nil || routeID == "" {
@@ -781,7 +756,6 @@ func (client *Client) ExecuteAsyncNoResubscribe(command *Command, messageHandler
 	return routeID, nil
 }
 
-// SetBookmarkStore sets bookmark-store implementation.
 func (client *Client) SetBookmarkStore(store BookmarkStore) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -793,7 +767,6 @@ func (client *Client) SetBookmarkStore(store BookmarkStore) *Client {
 	return client
 }
 
-// BookmarkStore returns current bookmark-store implementation.
 func (client *Client) BookmarkStore() BookmarkStore {
 	state := ensureClientState(client)
 	if state == nil {
@@ -804,7 +777,6 @@ func (client *Client) BookmarkStore() BookmarkStore {
 	return state.bookmarkStore
 }
 
-// SetPublishStore sets publish-store implementation.
 func (client *Client) SetPublishStore(store PublishStore) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -816,7 +788,6 @@ func (client *Client) SetPublishStore(store PublishStore) *Client {
 	return client
 }
 
-// PublishStore returns current publish-store implementation.
 func (client *Client) PublishStore() PublishStore {
 	state := ensureClientState(client)
 	if state == nil {
@@ -827,7 +798,6 @@ func (client *Client) PublishStore() PublishStore {
 	return state.publishStore
 }
 
-// SetSubscriptionManager sets subscription manager implementation.
 func (client *Client) SetSubscriptionManager(manager SubscriptionManager) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -842,7 +812,6 @@ func (client *Client) SetSubscriptionManager(manager SubscriptionManager) *Clien
 	return client
 }
 
-// SubscriptionManager returns current subscription manager.
 func (client *Client) SubscriptionManager() SubscriptionManager {
 	state := ensureClientState(client)
 	if state == nil {
@@ -853,7 +822,6 @@ func (client *Client) SubscriptionManager() SubscriptionManager {
 	return state.subscriptionManager
 }
 
-// SetDuplicateMessageHandler sets duplicate-message handler.
 func (client *Client) SetDuplicateMessageHandler(handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -865,7 +833,6 @@ func (client *Client) SetDuplicateMessageHandler(handler func(*Message) error) *
 	return client
 }
 
-// DuplicateMessageHandler returns duplicate-message handler.
 func (client *Client) DuplicateMessageHandler() func(*Message) error {
 	state := ensureClientState(client)
 	if state == nil {
@@ -876,7 +843,6 @@ func (client *Client) DuplicateMessageHandler() func(*Message) error {
 	return state.duplicateHandler
 }
 
-// SetFailedWriteHandler sets failed-write handler.
 func (client *Client) SetFailedWriteHandler(handler FailedWriteHandler) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -888,7 +854,6 @@ func (client *Client) SetFailedWriteHandler(handler FailedWriteHandler) *Client 
 	return client
 }
 
-// FailedWriteHandler returns failed-write handler.
 func (client *Client) FailedWriteHandler() FailedWriteHandler {
 	state := ensureClientState(client)
 	if state == nil {
@@ -899,7 +864,6 @@ func (client *Client) FailedWriteHandler() FailedWriteHandler {
 	return state.failedWriteHandler
 }
 
-// SetExceptionListener sets exception listener.
 func (client *Client) SetExceptionListener(listener ExceptionListener) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -911,7 +875,6 @@ func (client *Client) SetExceptionListener(listener ExceptionListener) *Client {
 	return client
 }
 
-// ExceptionListener returns exception listener.
 func (client *Client) ExceptionListener() ExceptionListener {
 	state := ensureClientState(client)
 	if state == nil {
@@ -922,7 +885,6 @@ func (client *Client) ExceptionListener() ExceptionListener {
 	return state.exceptionListener
 }
 
-// SetUnhandledMessageHandler sets unhandled-message handler.
 func (client *Client) SetUnhandledMessageHandler(handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -934,7 +896,6 @@ func (client *Client) SetUnhandledMessageHandler(handler func(*Message) error) *
 	return client
 }
 
-// SetLastChanceMessageHandler sets last-chance handler.
 func (client *Client) SetLastChanceMessageHandler(handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -946,7 +907,6 @@ func (client *Client) SetLastChanceMessageHandler(handler func(*Message) error) 
 	return client
 }
 
-// SetGlobalCommandTypeMessageHandler sets per-command-type global handler.
 func (client *Client) SetGlobalCommandTypeMessageHandler(commandType int, handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -962,7 +922,6 @@ func (client *Client) SetGlobalCommandTypeMessageHandler(commandType int, handle
 	return client
 }
 
-// AddConnectionStateListener registers connection-state listener.
 func (client *Client) AddConnectionStateListener(listener ConnectionStateListener) *Client {
 	if listener == nil {
 		return client
@@ -977,7 +936,6 @@ func (client *Client) AddConnectionStateListener(listener ConnectionStateListene
 	return client
 }
 
-// RemoveConnectionStateListener removes connection-state listener.
 func (client *Client) RemoveConnectionStateListener(listener ConnectionStateListener) *Client {
 	if listener == nil {
 		return client
@@ -992,7 +950,6 @@ func (client *Client) RemoveConnectionStateListener(listener ConnectionStateList
 	return client
 }
 
-// ClearConnectionStateListeners removes all connection-state listeners.
 func (client *Client) ClearConnectionStateListeners() *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1004,7 +961,6 @@ func (client *Client) ClearConnectionStateListeners() *Client {
 	return client
 }
 
-// AddHTTPPreflightHeader appends an HTTP preflight header entry.
 func (client *Client) AddHTTPPreflightHeader(header string) *Client {
 	if strings.TrimSpace(header) == "" {
 		return client
@@ -1019,7 +975,6 @@ func (client *Client) AddHTTPPreflightHeader(header string) *Client {
 	return client
 }
 
-// ClearHTTPPreflightHeaders removes all configured preflight headers.
 func (client *Client) ClearHTTPPreflightHeaders() *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1031,7 +986,6 @@ func (client *Client) ClearHTTPPreflightHeaders() *Client {
 	return client
 }
 
-// SetHTTPPreflightHeaders replaces all configured preflight headers.
 func (client *Client) SetHTTPPreflightHeaders(headers []string) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1050,12 +1004,10 @@ func (client *Client) SetHTTPPreflightHeaders(headers []string) *Client {
 	return client
 }
 
-// RawConnection returns the underlying net.Conn.
 func (client *Client) RawConnection() net.Conn {
 	return client.connection
 }
 
-// SetTransportFilter sets low-level transport filter callback.
 func (client *Client) SetTransportFilter(filter TransportFilter) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1067,7 +1019,6 @@ func (client *Client) SetTransportFilter(filter TransportFilter) *Client {
 	return client
 }
 
-// SetReceiveRoutineStartedCallback sets callback invoked when receive routine starts.
 func (client *Client) SetReceiveRoutineStartedCallback(callback func()) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1089,7 +1040,6 @@ func (client *Client) setInternalDisconnectHandler(handler func(error)) {
 	state.lock.Unlock()
 }
 
-// String returns concise connection info useful in debug output.
 func (client *Client) String() string {
 	connectionInfo := client.GetConnectionInfo()
 	if len(connectionInfo) == 0 {

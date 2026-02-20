@@ -5,14 +5,12 @@ import (
 	"sync"
 )
 
-// DefaultSubscriptionManager is the default in-memory subscription manager.
 type DefaultSubscriptionManager struct {
 	lock                     sync.Mutex
 	subscriptions            map[string]trackedSubscription
 	failedResubscribeHandler FailedResubscribeHandler
 }
 
-// NewDefaultSubscriptionManager creates a new default subscription manager.
 func NewDefaultSubscriptionManager() *DefaultSubscriptionManager {
 	return &DefaultSubscriptionManager{
 		subscriptions: make(map[string]trackedSubscription),
@@ -35,7 +33,6 @@ func trackedSubscriptionID(command *Command) string {
 	return ""
 }
 
-// Subscribe stores a subscription command for future resubscribe attempts.
 func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Message) error, command *Command, requestedAckTypes int) {
 	if manager == nil || command == nil {
 		return
@@ -68,7 +65,6 @@ func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Messag
 	manager.lock.Unlock()
 }
 
-// Unsubscribe removes one tracked subscription, or all when subID=="all".
 func (manager *DefaultSubscriptionManager) Unsubscribe(subID string) {
 	if manager == nil {
 		return
@@ -83,7 +79,6 @@ func (manager *DefaultSubscriptionManager) Unsubscribe(subID string) {
 	delete(manager.subscriptions, subID)
 }
 
-// Clear removes all tracked subscriptions.
 func (manager *DefaultSubscriptionManager) Clear() {
 	if manager == nil {
 		return
@@ -93,7 +88,6 @@ func (manager *DefaultSubscriptionManager) Clear() {
 	manager.lock.Unlock()
 }
 
-// SetFailedResubscribeHandler sets handler for resubscribe failures.
 func (manager *DefaultSubscriptionManager) SetFailedResubscribeHandler(handler FailedResubscribeHandler) {
 	if manager == nil {
 		return
@@ -103,7 +97,6 @@ func (manager *DefaultSubscriptionManager) SetFailedResubscribeHandler(handler F
 	manager.lock.Unlock()
 }
 
-// Resubscribe replays tracked subscriptions on a connected/logged-on client.
 func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 	if manager == nil || client == nil {
 		return nil

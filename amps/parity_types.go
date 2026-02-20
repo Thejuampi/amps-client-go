@@ -9,10 +9,8 @@ import (
 	"time"
 )
 
-// ConnectionInfo describes connection metadata similarly to the C++ client.
 type ConnectionInfo map[string]string
 
-// ConnectionState mirrors C++ connection state listener events.
 type ConnectionState int
 
 const (
@@ -26,49 +24,40 @@ const (
 	ConnectionStateUnknown            ConnectionState = 16384
 )
 
-// ConnectionStateListener receives connection state updates.
 type ConnectionStateListener interface {
 	ConnectionStateChanged(ConnectionState)
 }
 
-// ConnectionStateListenerFunc adapts a function to ConnectionStateListener.
 type ConnectionStateListenerFunc func(ConnectionState)
 
 func (f ConnectionStateListenerFunc) ConnectionStateChanged(state ConnectionState) { f(state) }
 
-// ExceptionListener receives unhandled background errors.
 type ExceptionListener interface {
 	ExceptionThrown(error)
 }
 
-// ExceptionListenerFunc adapts a function to ExceptionListener.
 type ExceptionListenerFunc func(error)
 
 func (f ExceptionListenerFunc) ExceptionThrown(err error) { f(err) }
 
-// FailedWriteHandler receives failed publish write reports.
 type FailedWriteHandler interface {
 	FailedWrite(message *Message, reason string)
 }
 
-// FailedWriteHandlerFunc adapts a function to FailedWriteHandler.
 type FailedWriteHandlerFunc func(message *Message, reason string)
 
 func (f FailedWriteHandlerFunc) FailedWrite(message *Message, reason string) { f(message, reason) }
 
-// FailedResubscribeHandler is called when resubscribe fails.
 type FailedResubscribeHandler interface {
 	Failure(command *Command, requestedAckTypes int, err error) bool
 }
 
-// FailedResubscribeHandlerFunc adapts a function to FailedResubscribeHandler.
 type FailedResubscribeHandlerFunc func(command *Command, requestedAckTypes int, err error) bool
 
 func (f FailedResubscribeHandlerFunc) Failure(command *Command, requestedAckTypes int, err error) bool {
 	return f(command, requestedAckTypes, err)
 }
 
-// SubscriptionManager tracks subscriptions for reconnect/resubscribe behavior.
 type SubscriptionManager interface {
 	Subscribe(messageHandler func(*Message) error, command *Command, requestedAckTypes int)
 	Unsubscribe(subID string)
@@ -77,7 +66,6 @@ type SubscriptionManager interface {
 	SetFailedResubscribeHandler(handler FailedResubscribeHandler)
 }
 
-// ServerChooser provides URI selection for HA connections.
 type ServerChooser interface {
 	CurrentURI() string
 	CurrentAuthenticator() Authenticator
@@ -88,13 +76,11 @@ type ServerChooser interface {
 	Remove(uri string)
 }
 
-// ReconnectDelayStrategy controls delay between reconnect attempts.
 type ReconnectDelayStrategy interface {
 	GetConnectWaitDuration(uri string) (time.Duration, error)
 	Reset()
 }
 
-// PublishStore tracks outgoing publish commands for replay.
 type PublishStore interface {
 	Store(command *Command) (uint64, error)
 	DiscardUpTo(sequence uint64) error
@@ -108,7 +94,6 @@ type PublishStore interface {
 	ErrorOnPublishGap() bool
 }
 
-// BookmarkStore tracks processed bookmarks for bookmark subscriptions.
 type BookmarkStore interface {
 	Log(message *Message) uint64
 	Discard(subID string, bookmarkSeqNo uint64)
@@ -121,7 +106,6 @@ type BookmarkStore interface {
 	SetServerVersion(version string)
 }
 
-// TransportFilterDirection identifies data flow direction for transport filters.
 type TransportFilterDirection int
 
 const (
@@ -129,7 +113,6 @@ const (
 	TransportFilterOutbound
 )
 
-// TransportFilter receives raw transport payload bytes and returns the payload to use.
 type TransportFilter func(direction TransportFilterDirection, payload []byte) []byte
 
 type retryCommand struct {

@@ -56,7 +56,7 @@ func TestPublishFlushUsesStore(t *testing.T) {
 	_, _ = store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte("a")))
 
 	if err := client.PublishFlush(10 * time.Millisecond); err == nil {
-		// Expect timeout because nothing has discarded pending publish.
+
 		t.Fatalf("expected publish flush timeout with undrained store")
 	}
 }

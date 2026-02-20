@@ -14,7 +14,6 @@ type bookmarkRecord struct {
 	Discarded bool   `json:"discarded"`
 }
 
-// MemoryBookmarkStore keeps bookmark tracking in memory.
 type MemoryBookmarkStore struct {
 	lock          sync.Mutex
 	nextSeqNo     uint64
@@ -24,7 +23,6 @@ type MemoryBookmarkStore struct {
 	serverVersion string
 }
 
-// NewMemoryBookmarkStore creates a new memory bookmark store.
 func NewMemoryBookmarkStore() *MemoryBookmarkStore {
 	return &MemoryBookmarkStore{
 		nextSeqNo:     1,
@@ -70,7 +68,6 @@ func (store *MemoryBookmarkStore) ensureSubID(subID string) map[string]*bookmark
 	return records
 }
 
-// Log logs bookmark-bearing message and returns bookmark sequence number.
 func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 	if store == nil {
 		return 0
@@ -97,7 +94,6 @@ func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 	return record.SeqNo
 }
 
-// Discard marks bookmark entries up to a sequence as discarded for a subscription.
 func (store *MemoryBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	if store == nil || subID == "" {
 		return
@@ -111,7 +107,6 @@ func (store *MemoryBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	}
 }
 
-// DiscardMessage marks a message bookmark as discarded.
 func (store *MemoryBookmarkStore) DiscardMessage(message *Message) {
 	if store == nil {
 		return
@@ -135,7 +130,6 @@ func (store *MemoryBookmarkStore) DiscardMessage(message *Message) {
 	}
 }
 
-// GetMostRecent returns latest bookmark known for subID.
 func (store *MemoryBookmarkStore) GetMostRecent(subID string) string {
 	if store == nil {
 		return ""
@@ -145,7 +139,6 @@ func (store *MemoryBookmarkStore) GetMostRecent(subID string) string {
 	return store.mostRecent[subID]
 }
 
-// IsDiscarded reports whether message bookmark is duplicate or discarded.
 func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 	if store == nil {
 		return false
@@ -178,7 +171,6 @@ func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 	return record.Count > 1
 }
 
-// Purge removes bookmark state for specific subIDs or all subIDs.
 func (store *MemoryBookmarkStore) Purge(subID ...string) {
 	if store == nil {
 		return
@@ -202,7 +194,6 @@ func (store *MemoryBookmarkStore) Purge(subID ...string) {
 	}
 }
 
-// GetOldestBookmarkSeq returns oldest non-discarded bookmark seq for subID.
 func (store *MemoryBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
 	if store == nil || subID == "" {
 		return 0
@@ -228,7 +219,6 @@ func (store *MemoryBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
 	return oldest
 }
 
-// Persisted marks bookmark as persisted and returns persisted bookmark value.
 func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) string {
 	if store == nil || subID == "" || bookmark == "" {
 		return ""
@@ -253,7 +243,6 @@ func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) strin
 	return bookmark
 }
 
-// SetServerVersion stores server version for compatibility handling.
 func (store *MemoryBookmarkStore) SetServerVersion(version string) {
 	if store == nil {
 		return
@@ -270,20 +259,18 @@ type bookmarkFileEntry struct {
 }
 
 type bookmarkFileState struct {
-	NextSeqNo     uint64            `json:"next_seq_no"`
-	MostRecent    map[string]string `json:"most_recent"`
-	DiscardedUpTo map[string]uint64 `json:"discarded_up_to"`
-	ServerVersion string            `json:"server_version"`
+	NextSeqNo     uint64              `json:"next_seq_no"`
+	MostRecent    map[string]string   `json:"most_recent"`
+	DiscardedUpTo map[string]uint64   `json:"discarded_up_to"`
+	ServerVersion string              `json:"server_version"`
 	Entries       []bookmarkFileEntry `json:"entries"`
 }
 
-// FileBookmarkStore persists bookmark state in a Go-native JSON file.
 type FileBookmarkStore struct {
 	*MemoryBookmarkStore
 	path string
 }
 
-// NewFileBookmarkStore creates a new file-backed bookmark store.
 func NewFileBookmarkStore(path string) *FileBookmarkStore {
 	store := &FileBookmarkStore{
 		MemoryBookmarkStore: NewMemoryBookmarkStore(),
@@ -395,60 +382,50 @@ func (store *FileBookmarkStore) load() error {
 	return nil
 }
 
-// Log logs bookmark-bearing message and persists state.
 func (store *FileBookmarkStore) Log(message *Message) uint64 {
 	seqNo := store.MemoryBookmarkStore.Log(message)
 	_ = store.save()
 	return seqNo
 }
 
-// Discard marks bookmark entries up to sequence and persists state.
 func (store *FileBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	store.MemoryBookmarkStore.Discard(subID, bookmarkSeqNo)
 	_ = store.save()
 }
 
-// DiscardMessage marks one bookmark as discarded and persists state.
 func (store *FileBookmarkStore) DiscardMessage(message *Message) {
 	store.MemoryBookmarkStore.DiscardMessage(message)
 	_ = store.save()
 }
 
-// Purge removes bookmark state and persists state.
 func (store *FileBookmarkStore) Purge(subID ...string) {
 	store.MemoryBookmarkStore.Purge(subID...)
 	_ = store.save()
 }
 
-// Persisted marks bookmark persisted and persists state.
 func (store *FileBookmarkStore) Persisted(subID string, bookmark string) string {
 	value := store.MemoryBookmarkStore.Persisted(subID, bookmark)
 	_ = store.save()
 	return value
 }
 
-// SetServerVersion stores version and persists state.
 func (store *FileBookmarkStore) SetServerVersion(version string) {
 	store.MemoryBookmarkStore.SetServerVersion(version)
 	_ = store.save()
 }
 
-// MMapBookmarkStore is a compatibility wrapper using the file-backed store.
 type MMapBookmarkStore struct {
 	*FileBookmarkStore
 }
 
-// NewMMapBookmarkStore creates an MMapBookmarkStore compatibility wrapper.
 func NewMMapBookmarkStore(path string) *MMapBookmarkStore {
 	return &MMapBookmarkStore{FileBookmarkStore: NewFileBookmarkStore(path)}
 }
 
-// RingBookmarkStore is a compatibility wrapper using the in-memory store.
 type RingBookmarkStore struct {
 	*MemoryBookmarkStore
 }
 
-// NewRingBookmarkStore creates a RingBookmarkStore compatibility wrapper.
 func NewRingBookmarkStore() *RingBookmarkStore {
 	return &RingBookmarkStore{MemoryBookmarkStore: NewMemoryBookmarkStore()}
 }

@@ -2,38 +2,31 @@ package amps
 
 import "sync"
 
-
-// MessageRouter struct
 type MessageRouter struct {
 	routes *sync.Map
-	key string
+	key    string
 	MessageRoute
 	client *Client
 }
 
-
-// Internal API
-
-// MessageRoute struct
 type MessageRoute struct {
 	messageHandler func(*Message) error
-	systemAcks int
-	requestedAcks int
+	systemAcks     int
+	requestedAcks  int
 	terminationAck int
 }
 
-func (msgRoute *MessageRoute) messageRoute (
+func (msgRoute *MessageRoute) messageRoute(
 	messageHandler func(message *Message) error,
 	requestedAcks int,
 	systemAcks int,
 	isSubscribe bool,
 	isReplace bool,
-) (func(*Message) error) {
+) func(*Message) error {
 	msgRoute.messageHandler = messageHandler
 	msgRoute.requestedAcks = requestedAcks
 	msgRoute.systemAcks = systemAcks
 
-	// auto-remove handler when termination ack comes in
 	if !isSubscribe {
 		bitCounter := requestedAcks | systemAcks
 		for bitCounter > 0 {
@@ -49,9 +42,13 @@ func (msgRoute *MessageRoute) messageRoute (
 }
 
 func (msgRoute *MessageRoute) deliverAck(message *Message, ackType int) int {
-	if msgRoute.requestedAcks & ackType == 0 { return 0 }
+	if msgRoute.requestedAcks&ackType == 0 {
+		return 0
+	}
 	err := msgRoute.messageHandler(message)
-	if err != nil { err = NewError(MessageHandlerError, err) }
+	if err != nil {
+		err = NewError(MessageHandlerError, err)
+	}
 	return 1
 }
 
@@ -61,7 +58,9 @@ func (msgRoute *MessageRoute) isTerminationAck(ackType int) bool {
 
 func (msgRoute *MessageRoute) deliverData(message *Message) int {
 	err := msgRoute.messageHandler(message)
-	if err != nil { err = NewError(MessageHandlerError, err) }
+	if err != nil {
+		err = NewError(MessageHandlerError, err)
+	}
 	return 1
 }
 
@@ -91,10 +90,6 @@ func (msgRouter *MessageRouter) processAckForRemoval(ackType int, commandID stri
 	}
 }
 
-
-// Public API
-
-// AddRoute ...
 func (msgRouter *MessageRouter) AddRoute(
 	commandID string,
 	messageHandler func(*Message) error,
@@ -112,13 +107,11 @@ func (msgRouter *MessageRouter) AddRoute(
 	))
 }
 
-// RemoveRoute ...
 func (msgRouter *MessageRouter) RemoveRoute(commandID string) {
 	msgRouter.routes.Delete(commandID)
 }
 
-// FindRoute ... 
-func (msgRouter *MessageRouter) FindRoute(commandID string) (func(*Message) error) {
+func (msgRouter *MessageRouter) FindRoute(commandID string) func(*Message) error {
 	route := msgRouter.MessageRoute.messageHandler
 	msgHandler, _ := msgRouter.routes.Load(commandID)
 	route = msgHandler.(func(*Message) error)
@@ -128,7 +121,6 @@ func (msgRouter *MessageRouter) FindRoute(commandID string) (func(*Message) erro
 	return nil
 }
 
-// UnsubscribeAll ...
 func (msgRouter *MessageRouter) UnsubscribeAll() {
 	msgRouter.routes.Range(func(key interface{}, ms interface{}) bool {
 		msgRouter.routes.Delete(key.(string))
@@ -137,12 +129,10 @@ func (msgRouter *MessageRouter) UnsubscribeAll() {
 	msgRouter.routes = new(sync.Map)
 }
 
-// Clear ...
 func (msgRouter *MessageRouter) Clear() {
 	msgRouter.routes = new(sync.Map)
 }
 
-// DeliverAck ...
 func (msgRouter *MessageRouter) DeliverAck(ackMessage *Message, ackType int) int {
 	messagesDelivered := 0
 	msgCmdID, _ := ackMessage.CommandID()
@@ -168,7 +158,6 @@ func (msgRouter *MessageRouter) DeliverAck(ackMessage *Message, ackType int) int
 	return messagesDelivered
 }
 
-// DeliverData ...
 func (msgRouter *MessageRouter) DeliverData(dataMessage *Message) int {
 	messagesDelivered := 0
 	msgCommandID, _ := dataMessage.CommandID()
@@ -186,7 +175,6 @@ func (msgRouter *MessageRouter) DeliverData(dataMessage *Message) int {
 	return messagesDelivered
 }
 
-// DeliverDataWithID ...
 func (msgRouter *MessageRouter) DeliverDataWithID(dataMessage *Message, cmdID string) int {
 	messagesDelivered := 0
 	route, _ := msgRouter.routes.Load(cmdID)
@@ -195,4 +183,3 @@ func (msgRouter *MessageRouter) DeliverDataWithID(dataMessage *Message, cmdID st
 	}
 	return messagesDelivered
 }
-

@@ -69,8 +69,8 @@ func (connection *testConn) Close() error {
 	return nil
 }
 
-func (connection *testConn) LocalAddr() net.Addr  { return dummyAddr{value: "127.0.0.1:9000"} }
-func (connection *testConn) RemoteAddr() net.Addr { return dummyAddr{value: "127.0.0.1:9100"} }
+func (connection *testConn) LocalAddr() net.Addr              { return dummyAddr{value: "127.0.0.1:9000"} }
+func (connection *testConn) RemoteAddr() net.Addr             { return dummyAddr{value: "127.0.0.1:9100"} }
 func (connection *testConn) SetDeadline(time.Time) error      { return nil }
 func (connection *testConn) SetReadDeadline(time.Time) error  { return nil }
 func (connection *testConn) SetWriteDeadline(time.Time) error { return nil }
