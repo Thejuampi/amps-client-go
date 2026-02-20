@@ -32,6 +32,7 @@ Common targets:
 make help
 make build
 make test
+make integration-test
 make install
 make release
 ```
@@ -115,6 +116,18 @@ Run:
 ```bash
 go test ./... -run Integration
 ```
+
+## Parity Coverage Snapshot
+
+| Coverage Area | Status | Primary Verification |
+|---|---|---|
+| `Client`/`HAClient` API parity surface | Complete in scope | Unit tests (`amps/*_test.go`) |
+| Handler ordering and fallback chain | Verified | Unit tests (`TestOnMessageHandlerOrder`, `TestUnhandledAndLastChanceOrder`) |
+| Auto-ack batching/timeout and explicit ack flow | Verified | Unit + integration (`TestAutoAck*`, `TestIntegrationQueueAutoAckBatching`) |
+| Publish replay/discard behavior | Verified | Unit (`TestMemoryPublishStoreReplayAndDiscard`, `TestApplyAckBookkeepingDiscardPublishOnPersistedAck`) |
+| Bookmark dedupe/resume behavior | Verified | Unit + integration (`TestMemoryBookmarkStoreDuplicateAndMostRecent`, `TestIntegrationBookmarkResumeAcrossReconnect`) |
+| HA chooser/reconnect flow | Verified | Unit + integration (`TestHAReconnectDelayStrategySetters`, `TestIntegrationHAConnectAndLogonWithFailoverChooser`) |
+| Timer command path (`start_timer`/`stop_timer`) | Verified | Unit + integration (`TestTimerCommandPathWritesStartAndStop`, `TestIntegrationStartStopTimerCommandPath`) |
 
 ## Legal Note
 

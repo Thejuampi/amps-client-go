@@ -1,107 +1,100 @@
 package amps
 
 import (
-	"crypto/tls"
-	"net"
-	"fmt"
-	"net/url"
-	"time"
 	"bytes"
-	"sync"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"math/rand"
-	"strings"
+	"net"
+	"net/url"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
-
 
 // Client constants
 const (
-	ClientVersion		= "0.1.0"
+	ClientVersion = "0.1.0"
 
 	// Bookmarks
-	BookmarksEPOCH		= "0"
-	BookmarksRECENT		= "recent"
-	BookmarksNOW		= "0|1|"
+	BookmarksEPOCH  = "0"
+	BookmarksRECENT = "recent"
+	BookmarksNOW    = "0|1|"
 
 	// Acks
-	AckTypeNone			= 0
-	AckTypeReceived		= 1
-	AckTypeParsed		= 2
-	AckTypeProcessed	= 4
-	AckTypePersisted	= 8
-	AckTypeCompleted	= 16
-	AckTypeStats		= 32
+	AckTypeNone      = 0
+	AckTypeReceived  = 1
+	AckTypeParsed    = 2
+	AckTypeProcessed = 4
+	AckTypePersisted = 8
+	AckTypeCompleted = 16
+	AckTypeStats     = 32
 )
-
 
 // Client struct
 type Client struct {
 	// Main fields
-	clientName string
-	serverVersion string
+	clientName         string
+	serverVersion      string
 	logonCorrelationID string
-	nextID uint64
-	messageType []byte
-	errorHandler func(err error)
-	disconnectHandler func(client *Client, err error)
-	heartbeatInterval uint
-	heartbeatTimeout uint
+	nextID             uint64
+	messageType        []byte
+	errorHandler       func(err error)
+	disconnectHandler  func(client *Client, err error)
+	heartbeatInterval  uint
+	heartbeatTimeout   uint
 	heartbeatTimestamp uint
 	heartbeatTimeoutID *time.Timer
 
 	// synchronization
-	lock sync.Mutex
-	acksLock sync.Mutex
+	lock              sync.Mutex
+	acksLock          sync.Mutex
 	ackProcessingLock sync.Mutex
 	syncAckProcessing chan _Result
-	routes *sync.Map
-	messageStreams *sync.Map
+	routes            *sync.Map
+	messageStreams    *sync.Map
 
 	// Connection
-	connected bool
+	connected  bool
 	connection net.Conn
-	logging bool
-	url *url.URL
-	tlsConfig *tls.Config
+	logging    bool
+	url        *url.URL
+	tlsConfig  *tls.Config
 
 	// send variables
 	sendBuffer *bytes.Buffer
-	command *Command
-	sendHb bool
-	hbCommand *Command
+	command    *Command
+	sendHb     bool
+	hbCommand  *Command
 
 	// receive variables
-	stopped bool
-	readTimeout uint
-	receiveBuffer []byte
-	readPosition int
+	stopped         bool
+	readTimeout     uint
+	receiveBuffer   []byte
+	readPosition    int
 	receivePosition int
-	lengthBytes []byte
-	message *Message
-	msgRouter *MessageRouter
+	lengthBytes     []byte
+	message         *Message
+	msgRouter       *MessageRouter
 }
-
-
 
 ////////////////////////////////////////////////////////////////////////
 //                            Internal API                            //
 ////////////////////////////////////////////////////////////////////////
 
-
 // SystemAckProcessing helper struct
 type _Result struct {
-    Status bool
-    Reason string
+	Status bool
+	Reason string
 }
-
 
 // Synchronous processing for methods that involve ack messages returned (sow_delete, etc).
 type _Stats struct {
-    Stats *Message
-    Error error
+	Stats *Message
+	Error error
 }
-
 
 func (client *Client) makeCommandID() string {
 	commandID := strconv.FormatUint(client.nextID, 10)
@@ -112,21 +105,34 @@ func (client *Client) makeCommandID() string {
 }
 
 func (client *Client) send(command *Command) (err error) {
-	if !client.connected { return errors.New("Client is not connected while trying to send data") }
-	if client.sendBuffer == nil { return errors.New("Socket error while sending message (NullPointer)") }
+	if !client.connected {
+		return errors.New("Client is not connected while trying to send data")
+	}
+	if client.sendBuffer == nil {
+		return errors.New("Socket error while sending message (NullPointer)")
+	}
 
 	// Prepare the buffer
 	client.sendBuffer.Reset()
 
 	// Reserve space for the message length
-	_, err = client.sendBuffer.WriteString("    "); if err != nil { return }
+	_, err = client.sendBuffer.WriteString("    ")
+	if err != nil {
+		return
+	}
 
 	// Write all header fields
-	err = command.header.write(client.sendBuffer); if err != nil { return }
+	err = command.header.write(client.sendBuffer)
+	if err != nil {
+		return
+	}
 
 	// Write data (if any)
 	if command.data != nil {
-		client.sendBuffer.Write(command.data); if err != nil { return }
+		client.sendBuffer.Write(command.data)
+		if err != nil {
+			return
+		}
 	}
 
 	// Write first 4 bytes
@@ -158,23 +164,28 @@ func (client *Client) send(command *Command) (err error) {
 	return
 }
 
-
 func (client *Client) readRoutine() {
-	if !client.connected { return }
-	if client.stopped { return }
+	if !client.connected {
+		return
+	}
+	if client.stopped {
+		return
+	}
 	client.callReceiveRoutineStartedCallback()
 
 	// reset buffer variables
-	client.receiveBuffer = make([]byte, 128 * 1024)
+	client.receiveBuffer = make([]byte, 128*1024)
 	client.lengthBytes = make([]byte, 4)
 	client.readTimeout = 0
 	client.readPosition = 0
 	client.receivePosition = 0
 
 	for {
-		if client.stopped { return }
+		if client.stopped {
+			return
+		}
 
-		for client.receivePosition - client.readPosition < 4 {
+		for client.receivePosition-client.readPosition < 4 {
 			count, err := client.connection.Read(client.receiveBuffer[client.receivePosition:])
 			client.receivePosition += count
 			if err != nil {
@@ -186,11 +197,11 @@ func (client *Client) readRoutine() {
 			}
 		}
 
-		for client.receivePosition - client.readPosition > 4 {
-			messageLength := int(client.receiveBuffer[client.readPosition])     << 24 +
-					  int(client.receiveBuffer[client.readPosition + 1]) << 16 +
-					  int(client.receiveBuffer[client.readPosition + 2]) << 8  +
-					  int(client.receiveBuffer[client.readPosition + 3])
+		for client.receivePosition-client.readPosition > 4 {
+			messageLength := int(client.receiveBuffer[client.readPosition])<<24 +
+				int(client.receiveBuffer[client.readPosition+1])<<16 +
+				int(client.receiveBuffer[client.readPosition+2])<<8 +
+				int(client.receiveBuffer[client.readPosition+3])
 
 			endByte := client.readPosition + messageLength + 4
 
@@ -200,7 +211,7 @@ func (client *Client) readRoutine() {
 					// do we need to move the buffer
 					if messageLength > len(client.receiveBuffer) {
 						// this buffer's not big enough
-						newBuffer := make([]byte, 2 * len(client.receiveBuffer))
+						newBuffer := make([]byte, 2*len(client.receiveBuffer))
 						copy(newBuffer, client.receiveBuffer[client.readPosition:client.receivePosition])
 						client.receiveBuffer = newBuffer
 					} else {
@@ -235,14 +246,20 @@ func (client *Client) readRoutine() {
 
 			// parse header first
 			left, err := parseHeader(client.message, true, filteredFrame[4:])
-			if err != nil { client.onError(NewError(ProtocolError)); return }
+			if err != nil {
+				client.onError(NewError(ProtocolError))
+				return
+			}
 
 			// SOW case
 			if client.message.header.command == CommandSOW {
 				for len(left) > 0 {
 					// Parsing mini-header
 					left, err = parseHeader(client.message, false, left)
-					if err != nil { client.onError(NewError(ProtocolError, err)); return }
+					if err != nil {
+						client.onError(NewError(ProtocolError, err))
+						return
+					}
 
 					// set data
 					dataLength := (*client.message.header.messageLength)
@@ -250,7 +267,9 @@ func (client *Client) readRoutine() {
 
 					// Deliver the message
 					err = client.onMessage(client.message)
-					if err != nil { client.onError(NewError(MessageHandlerError, err)) }
+					if err != nil {
+						client.onError(NewError(MessageHandlerError, err))
+					}
 
 					// Next chunk is ready
 					left = left[dataLength:]
@@ -261,7 +280,9 @@ func (client *Client) readRoutine() {
 
 				// Report the message
 				err = client.onMessage(client.message)
-				if err != nil { client.onError(NewError(MessageHandlerError, err)) }
+				if err != nil {
+					client.onError(NewError(MessageHandlerError, err))
+				}
 			}
 
 			// Keep going
@@ -274,7 +295,6 @@ func (client *Client) readRoutine() {
 		}
 	}
 }
-
 
 func (client *Client) onMessage(message *Message) (err error) {
 	if message == nil {
@@ -368,10 +388,9 @@ func (client *Client) onMessage(message *Message) (err error) {
 	return
 }
 
-
 func (client *Client) deleteRoute(routeID string) (routeErr error) {
 	if messageStream, messageStreamExists := client.messageStreams.Load(routeID); messageStreamExists {
-		messageStream.(*MessageStream).client = nil;
+		messageStream.(*MessageStream).client = nil
 		if messageStream.(*MessageStream).state != messageStreamStateComplete {
 			routeErr = messageStream.(*MessageStream).Close()
 		}
@@ -385,7 +404,6 @@ func (client *Client) deleteRoute(routeID string) (routeErr error) {
 	return
 }
 
-
 func (client *Client) addRoute(
 	routeID string,
 	messageHandler func(*Message) error,
@@ -393,19 +411,23 @@ func (client *Client) addRoute(
 	requestedAcks int,
 	isSubscribe bool,
 	isReplace bool,
-) (routeErr error)  {
+) (routeErr error) {
 	success := systemAcks == AckTypeNone
 
 	previousMessageHandler, messageHandlerExists := client.routes.Load(routeID)
 
 	if !isReplace {
 		if messageHandlerExists {
-			if isSubscribe { return NewError(SubidInUseError, "Subscription with ID '" + routeID + "' already exists") }
+			if isSubscribe {
+				return NewError(SubidInUseError, "Subscription with ID '"+routeID+"' already exists")
+			}
 			return NewError(CommandError, "SubID is set to a non-Subscribe command")
 		}
 	} else {
 		// Replace with a nil new message handler -- reuse the old one
-		if messageHandler == nil { messageHandler = previousMessageHandler.(func(*Message) error) }
+		if messageHandler == nil {
+			messageHandler = previousMessageHandler.(func(*Message) error)
+		}
 	}
 
 	client.routes.Store(routeID, func(message *Message) error {
@@ -416,7 +438,7 @@ func (client *Client) addRoute(
 			ack, _ := message.AckType()
 
 			// System-requested ack message
-			if systemAcks & ack > 0 {
+			if systemAcks&ack > 0 {
 				// Delete this message from system acks
 				systemAcks &^= ack
 
@@ -431,21 +453,27 @@ func (client *Client) addRoute(
 				}
 			}
 
-			if !success { return nil }
+			if !success {
+				return nil
+			}
 
 			// if this ack was requested for delivery
-			if requestedAcks & ack > 0 {
+			if requestedAcks&ack > 0 {
 				// Delete this message from system acks
 				requestedAcks &^= ack
 
 				err = messageHandler(message)
-				if err != nil { err = NewError(MessageHandlerError, err) }
+				if err != nil {
+					err = NewError(MessageHandlerError, err)
+				}
 			}
 
 			// Delete the message handler since all the messages were delivered
 			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone && !isSubscribe {
 				err = client.deleteRoute(routeID)
-				if err != nil { err = errors.New("Error deleting route") }
+				if err != nil {
+					err = errors.New("Error deleting route")
+				}
 			} else if systemAcks == AckTypeNone {
 				// no system acks left to accept -- replace this wrapper with the original message handler
 				client.routes.Store(routeID, messageHandler)
@@ -454,7 +482,9 @@ func (client *Client) addRoute(
 			// Non-ack -- simply pass the message to the message handler
 			if messageHandler != nil {
 				err = messageHandler(message)
-				if err != nil { err = NewError(MessageHandlerError, err) }
+				if err != nil {
+					err = NewError(MessageHandlerError, err)
+				}
 			}
 		}
 
@@ -464,15 +494,17 @@ func (client *Client) addRoute(
 	return
 }
 
-
 func (client *Client) onError(err error) {
-	if client.errorHandler != nil { client.errorHandler(err) }
+	if client.errorHandler != nil {
+		client.errorHandler(err)
+	}
 	client.reportException(err)
 }
 
-
 func (client *Client) onConnectionError(err error) {
-	if client.connection != nil { _ = client.connection.Close() }
+	if client.connection != nil {
+		_ = client.connection.Close()
+	}
 	client.connection = nil
 
 	client.connected = false
@@ -505,19 +537,19 @@ func (client *Client) onConnectionError(err error) {
 	client.onInternalDisconnect(err)
 
 	// Connection error -- report to the disconnect handler
-	if client.disconnectHandler != nil { client.disconnectHandler(client, err) }
+	if client.disconnectHandler != nil {
+		client.disconnectHandler(client, err)
+	}
 }
 
-
 func (client *Client) onHeartbeatAbsence() {
-	if (uint(time.Now().Unix()) - client.heartbeatTimestamp) > (client.heartbeatTimeout * 1000 ) {
+	if (uint(time.Now().Unix()) - client.heartbeatTimestamp) > (client.heartbeatTimeout * 1000) {
 		_ = client.heartbeatTimeoutID.Stop()
 
 		client.heartbeatTimestamp = 0
 		client.onError(errors.New("Heartbeat absence error"))
 	}
 }
-
 
 func (client *Client) establishHeartbeat() (hbError error) {
 	done := make(chan error)
@@ -528,14 +560,14 @@ func (client *Client) establishHeartbeat() (hbError error) {
 		status, _ := message.Status()
 		command, _ := message.Command()
 		ackType, _ := message.AckType()
-		if  status == "success" && command == CommandAck && ackType == AckTypeProcessed {
-			client.heartbeatTimeoutID = time.AfterFunc(time.Duration(client.heartbeatTimeout * 1000), client.onHeartbeatAbsence)
+		if status == "success" && command == CommandAck && ackType == AckTypeProcessed {
+			client.heartbeatTimeoutID = time.AfterFunc(time.Duration(client.heartbeatTimeout*1000), client.onHeartbeatAbsence)
 			client.notifyConnectionState(ConnectionStateHeartbeatInitiated)
 		} else {
 			err = errors.New("Heartbeat Establishment Error")
 		}
 
-		done <-err
+		done <- err
 
 		return
 	})
@@ -547,29 +579,29 @@ func (client *Client) establishHeartbeat() (hbError error) {
 	return
 }
 
-
 func (client *Client) checkAndSendHeartbeat(force bool) {
-	if client.heartbeatTimeout == 0 || (client.heartbeatTimeout != 0 && client.heartbeatTimestamp == 0) { return }
+	if client.heartbeatTimeout == 0 || (client.heartbeatTimeout != 0 && client.heartbeatTimestamp == 0) {
+		return
+	}
 
 	if force || ((uint(time.Now().Unix()) - client.heartbeatTimestamp) > client.heartbeatInterval) {
 		client.heartbeatTimestamp = uint(time.Now().Unix())
 		_ = client.heartbeatTimeoutID.Stop()
 		client.heartbeatTimeoutID = time.AfterFunc(
-			time.Duration(client.heartbeatTimeout * 1000),
+			time.Duration(client.heartbeatTimeout*1000),
 			client.onHeartbeatAbsence,
 		)
 
 		err := client.sendHeartbeat()
-		if err != nil { client.onConnectionError(err) }
+		if err != nil {
+			client.onConnectionError(err)
+		}
 	}
 }
-
-
 
 ////////////////////////////////////////////////////////////////////////
 //                             Public API                             //
 ////////////////////////////////////////////////////////////////////////
-
 
 // Params structs (since there is no overloading nor default parameters in Go)
 
@@ -587,78 +619,73 @@ func (client *Client) checkAndSendHeartbeat(force bool) {
 // CorrelationID [string] (optional) - the uninterpreted logon correlation information a client sends at logon to aid in
 // searching server log files for specific clients.
 type LogonParams struct {
-	Timeout uint
+	Timeout       uint
 	Authenticator Authenticator
 	CorrelationID string
 }
-
-
 
 ///////////////
 //  Get/Set  //
 ///////////////
 
-
 // ClientName is a getter for the client's name. If logon has not been performed yet and the name was not
 // set, returns the empty string.
 func (client *Client) ClientName() string { return client.clientName }
 
-
 // SetClientName is a setter for the client's name.
-func (client *Client) SetClientName(clientName string) *Client { client.clientName = clientName; return client }
-
+func (client *Client) SetClientName(clientName string) *Client {
+	client.clientName = clientName
+	return client
+}
 
 // ErrorHandler gets the error handler for all general errors such as connection issues, exceptions, etc.
 func (client *Client) ErrorHandler() func(error) { return client.errorHandler }
 
-
 // SetErrorHandler sets the error handler for all general errors such as connection issues, exceptions, etc.
 //
 // Example:
-//   client.SetErrorHandler(func(err error) {
-//       fmt.Println(time.Now().Local().String() + " [" + client.ClientName() + "] >>>", err)
-//   })
+//
+//	client.SetErrorHandler(func(err error) {
+//	    fmt.Println(time.Now().Local().String() + " [" + client.ClientName() + "] >>>", err)
+//	})
 func (client *Client) SetErrorHandler(errorHandler func(error)) *Client {
 	client.errorHandler = errorHandler
 	return client
 }
 
-
 // DisconnectHandler gets the disconnect handler that is called in case of an unintentional disconnection.
 func (client *Client) DisconnectHandler() func(*Client, error) { return client.disconnectHandler }
-
 
 // SetDisconnectHandler sets the disconnect handler that is called in case of an unintentional disconnection.
 //
 // Example:
-//   client.SetDisconnectHandler(func(cl *amps.Client, err error) {
-//       fmt.Println("Switching to the next URI...")
-//       connectToNextURI(client);
-//   })
+//
+//	client.SetDisconnectHandler(func(cl *amps.Client, err error) {
+//	    fmt.Println("Switching to the next URI...")
+//	    connectToNextURI(client);
+//	})
 func (client *Client) SetDisconnectHandler(disconnectHandler func(*Client, error)) *Client {
 	client.disconnectHandler = disconnectHandler
 	return client
 }
-
 
 // SetTLSConfig is an optional setter for the secure TCP connection configuration parameters, such as Certificates.
 // It must be set before the Connect() and Logon() methods are called. This configuration, is ignored if connecting
 // to a standard non-secure TCP transport.
 //
 // Example:
-//   client.SetTLSConfig(&tls.Config{
-//		InsecureSkipVerify: true,
-//	 })
+//
+//	  client.SetTLSConfig(&tls.Config{
+//			InsecureSkipVerify: true,
+//		 })
 func (client *Client) SetTLSConfig(config *tls.Config) *Client {
-	client.tlsConfig = config;
+	client.tlsConfig = config
 	return client
 }
-
 
 // LogonCorrelationID gets the uninterpreted logon correlation information a client sends at logon to aid in searching
 // server log files for specific clients. If it was not set, returns the empty string.
 func (client *Client) LogonCorrelationID() string { return client.logonCorrelationID }
-
 
 // SetLogonCorrelationID sets the uninterpreted logon correlation information a client sends at logon to aid in
 // searching server log files for specific clients. Can also be set in the LogonParams object supplied to the Logon()
@@ -667,7 +694,6 @@ func (client *Client) SetLogonCorrelationID(logonCorrelationID string) *Client {
 	client.logonCorrelationID = logonCorrelationID
 	return client
 }
-
 
 // SetHeartbeat ...
 func (client *Client) SetHeartbeat(interval uint, providedTimeout ...uint) *Client {
@@ -683,22 +709,20 @@ func (client *Client) SetHeartbeat(interval uint, providedTimeout ...uint) *Clie
 	return client
 }
 
-
-
 ////////////////
 //  Main API  //
 ////////////////
-
 
 // ServerVersion returns the server version returned by the AMPS server in the logon acknowledgement.
 // If logon has not been performed yet, returns an empty string.
 func (client *Client) ServerVersion() string { return client.serverVersion }
 
-
 // Connect connects the AMPS client to the server using the URI containing all required credentials/addresses/types.
 // After successful connection, the Logon() method must be called, unless the implicit logon is enabled on the server.
 func (client *Client) Connect(uri string) error {
-	if client.connected { return NewError(AlreadyConnectedError) }
+	if client.connected {
+		return NewError(AlreadyConnectedError)
+	}
 
 	// Reset logon state
 	client.logging = false
@@ -706,7 +730,7 @@ func (client *Client) Connect(uri string) error {
 	// if no error handler set yet, provide a default one
 	if client.errorHandler == nil {
 		client.errorHandler = func(err error) {
-			fmt.Println(time.Now().Local().String() + " [" + client.clientName + "] >>>", err)
+			fmt.Println(time.Now().Local().String()+" ["+client.clientName+"] >>>", err)
 		}
 	}
 
@@ -715,7 +739,9 @@ func (client *Client) Connect(uri string) error {
 
 	// Parse the URL
 	parsedURI, err := url.Parse(uri)
-	if err != nil { return NewError(InvalidURIError, err) }
+	if err != nil {
+		return NewError(InvalidURIError, err)
+	}
 	state := ensureClientState(client)
 	if state != nil {
 		state.lock.Lock()
@@ -725,11 +751,11 @@ func (client *Client) Connect(uri string) error {
 	}
 
 	// validate the URI
-	pathParts := strings.Split(parsedURI.Path, "/");
+	pathParts := strings.Split(parsedURI.Path, "/")
 	partsLength := len(pathParts)
 	if partsLength > 1 {
 		if pathParts[1] != "amps" {
-			return NewError(ProtocolError, "Specification of message type requires amps protocol");
+			return NewError(ProtocolError, "Specification of message type requires amps protocol")
 		}
 
 		// Determine message type, if any
@@ -744,16 +770,20 @@ func (client *Client) Connect(uri string) error {
 	if parsedURI.Scheme == "tcps" {
 		if client.tlsConfig == nil {
 			// accept self-signed certificates by default, like other clients do
-			client.tlsConfig = &tls.Config{ InsecureSkipVerify: true };
+			client.tlsConfig = &tls.Config{InsecureSkipVerify: true}
 		}
 
 		connection, err := tls.Dial("tcp", parsedURI.Host, client.tlsConfig)
 		client.connection = connection
-		if err != nil { return NewError(ConnectionRefusedError, err) }
+		if err != nil {
+			return NewError(ConnectionRefusedError, err)
+		}
 	} else {
 		connection, err := net.Dial("tcp", parsedURI.Host)
 		client.connection = connection
-		if err != nil { return NewError(ConnectionRefusedError, err) }
+		if err != nil {
+			return NewError(ConnectionRefusedError, err)
+		}
 	}
 
 	client.connected = true
@@ -765,7 +795,6 @@ func (client *Client) Connect(uri string) error {
 
 	return nil
 }
-
 
 // Logon logs into AMPS with the parameters provided in the connect method, if any, that is set. Optional parameters
 // can be supplied using the LogonParams struct, such as Timeout, Authenticator, and logon CorrelationID.
@@ -808,7 +837,9 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		// If the authenticator object was provided
 		if hasAuthenticator {
 			password, err = optionalParams[0].Authenticator.Authenticate(username, password)
-			if err != nil { return NewError(AuthenticationError, err) }
+			if err != nil {
+				return NewError(AuthenticationError, err)
+			}
 			hasPassword = true
 		}
 
@@ -838,26 +869,30 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 				switch status, _ := message.Status(); status {
 				case "success":
 					client.serverVersion = string(message.header.version)
-					doneLoggingIn <-nil
+					doneLoggingIn <- nil
 
 				case "failure":
-					if hasReason { loggingError = reasonToError(reason) } else {
+					if hasReason {
+						loggingError = reasonToError(reason)
+					} else {
 						loggingError = NewError(AuthenticationError)
 					}
-					doneLoggingIn <-loggingError
+					doneLoggingIn <- loggingError
 
 				default:
 					logonRetries--
 					if logonRetries == 0 {
 						loggingError = NewError(RetryOperationError, "Exceeded the maximum of logon retry attempts (3)")
-						doneLoggingIn <-loggingError
+						doneLoggingIn <- loggingError
 						return
 					}
 
 					// Retry case -- resend the token from authenticator
 					if hasAuthenticator {
 						password, logonAckErr = optionalParams[0].Authenticator.Retry(username, password)
-						if logonAckErr != nil { return NewError(AuthenticationError, logonAckErr) }
+						if logonAckErr != nil {
+							return NewError(AuthenticationError, logonAckErr)
+						}
 						client.command.header.password = []byte(password)
 					}
 
@@ -897,7 +932,10 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 			client.hbCommand.header.options = []byte("beat")
 
 			err = client.establishHeartbeat()
-			if err != nil { client.onError(err); return }
+			if err != nil {
+				client.onError(err)
+				return
+			}
 		}
 
 		if hasAuthenticator {
@@ -913,14 +951,15 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 	return logonFailed
 }
 
-
 func (client *Client) sendHeartbeat() error {
 	client.lock.Lock()
 	defer client.lock.Unlock()
 
 	// Attempting to send the command
 	err := client.send(client.hbCommand)
-	if err != nil { return NewError(ConnectionError, err) }
+	if err != nil {
+		return NewError(ConnectionError, err)
+	}
 
 	return nil
 }
@@ -930,7 +969,8 @@ func (client *Client) sendHeartbeat() error {
 // subscriptions.
 //
 // Example:
-//   client.Publish("topic", "{\"id\": 1}")
+//
+//	client.Publish("topic", "{\"id\": 1}")
 //
 // Arguments:
 //
@@ -944,12 +984,15 @@ func (client *Client) Publish(topic string, data string, expiration ...uint) err
 	return client.PublishBytes(topic, []byte(data), expiration...)
 }
 
-
 // PublishBytes is the same as Publish() but is more optimized for Go's native parsing libraries which almost
 // exclusively utilize slices of bytes ([]byte) as the output format.
 func (client *Client) PublishBytes(topic string, data []byte, expiration ...uint) error {
-	if len(topic) == 0 { return NewError(InvalidTopicError, "A topic must be specified") }
-	if !client.connected { return NewError(DisconnectedError, "Client is not connected while trying to publish") }
+	if len(topic) == 0 {
+		return NewError(InvalidTopicError, "A topic must be specified")
+	}
+	if !client.connected {
+		return NewError(DisconnectedError, "Client is not connected while trying to publish")
+	}
 
 	client.lock.Lock()
 	defer client.lock.Unlock()
@@ -967,14 +1010,16 @@ func (client *Client) PublishBytes(topic string, data []byte, expiration ...uint
 
 	// Attempting to send the command
 	err := client.send(client.command)
-	if err != nil { return NewError(ConnectionError, err) }
+	if err != nil {
+		return NewError(ConnectionError, err)
+	}
 
 	return nil
 }
 
-
 // DeltaPublish delta publishes a message to a SOW topic:
-//   client.DeltaPublish("topic", "{\"id\": 1, \"text\": \"Hello, World\"}");
+//
+//	client.DeltaPublish("topic", "{\"id\": 1, \"text\": \"Hello, World\"}");
 //
 // For regular topics, DeltaPublish() behaves like regular Publish().
 //
@@ -990,13 +1035,15 @@ func (client *Client) DeltaPublish(topic string, data string, expiration ...uint
 	return client.DeltaPublishBytes(topic, []byte(data), expiration...)
 }
 
-
-
 // DeltaPublishBytes is the same as DeltaPublish() but is more optimized for Go's native parsing libraries which almost
 // exclusively utilize slices of bytes ([]byte) as the output format.
 func (client *Client) DeltaPublishBytes(topic string, data []byte, expiration ...uint) error {
-	if len(topic) == 0 { return NewError(InvalidTopicError, "A topic must be specified") }
-	if !client.connected { return NewError(DisconnectedError, "Client is not connected while trying to publish") }
+	if len(topic) == 0 {
+		return NewError(InvalidTopicError, "A topic must be specified")
+	}
+	if !client.connected {
+		return NewError(DisconnectedError, "Client is not connected while trying to publish")
+	}
 
 	client.lock.Lock()
 	defer client.lock.Unlock()
@@ -1014,22 +1061,24 @@ func (client *Client) DeltaPublishBytes(topic string, data []byte, expiration ..
 
 	// Attempting to send the command
 	err := client.send(client.command)
-	if err != nil { return NewError(ConnectionError, err) }
+	if err != nil {
+		return NewError(ConnectionError, err)
+	}
 
 	return nil
 }
-
 
 // Execute is the synchronous version of the ExecuteAsync() method which returns the MessageStream object to
 // iterate over in a for loop. Iteration occurs in the main thread context.
 //
 // Example:
-//    messages, err := client.Execute(amps.NewCommand("sow").SetTopic("orders"))
-//    if err != nil { fmt.Println(err); return }
 //
-//    for message := messages.Next(); message != nil; message = messages.Next() {
-//        fmt.Println("Message Data:", string(message.Data()))
-//    }
+//	messages, err := client.Execute(amps.NewCommand("sow").SetTopic("orders"))
+//	if err != nil { fmt.Println(err); return }
+//
+//	for message := messages.Next(); message != nil; message = messages.Next() {
+//	    fmt.Println("Message Data:", string(message.Data()))
+//	}
 //
 // Arguments:
 //
@@ -1054,7 +1103,7 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 	}
 
 	ackType, hasAckType := command.AckType()
-	if !isSubscribe && hasAckType && (ackType & AckTypeStats) > 0 {
+	if !isSubscribe && hasAckType && (ackType&AckTypeStats) > 0 {
 		isStatsOnly = true
 	}
 
@@ -1078,16 +1127,19 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 		messageStream.setStatsOnly()
 	} else if isSow {
 		messageStream.setQueryID(cmdID)
-		if !isSubscribe {  messageStream.setSowOnly() }
+		if !isSubscribe {
+			messageStream.setSowOnly()
+		}
 	} else if isSubscribe && !isSow {
 		messageStream.setSubID(cmdID)
 	}
 
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
-    return messageStream, err
+	return messageStream, err
 }
-
 
 // Subscribe is the synchronous version of the SubscribeAsync() method that returns the MessageStream object
 // which can be iterated over in a for loop. Executed in the main thread context.
@@ -1098,12 +1150,12 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 //
 // Example:
 //
-//   messages, err := client.Subscribe("invoices", "/price > 10000")
-//   if err != nil { fmt.Println(err); return }
+//	messages, err := client.Subscribe("invoices", "/price > 10000")
+//	if err != nil { fmt.Println(err); return }
 //
-//   for message := messages.Next(); message != nil; message = messages.Next() {
-//       fmt.Println("Message Data:", string(message.Data()))
-//   }
+//	for message := messages.Next(); message != nil; message = messages.Next() {
+//	    fmt.Println("Message Data:", string(message.Data()))
+//	}
 //
 // Arguments:
 //
@@ -1112,35 +1164,37 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) Subscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.Execute(cmd)
 }
 
-
 // Flush ...
-func (client *Client) Flush() (err error){
+func (client *Client) Flush() (err error) {
 	result := make(chan error)
 
-    cmd := NewCommand("flush").AddAckType(AckTypeCompleted)
+	cmd := NewCommand("flush").AddAckType(AckTypeCompleted)
 	_, err = client.ExecuteAsync(cmd, func(message *Message) error {
 
 		if status, hasStatus := client.message.Status(); hasStatus && status == "success" {
-			result <-nil
+			result <- nil
 			return nil
 		}
 
 		reason, hasReason := client.message.Reason()
 		if hasReason {
-			result <-errors.New(reason)
+			result <- errors.New(reason)
 			return errors.New(reason)
 		}
 		return nil
 	})
 
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return nil
 }
-
 
 // DeltaSubscribe is the synchronous version of the DeltaSubscribeAsync() method that returns the MessageStream object
 // which can be iterated over in a for loop. Executed in the main thread context.
@@ -1152,12 +1206,12 @@ func (client *Client) Flush() (err error){
 //
 // Example:
 //
-//   messages, err := client.DeltaSubscribe("orders", "/id > 20")
-//   if err != nil { fmt.Println(err); return }
+//	messages, err := client.DeltaSubscribe("orders", "/id > 20")
+//	if err != nil { fmt.Println(err); return }
 //
-//   for message := messages.Next(); message != nil; message = messages.Next() {
-//       fmt.Println("Message Data:", string(message.Data()))
-//   }
+//	for message := messages.Next(); message != nil; message = messages.Next() {
+//	    fmt.Println("Message Data:", string(message.Data()))
+//	}
 //
 // Arguments:
 //
@@ -1166,10 +1220,11 @@ func (client *Client) Flush() (err error){
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) DeltaSubscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("delta_subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.Execute(cmd)
 }
-
 
 // Sow is the synchronous version of the SowAsync() method that returns the MessageStream object
 // which can be iterated over in a for loop. Executed in the main thread context.
@@ -1180,12 +1235,12 @@ func (client *Client) DeltaSubscribe(topic string, filter ...string) (*MessageSt
 //
 // Example:
 //
-//   messages, err := client.Sow("orders", "/id > 20")
-//   if err != nil { fmt.Println(err); return }
+//	messages, err := client.Sow("orders", "/id > 20")
+//	if err != nil { fmt.Println(err); return }
 //
-//   for message := messages.Next(); message != nil; message = messages.Next() {
-//       fmt.Println("Message Data:", string(message.Data()))
-//   }
+//	for message := messages.Next(); message != nil; message = messages.Next() {
+//	    fmt.Println("Message Data:", string(message.Data()))
+//	}
 //
 // Arguments:
 //
@@ -1194,10 +1249,11 @@ func (client *Client) DeltaSubscribe(topic string, filter ...string) (*MessageSt
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) Sow(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("sow").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.Execute(cmd)
 }
-
 
 // SowAndSubscribe is the synchronous version of the SowAndSubscribeAsync() method that returns the MessageStream object
 // which can be iterated over in a for loop. Executed in the main thread context.
@@ -1215,12 +1271,12 @@ func (client *Client) Sow(topic string, filter ...string) (*MessageStream, error
 //
 // Example:
 //
-//   messages, err := client.SowAndSubscribe("orders", "/id > 20")
-//   if err != nil { fmt.Println(err); return }
+//	messages, err := client.SowAndSubscribe("orders", "/id > 20")
+//	if err != nil { fmt.Println(err); return }
 //
-//   for message := messages.Next(); message != nil; message = messages.Next() {
-//       fmt.Println("Message Data:", string(message.Data()))
-//   }
+//	for message := messages.Next(); message != nil; message = messages.Next() {
+//	    fmt.Println("Message Data:", string(message.Data()))
+//	}
 //
 // Arguments:
 //
@@ -1229,10 +1285,11 @@ func (client *Client) Sow(topic string, filter ...string) (*MessageStream, error
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) SowAndSubscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("sow_and_subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.Execute(cmd)
 }
-
 
 // SowAndDeltaSubscribe is the synchronous version of the SowAndDeltaSubscribeAsync() method that returns the
 // MessageStream object which can be iterated over in a for loop. Executed in the main thread context.
@@ -1252,12 +1309,12 @@ func (client *Client) SowAndSubscribe(topic string, filter ...string) (*MessageS
 //
 // Example:
 //
-//   messages, err := client.SowAndDeltaSubscribe("orders", "/id > 20")
-//   if err != nil { fmt.Println(err); return }
+//	messages, err := client.SowAndDeltaSubscribe("orders", "/id > 20")
+//	if err != nil { fmt.Println(err); return }
 //
-//   for message := messages.Next(); message != nil; message = messages.Next() {
-//       fmt.Println("Message Data:", string(message.Data()))
-//   }
+//	for message := messages.Next(); message != nil; message = messages.Next() {
+//	    fmt.Println("Message Data:", string(message.Data()))
+//	}
 //
 // Arguments:
 //
@@ -1266,10 +1323,11 @@ func (client *Client) SowAndSubscribe(topic string, filter ...string) (*MessageS
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) SowAndDeltaSubscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("sow_and_delta_subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.Execute(cmd)
 }
-
 
 // ExecuteAsync is the command execution interface method that allows to send commands that don't have a convenience
 // method or require additional settings that are not provided by the convenience methods. The purpose of the method is
@@ -1277,10 +1335,10 @@ func (client *Client) SowAndDeltaSubscribe(topic string, filter ...string) (*Mes
 //
 // Example:
 //
-//		cmdID, err := client.ExecuteAsync(amps.NewCommand("sow").SetTopic("orders"), func(message *amps.Message) error {
-//			fmt.Println("Message Data:", string(message.Data()))
-//			return nil
-//		})
+//	cmdID, err := client.ExecuteAsync(amps.NewCommand("sow").SetTopic("orders"), func(message *amps.Message) error {
+//		fmt.Println("Message Data:", string(message.Data()))
+//		return nil
+//	})
 //
 // Arguments:
 //
@@ -1331,7 +1389,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		if command.header.subID == nil {
 			command.header.subID = command.header.commandID
 		}
-		isSubscribe = true;
+		isSubscribe = true
 		fallthrough
 
 	case CommandSOW:
@@ -1343,24 +1401,32 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			}
 		}
 
-		systemAcks |= AckTypeProcessed;
+		systemAcks |= AckTypeProcessed
 
 		// for SOW only, we get a completed ack so we know when to remove the handler
-		if !isSubscribe { systemAcks |= AckTypeCompleted; }
+		if !isSubscribe {
+			systemAcks |= AckTypeCompleted
+		}
 
 		// if a custom batchSize value is not set, it is 10 by default for SOW queries
 		_, hasBatchSizeSet := command.BatchSize()
-		if !notSow && !hasBatchSizeSet { command.SetBatchSize(10) }
+		if !notSow && !hasBatchSizeSet {
+			command.SetBatchSize(10)
+		}
 
 		if isSubscribe {
 			if queryID, hasQueryID := command.QueryID(); hasQueryID && !notSow {
 				routeID = queryID
-			} else { routeID, _ = command.SubID() }
+			} else {
+				routeID, _ = command.SubID()
+			}
 
 			if options, hasOptions := command.Options(); hasOptions {
 				isReplace = strings.Contains(options, "replace")
 			}
-		} else { routeID = commandID }
+		} else {
+			routeID = commandID
+		}
 
 		// make command handler here (processAcksSync)
 		client.syncAckProcessing = make(chan _Result)
@@ -1371,7 +1437,9 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		// 	}
 		// }
 		err := client.addRoute(routeID, messageHandler, systemAcks, userAcks, isSubscribe, isReplace)
-		if err != nil { return commandID, err }
+		if err != nil {
+			return commandID, err
+		}
 		if state != nil {
 			state.lock.Lock()
 			subscriptionManager := state.subscriptionManager
@@ -1388,19 +1456,23 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		subID, hasSubID := command.SubID()
 		if !hasSubID || subID == "all" {
 			// Close the message streams first
-			var closeErr error;
+			var closeErr error
 			client.messageStreams.Range(func(key interface{}, ms interface{}) bool {
 				// client.msgRouter.RemoveRoute(key.(string))
 				// return client.msgRouter.FindRoute(key.(string)) == nil
-				closeErr = client.deleteRoute(key.(string));
+				closeErr = client.deleteRoute(key.(string))
 				return closeErr == nil
 			})
-			if closeErr != nil { return subID, errors.New("Error deleting routes") }
+			if closeErr != nil {
+				return subID, errors.New("Error deleting routes")
+			}
 			client.routes = new(sync.Map)
 		} else {
 			// client.msgRouter.RemoveRoute(subID)
-			err := client.deleteRoute(subID);
-			if err != nil { return subID, errors.New("Error deleting route") }
+			err := client.deleteRoute(subID)
+			if err != nil {
+				return subID, errors.New("Error deleting route")
+			}
 		}
 		if state != nil {
 			state.lock.Lock()
@@ -1418,7 +1490,9 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		routeID = commandID
 		// client.msgRouter.AddRoute(commandID, messageHandler, userAcks, systemAcks, false, false)
 		err := client.addRoute(commandID, messageHandler, systemAcks, userAcks, false, false)
-		if err != nil { return commandID, err }
+		if err != nil {
+			return commandID, err
+		}
 
 	case CommandSOWDelete:
 		fallthrough
@@ -1444,7 +1518,9 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			routeID = commandID
 			// client.msgRouter.AddRoute(commandID, messageHandler, userAcks, AckTypeNone, false, false)
 			err := client.addRoute(commandID, messageHandler, AckTypeNone, userAcks, false, false)
-			if err != nil { return commandID, err }
+			if err != nil {
+				return commandID, err
+			}
 		}
 	}
 
@@ -1468,15 +1544,17 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			client.acksLock.Lock()
 
 			// Send the command
-			err := client.send(command)
-			if err != nil {
+			sendErr := client.send(command)
+			if sendErr != nil {
 				if client.shouldRetryCommand(command.header.command) {
 					client.queueRetryCommand(command, messageHandler)
 				}
 				// delete a subscription, if any
 				// client.msgRouter.RemoveRoute(routeID)
-				err = client.deleteRoute(routeID)
-				if err != nil { return routeID, errors.New("Error deleting route") }
+				routeErr := client.deleteRoute(routeID)
+				if routeErr != nil {
+					return routeID, errors.New("Error deleting route")
+				}
 
 				// close channel, if any
 				client.ackProcessingLock.Lock()
@@ -1490,8 +1568,8 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 				client.acksLock.Unlock()
 
 				// now we're done
-				client.handleSendFailure(command, err)
-				return commandID, NewError(DisconnectedError, err)
+				client.handleSendFailure(command, sendErr)
+				return commandID, NewError(DisconnectedError, sendErr)
 			}
 
 			// Wait for the ack response
@@ -1504,30 +1582,36 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			client.ackProcessingLock.Unlock()
 
 			// Success
-			if result.Status { return routeID, nil }
+			if result.Status {
+				return routeID, nil
+			}
 
 			// command was invalid -- delete a subscription, if any
 			// client.msgRouter.RemoveRoute(routeID)
-			err = client.deleteRoute(routeID)
-			if err != nil { return routeID, errors.New("Error deleting route") }
+			routeErr := client.deleteRoute(routeID)
+			if routeErr != nil {
+				return routeID, errors.New("Error deleting route")
+			}
 
 			return commandID, reasonToError(result.Reason)
 		}
 
 		// Send the command
-		err := client.send(command)
-		if err != nil {
+		sendErr := client.send(command)
+		if sendErr != nil {
 			if client.shouldRetryCommand(command.header.command) {
 				client.queueRetryCommand(command, messageHandler)
 			}
 			// delete a subscription, if any
 			// client.msgRouter.RemoveRoute(routeID)
-			err = client.deleteRoute(routeID)
-			if err != nil { return routeID, errors.New("Error deleting route") }
+			routeErr := client.deleteRoute(routeID)
+			if routeErr != nil {
+				return routeID, errors.New("Error deleting route")
+			}
 
 			// now we're done
-			client.handleSendFailure(command, err)
-			return commandID, NewError(DisconnectedError, err)
+			client.handleSendFailure(command, sendErr)
+			return commandID, NewError(DisconnectedError, sendErr)
 		}
 
 		return routeID, nil
@@ -1536,7 +1620,6 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	return commandID, NewError(DisconnectedError, "Client is not connected while trying to send data")
 }
 
-
 // SubscribeAsync performs the subscribe command. The subscribe command is the primary way to retrieve messages from the
 // AMPS processing stream. A client can issue a subscribe command on a topic to receive all published messages to that
 // topic in the future. Additionally, content filtering can be used to choose which messages the client is interested in
@@ -1544,11 +1627,10 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 //
 // Example:
 //
-//		subID, err := client.SubscribeAsync(func(message *amps.Message) error {
-//			fmt.Println("Message Data:", string(message.Data()))
-//			return nil
-//		}, "invoices", "/price < 10000")
-//
+//	subID, err := client.SubscribeAsync(func(message *amps.Message) error {
+//		fmt.Println("Message Data:", string(message.Data()))
+//		return nil
+//	}, "invoices", "/price < 10000")
 //
 // Arguments:
 //
@@ -1560,10 +1642,11 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) SubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.ExecuteAsync(cmd, messageHandler)
 }
-
 
 // DeltaSubscribeAsync performs the delta_subscribe command. The delta_subscribe command is like the subscribe command
 // except that subscriptions placed through delta_subscribe will receive only messages that have changed between the SOW
@@ -1572,11 +1655,10 @@ func (client *Client) SubscribeAsync(messageHandler func(*Message) error, topic 
 //
 // Example:
 //
-//		subID, err := client.DeltaSubscribeAsync(func(message *amps.Message) error {
-//			fmt.Println("Message Data:", string(message.Data()))
-//			return nil
-//		}, "orders")
-//
+//	subID, err := client.DeltaSubscribeAsync(func(message *amps.Message) error {
+//		fmt.Println("Message Data:", string(message.Data()))
+//		return nil
+//	}, "orders")
 //
 // Arguments:
 //
@@ -1588,10 +1670,11 @@ func (client *Client) SubscribeAsync(messageHandler func(*Message) error, topic 
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) DeltaSubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("delta_subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.ExecuteAsync(cmd, messageHandler)
 }
-
 
 // SowAsync performs the sow command. The sow command is used to query the contents of a previously defined SOW Topic.
 // A sow command can be used to query an entire SOW Topic, or a filter can be used to further refine the results found
@@ -1599,11 +1682,10 @@ func (client *Client) DeltaSubscribeAsync(messageHandler func(*Message) error, t
 //
 // Example:
 //
-//		subID, err := client.SowAsync(func(message *amps.Message) error {
-//			fmt.Println("Message Data:", string(message.Data()))
-//			return nil
-//		}, "orders")
-//
+//	subID, err := client.SowAsync(func(message *amps.Message) error {
+//		fmt.Println("Message Data:", string(message.Data()))
+//		return nil
+//	}, "orders")
 //
 // Arguments:
 //
@@ -1615,10 +1697,11 @@ func (client *Client) DeltaSubscribeAsync(messageHandler func(*Message) error, t
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) SowAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("sow").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.ExecuteAsync(cmd, messageHandler)
 }
-
 
 // SowAndSubscribeAsync performs the sow_and_subscribe command. A sow_and_subscribe command is used to combine the
 // functionality of sow and a subscribe command in a single command. The sow_and_subscribe command is used:
@@ -1633,11 +1716,10 @@ func (client *Client) SowAsync(messageHandler func(*Message) error, topic string
 //
 // Example:
 //
-//		subID, err := client.SowAndSubscribeAsync(func(message *amps.Message) error {
-//			fmt.Println("Message Data:", string(message.Data()))
-//			return nil
-//		}, "orders")
-//
+//	subID, err := client.SowAndSubscribeAsync(func(message *amps.Message) error {
+//		fmt.Println("Message Data:", string(message.Data()))
+//		return nil
+//	}, "orders")
 //
 // Arguments:
 //
@@ -1649,10 +1731,11 @@ func (client *Client) SowAsync(messageHandler func(*Message) error, topic string
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) SowAndSubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("sow_and_subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.ExecuteAsync(cmd, messageHandler)
 }
-
 
 // SowAndDeltaSubscribeAsync performs the sow_and_delta_subscribe command. A sow_and_delta_subscribe command is used to
 // combine the functionality of commands sow and a delta_subscribe in a single command. The sow_and_delta_subscribe
@@ -1670,11 +1753,10 @@ func (client *Client) SowAndSubscribeAsync(messageHandler func(*Message) error, 
 //
 // Example:
 //
-//		subID, err := client.SowAndDeltaSubscribeAsync(func(message *amps.Message) error {
-//			fmt.Println("Message Data:", string(message.Data()))
-//			return nil
-//		}, "orders")
-//
+//	subID, err := client.SowAndDeltaSubscribeAsync(func(message *amps.Message) error {
+//		fmt.Println("Message Data:", string(message.Data()))
+//		return nil
+//	}, "orders")
 //
 // Arguments:
 //
@@ -1686,20 +1768,21 @@ func (client *Client) SowAndSubscribeAsync(messageHandler func(*Message) error, 
 // filter [string] (optional) - An optional content filter value.
 func (client *Client) SowAndDeltaSubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("sow_and_delta_subscribe").SetTopic(topic)
-	if len(filter) > 0 { cmd.SetFilter(filter[0]) }
+	if len(filter) > 0 {
+		cmd.SetFilter(filter[0])
+	}
 	return client.ExecuteAsync(cmd, messageHandler)
 }
-
 
 // SowDelete executes a SOW delete with a filter.
 //
 // Example:
 //
-//     stats, err := client.SowDelete("orders", "1=1")
-//     if err != nil { ... }
+//	stats, err := client.SowDelete("orders", "1=1")
+//	if err != nil { ... }
 //
-//     fmt.Println(stats.AckType())
-//     fmt.Println(stats.Status())
+//	fmt.Println(stats.AckType())
+//	fmt.Println(stats.Status())
 //
 // Arguments:
 //
@@ -1728,7 +1811,9 @@ func (client *Client) SowDelete(topic string, filter string) (*Message, error) {
 	})
 
 	// the command failed before getting the ack
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// Waiting for the result
 	stats := <-result
@@ -1737,18 +1822,17 @@ func (client *Client) SowDelete(topic string, filter string) (*Message, error) {
 	return stats.Stats, stats.Error
 }
 
-
 // SowDeleteByData deletes a message from a SOW, using data supplied to locate a SOW entry with matching keys.
 //
 // Example:
 //
-//     topic, _ := message.Topic()
+//	topic, _ := message.Topic()
 //
-//     stats, err := client.SowDeleteByData(topic, message.Data())
-//     if err != nil { ... }
+//	stats, err := client.SowDeleteByData(topic, message.Data())
+//	if err != nil { ... }
 //
-//     fmt.Println(stats.AckType())
-//     fmt.Println(stats.Status())
+//	fmt.Println(stats.AckType())
+//	fmt.Println(stats.Status())
 //
 // Arguments:
 //
@@ -1777,7 +1861,9 @@ func (client *Client) SowDeleteByData(topic string, data []byte) (*Message, erro
 	})
 
 	// the command failed before getting the ack
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// Waiting for the result
 	stats := <-result
@@ -1786,21 +1872,20 @@ func (client *Client) SowDeleteByData(topic string, data []byte) (*Message, erro
 	return stats.Stats, stats.Error
 }
 
-
 // SowDeleteByKeys executes a SOW delete with sow keys (supplied as a comma-separated values in a string). SOW keys are
 // provided in the header of a SOW message, and are the internal identifier AMPS uses for that SOW message.
 //
 // Example:
 //
-//     topic, _ := sowMessage1.Topic()
-//     firstMessageKey, _ := sowMessage1.SowKey()
-//     secondMessageKey, _ := sowMessage2.SowKey()
+//	topic, _ := sowMessage1.Topic()
+//	firstMessageKey, _ := sowMessage1.SowKey()
+//	secondMessageKey, _ := sowMessage2.SowKey()
 //
-//     stats, err := client.SowDeleteByKeys(topic, firstMessageKey + "," + secondMessageKey)
-//     if err != nil { ... }
+//	stats, err := client.SowDeleteByKeys(topic, firstMessageKey + "," + secondMessageKey)
+//	if err != nil { ... }
 //
-//     fmt.Println(stats.AckType())
-//     fmt.Println(stats.Status())
+//	fmt.Println(stats.AckType())
+//	fmt.Println(stats.Status())
 //
 // Arguments:
 //
@@ -1830,7 +1915,9 @@ func (client *Client) SowDeleteByKeys(topic string, keys string) (*Message, erro
 	})
 
 	// the command failed before getting the ack
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// Waiting for the result
 	stats := <-result
@@ -1838,7 +1925,6 @@ func (client *Client) SowDeleteByKeys(topic string, keys string) (*Message, erro
 
 	return stats.Stats, stats.Error
 }
-
 
 // Unsubscribe performs the unsubscribe command. The unsubscribe command unsubscribes the client from the topic which
 // messages the client is is no more interested in receiving. If the subID is not provided, the client will unsubscribe
@@ -1850,14 +1936,17 @@ func (client *Client) SowDeleteByKeys(topic string, keys string) (*Message, erro
 // unsubscribe from all subscriptions.
 func (client *Client) Unsubscribe(subID ...string) error {
 	var subIDInternal string
-	if len(subID) > 0 { subIDInternal = subID[0] } else  { subIDInternal = "all" }
+	if len(subID) > 0 {
+		subIDInternal = subID[0]
+	} else {
+		subIDInternal = "all"
+	}
 
 	cmd := NewCommand("unsubscribe").SetSubID(subIDInternal)
 	_, err := client.ExecuteAsync(cmd, nil)
 
 	return err
 }
-
 
 // Disconnect disconnects the client from an AMPS server (if the connection existed). Same as Close()
 func (client *Client) Disconnect() (err error) {
@@ -1888,7 +1977,9 @@ func (client *Client) Disconnect() (err error) {
 	if client.connection != nil {
 		err = client.connection.Close()
 		client.connection = nil
-		if err != nil { return NewError(ConnectionError, err) }
+		if err != nil {
+			return NewError(ConnectionError, err)
+		}
 		client.notifyConnectionState(ConnectionStateDisconnected)
 		return
 	}
@@ -1913,17 +2004,14 @@ func (client *Client) Disconnect() (err error) {
 	return NewError(DisconnectedError, "Client is not Connected")
 }
 
-
 // Close disconnects the client from an AMPS server (if the connection existed).
 func (client *Client) Close() error {
 	return client.Disconnect()
 }
 
-
 // NewClient creates a new Client object and returns it.
 //
 // Arguments:
-//
 //
 // clientName [string] (optional)
 //
@@ -1935,16 +2023,16 @@ func NewClient(clientName ...string) *Client {
 		clientNameInternal = clientName[0]
 	} else {
 		clientNameInternal = ClientVersion + "-" + strconv.FormatInt(time.Now().Unix(), 10) +
-		"-" + strconv.FormatInt(rand.Int63n(1000000000000), 10)
+			"-" + strconv.FormatInt(rand.Int63n(1000000000000), 10)
 	}
 
 	client := &Client{
-		clientName: clientNameInternal,
-		sendBuffer: bytes.NewBuffer(nil),
-		command: &Command{header: new(_Header)},
-		hbCommand: &Command{header: new(_Header)},
-		message: &Message{header: new(_Header)},
-		routes: new(sync.Map),
+		clientName:     clientNameInternal,
+		sendBuffer:     bytes.NewBuffer(nil),
+		command:        &Command{header: new(_Header)},
+		hbCommand:      &Command{header: new(_Header)},
+		message:        &Message{header: new(_Header)},
+		routes:         new(sync.Map),
 		messageStreams: new(sync.Map),
 	}
 
