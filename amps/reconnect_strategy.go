@@ -1,0 +1,102 @@
+package amps
+
+import (
+	"math"
+	"sync"
+	"time"
+)
+
+// FixedDelayStrategy uses a constant reconnect delay.
+type FixedDelayStrategy struct {
+	Delay time.Duration
+}
+
+// NewFixedDelayStrategy creates a fixed reconnect delay strategy.
+func NewFixedDelayStrategy(delay time.Duration) *FixedDelayStrategy {
+	if delay < 0 {
+		delay = 0
+	}
+	return &FixedDelayStrategy{Delay: delay}
+}
+
+// GetConnectWaitDuration returns fixed reconnect wait duration.
+func (strategy *FixedDelayStrategy) GetConnectWaitDuration(uri string) (time.Duration, error) {
+	if strategy == nil {
+		return 0, nil
+	}
+	return strategy.Delay, nil
+}
+
+// Reset is a no-op for fixed delay strategy.
+func (strategy *FixedDelayStrategy) Reset() {}
+
+// ExponentialDelayStrategy uses exponential backoff reconnect delays.
+type ExponentialDelayStrategy struct {
+	lock      sync.Mutex
+	BaseDelay time.Duration
+	MaxDelay  time.Duration
+	Factor    float64
+	attempts  map[string]uint32
+}
+
+// NewExponentialDelayStrategy creates an exponential reconnect delay strategy.
+func NewExponentialDelayStrategy(baseDelay time.Duration, maxDelay time.Duration, factor float64) *ExponentialDelayStrategy {
+	if baseDelay < 0 {
+		baseDelay = 0
+	}
+	if maxDelay <= 0 {
+		maxDelay = 30 * time.Second
+	}
+	if factor < 1 {
+		factor = 2
+	}
+	return &ExponentialDelayStrategy{
+		BaseDelay: baseDelay,
+		MaxDelay:  maxDelay,
+		Factor:    factor,
+		attempts:  make(map[string]uint32),
+	}
+}
+
+// GetConnectWaitDuration returns next delay using exponential backoff.
+func (strategy *ExponentialDelayStrategy) GetConnectWaitDuration(uri string) (time.Duration, error) {
+	if strategy == nil {
+		return 0, nil
+	}
+
+	strategy.lock.Lock()
+	defer strategy.lock.Unlock()
+
+	if uri == "" {
+		uri = "_default"
+	}
+
+	attempt := strategy.attempts[uri]
+	strategy.attempts[uri] = attempt + 1
+
+	delay := strategy.BaseDelay
+	if attempt > 0 && delay > 0 {
+		delayFloat := float64(delay) * math.Pow(strategy.Factor, float64(attempt))
+		if delayFloat > float64(strategy.MaxDelay) {
+			delayFloat = float64(strategy.MaxDelay)
+		}
+		delay = time.Duration(delayFloat)
+	}
+	if delay > strategy.MaxDelay {
+		delay = strategy.MaxDelay
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	return delay, nil
+}
+
+// Reset clears backoff state.
+func (strategy *ExponentialDelayStrategy) Reset() {
+	if strategy == nil {
+		return
+	}
+	strategy.lock.Lock()
+	strategy.attempts = make(map[string]uint32)
+	strategy.lock.Unlock()
+}
