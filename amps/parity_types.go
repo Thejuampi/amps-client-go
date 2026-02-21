@@ -183,6 +183,7 @@ type clientParityState struct {
 	httpPreflightHeaders   []string
 	transportFilter        TransportFilter
 	receiveRoutineCallback func()
+	receiveRoutineStop     func()
 	publishBatchSizeBytes  uint64
 	publishBatchTimeout    time.Duration
 	deferredExecutions     []deferredExecutionCall
@@ -376,6 +377,30 @@ func (client *Client) callReceiveRoutineStartedCallback() {
 	defer func() {
 		if recovered := recover(); recovered != nil && exceptionListener != nil {
 			exceptionListener.ExceptionThrown(fmt.Errorf("receive routine callback panic: %v", recovered))
+		}
+	}()
+
+	callback()
+}
+
+func (client *Client) callReceiveRoutineStoppedCallback() {
+	state := ensureClientState(client)
+	if state == nil {
+		return
+	}
+
+	state.lock.Lock()
+	callback := state.receiveRoutineStop
+	exceptionListener := state.exceptionListener
+	state.lock.Unlock()
+
+	if callback == nil {
+		return
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil && exceptionListener != nil {
+			exceptionListener.ExceptionThrown(fmt.Errorf("receive routine stop callback panic: %v", recovered))
 		}
 	}()
 

@@ -1099,6 +1099,18 @@ func (client *Client) SetReceiveRoutineStartedCallback(callback func()) *Client 
 	return client
 }
 
+// SetReceiveRoutineStoppedCallback sets receive routine stop callback on the receiver.
+func (client *Client) SetReceiveRoutineStoppedCallback(callback func()) *Client {
+	state := ensureClientState(client)
+	if state == nil {
+		return client
+	}
+	state.lock.Lock()
+	state.receiveRoutineStop = callback
+	state.lock.Unlock()
+	return client
+}
+
 func (client *Client) setInternalDisconnectHandler(handler func(error)) {
 	state := ensureClientState(client)
 	if state == nil {

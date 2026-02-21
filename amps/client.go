@@ -154,6 +154,7 @@ func (client *Client) readRoutine() {
 		return
 	}
 	client.callReceiveRoutineStartedCallback()
+	defer client.callReceiveRoutineStoppedCallback()
 
 	client.receiveBuffer = make([]byte, 128*1024)
 	client.lengthBytes = make([]byte, 4)

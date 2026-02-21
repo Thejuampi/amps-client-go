@@ -119,7 +119,12 @@ Inflate family:
 ## Behavioral Notes
 
 - Handle APIs are compatibility wrappers around Go-managed objects.
-- Socket and thread semantics follow Go runtime/transport behavior, not POSIX thread identity guarantees.
+- Thread counters are process-global cumulative lifecycle counters:
+  - `GetThreadCreateCount`: receive-routine starts.
+  - `GetThreadJoinCount`: join-like waits attempted by `ClientDisconnect` while receive is active.
+  - `GetThreadDetachCount`: receive-routine stops not consumed by a join wait.
+- `ClientDisconnect` performs a bounded wait for receive-loop termination when active.
+- Socket and thread identifier semantics follow Go runtime/transport behavior, not POSIX thread identity guarantees.
 - SSL and zlib entrypoints provide compatibility contracts for AMPS client extension wiring; they are not a drop-in OpenSSL C ABI layer.
 
 ## Validation

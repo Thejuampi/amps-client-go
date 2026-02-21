@@ -40,6 +40,7 @@ Current gate result (manifest in this repository revision):
 - Existing Go API signatures remain backward compatible.
 - Compatibility entrypoints are additive.
 - Deprecated C++ APIs are excluded from required parity scope.
+- C API thread counters map to cumulative receive-lifecycle counters (`create`/`join-like wait`/`detach-like stop`) rather than raw OS thread primitives.
 
 ## Related Documentation
 

@@ -50,7 +50,7 @@ Symbol gate baseline:
 
 - `HAClient.SetDisconnectHandler(...)` intentionally returns a usage error; HA reconnect logic owns disconnect handling.
 - Persistence is behaviorally compatible but not binary-file compatible with C++ store file formats.
-- C-compatible thread/socket reporting reflects Go runtime and transport capabilities.
+- C-compatible thread counters are lifecycle-compatible counters, but callback `threadID` values are Go-generated identifiers rather than OS thread IDs.
 
 ## Validation References
 

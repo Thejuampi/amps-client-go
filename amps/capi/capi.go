@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/zlib"
 	"io"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,14 +104,23 @@ type InflateEndFunc func(stream *ZStream) int
 
 type clientObject struct {
 	client              *amps.Client
+	handle              Handle
 	lastError           string
 	messageHandler      Handler
+	threadCreated       ThreadCreatedCallback
+	threadCreatedData   any
 	disconnectHandler   Handler
 	predisconnect       Handler
 	threadExitCallback  ThreadExitCallback
 	threadExitUserData  any
 	transportUserData   any
 	transportFilterFunc TransportFilterFunction
+	receiveActive       bool
+	receiveDone         chan struct{}
+	joinWaitActive      bool
+	joinTimeout         time.Duration
+	receiveToken        uint64
+	lock                sync.Mutex
 }
 
 type messageObject struct {
@@ -123,6 +131,10 @@ type messageObject struct {
 var (
 	nextHandle atomic.Uint64
 	objects    sync.Map
+	threadID   atomic.Uint64
+	threadMade atomic.Uint64
+	threadJoin atomic.Uint64
+	threadDrop atomic.Uint64
 	sslError   string
 	sslCode    atomic.Uint64
 	sslNext    atomic.Uint64
@@ -171,6 +183,68 @@ func getMessageObject(handle Handle) (*messageObject, bool) {
 		return nil, false
 	}
 	return obj, true
+}
+
+func onReceiveRoutineStarted(object *clientObject) {
+	if object == nil {
+		return
+	}
+	token := threadID.Add(1)
+	threadMade.Add(1)
+
+	object.lock.Lock()
+	object.receiveToken = token
+	object.receiveDone = make(chan struct{})
+	object.receiveActive = true
+	callback := object.threadCreated
+	userData := object.threadCreatedData
+	object.lock.Unlock()
+
+	if callback != nil {
+		callback(token, userData)
+	}
+}
+
+func onReceiveRoutineStopped(object *clientObject) {
+	if object == nil {
+		return
+	}
+
+	object.lock.Lock()
+	if !object.receiveActive {
+		object.lock.Unlock()
+		return
+	}
+	object.receiveActive = false
+	done := object.receiveDone
+	object.receiveDone = nil
+	waitingForJoin := object.joinWaitActive
+	token := object.receiveToken
+	callback := object.threadExitCallback
+	userData := object.threadExitUserData
+	object.lock.Unlock()
+
+	if done != nil {
+		close(done)
+	}
+	if !waitingForJoin {
+		threadDrop.Add(1)
+	}
+	if callback != nil {
+		callback(token, userData)
+	}
+}
+
+func installReceiveLifecycle(object *clientObject) {
+	if object == nil || object.client == nil {
+		return
+	}
+	object.client.SetReceiveRoutineStartedCallback(func() {
+		onReceiveRoutineStarted(object)
+	})
+	object.client.SetReceiveRoutineStoppedCallback(func() {
+		onReceiveRoutineStopped(object)
+	})
 }
 
 func setClientError(object *clientObject, err error) int {
@@ -313,7 +387,14 @@ func messageFromAmps(message *amps.Message) Handle {
 // ClientCreate creates a new client handle.
 func ClientCreate(clientName string) Handle {
 	client := amps.NewClient(clientName)
-	return newHandle(&clientObject{client: client})
+	object := &clientObject{
+		client:      client,
+		joinTimeout: 10 * time.Second,
+	}
+	handle := newHandle(object)
+	object.handle = handle
+	installReceiveLifecycle(object)
+	return handle
 }
 
 // ClientSetName sets client name for handle.
@@ -342,17 +423,40 @@ func ClientDisconnect(handle Handle) {
 	if !ok {
 		return
 	}
+
+	waitTimeout := time.Duration(0)
+	var waitDone chan struct{}
+	object.lock.Lock()
+	if object.receiveActive {
+		if !object.joinWaitActive {
+			object.joinWaitActive = true
+			threadJoin.Add(1)
+		}
+		waitDone = object.receiveDone
+		waitTimeout = object.joinTimeout
+	}
+	object.lock.Unlock()
+
 	_ = object.client.Disconnect()
-	if object.threadExitCallback != nil {
-		object.threadExitCallback(uint64(time.Now().UnixNano()), object.threadExitUserData)
+
+	if waitDone != nil {
+		if waitTimeout <= 0 {
+			waitTimeout = 10 * time.Second
+		}
+		select {
+		case <-waitDone:
+		case <-time.After(waitTimeout):
+		}
+		object.lock.Lock()
+		object.joinWaitActive = false
+		object.lock.Unlock()
 	}
 }
 
 // ClientDestroy removes handle and closes connection.
 func ClientDestroy(handle Handle) {
-	object, ok := getClientObject(handle)
-	if ok {
-		_ = object.client.Disconnect()
+	if _, ok := getClientObject(handle); ok {
+		ClientDisconnect(handle)
 	}
 	objects.Delete(handle)
 }
@@ -552,24 +656,23 @@ func ClientSetThreadCreatedCallback(handle Handle, callback ThreadCreatedCallbac
 	if !ok {
 		return ENotFound
 	}
-	if callback == nil {
-		object.client.SetReceiveRoutineStartedCallback(nil)
-		return EOK
-	}
-	object.client.SetReceiveRoutineStartedCallback(func() {
-		callback(uint64(time.Now().UnixNano()), userData)
-	})
+	object.lock.Lock()
+	object.threadCreated = callback
+	object.threadCreatedData = userData
+	object.lock.Unlock()
 	return EOK
 }
 
-// ClientSetThreadExitCallback sets synthetic thread-exit callback.
+// ClientSetThreadExitCallback sets receive-routine stop callback.
 func ClientSetThreadExitCallback(handle Handle, callback ThreadExitCallback, userData any) int {
 	object, ok := getClientObject(handle)
 	if !ok {
 		return ENotFound
 	}
+	object.lock.Lock()
 	object.threadExitCallback = callback
 	object.threadExitUserData = userData
+	object.lock.Unlock()
 	return EOK
 }
 
@@ -1165,17 +1268,17 @@ func InvokeCopyRouteFunction(argument any) any {
 	return argument
 }
 
-// GetThreadCreateCount returns current goroutine count as a proxy metric.
+// GetThreadCreateCount returns cumulative receive-routine creation count.
 func GetThreadCreateCount() uint64 {
-	return uint64(runtime.NumGoroutine())
+	return threadMade.Load()
 }
 
-// GetThreadJoinCount returns zero for compatibility.
+// GetThreadJoinCount returns cumulative join-like disconnect wait count.
 func GetThreadJoinCount() uint64 {
-	return 0
+	return threadJoin.Load()
 }
 
-// GetThreadDetachCount returns zero for compatibility.
+// GetThreadDetachCount returns cumulative receive-routine exits not consumed by join wait.
 func GetThreadDetachCount() uint64 {
-	return 0
+	return threadDrop.Load()
 }
