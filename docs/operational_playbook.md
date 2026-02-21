@@ -55,6 +55,22 @@ Store policy:
 - Use `PublishFlush(...)` where publish persistence completion must be enforced.
 - Configure `FailedWriteHandler` for explicit outbound failure telemetry.
 
+## Example: Production-Oriented Baseline
+
+```go
+client.SetRetryOnDisconnect(true).
+	SetAutoAck(true).
+	SetAckBatchSize(100).
+	SetAckTimeout(time.Second).
+	SetPublishStore(amps.NewFilePublishStore("state/publish.json")).
+	SetBookmarkStore(amps.NewFileBookmarkStore("state/bookmarks.json"))
+
+client.AddConnectionStateListener(amps.ConnectionStateListenerFunc(func(state amps.ConnectionState) {
+	// send connection-state metric
+	_ = state
+}))
+```
+
 ## Failure Triage Checklist
 
 1. Confirm transport connectivity and URI correctness.
@@ -70,6 +86,7 @@ Store policy:
 2. Verify post-logon replay completed.
 3. Verify resubscription completed.
 4. Validate queue/bookmark positions after reconnect.
+5. Validate publish backlog drained (`PublishFlush` or store metrics).
 
 ## Related
 

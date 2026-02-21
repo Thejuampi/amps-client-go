@@ -1,9 +1,11 @@
 package amps
 
+// NvfixMessageShredder parses protocol payload data into structured parts.
 type NvfixMessageShredder struct {
 	fieldSeparator byte
 }
 
+// NewNVFIXShredder returns a new NVFIXShredder.
 func NewNVFIXShredder(fieldSep ...byte) *NvfixMessageShredder {
 	var _fieldSep byte
 
@@ -16,6 +18,7 @@ func NewNVFIXShredder(fieldSep ...byte) *NvfixMessageShredder {
 	return &NvfixMessageShredder{_fieldSep}
 }
 
+// ToMap executes the exported tomap operation.
 func (nfs *NvfixMessageShredder) ToMap(nvfix []byte) map[string]string {
 	nvfixMap := make(map[string]string, 0)
 	delimiterIndex := 0

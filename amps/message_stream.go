@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// Constants in this block define protocol and client behavior values.
 const (
 	messageStreamStateUnset        = 0x0
 	messageStreamStateReading      = 0x10
@@ -17,6 +18,7 @@ const (
 	messageStreamStateComplete     = 0x02
 )
 
+// MessageStream stores exported state used by AMPS client APIs.
 type MessageStream struct {
 	client    *Client
 	commandID string
@@ -34,28 +36,34 @@ type MessageStream struct {
 	lock sync.Mutex
 }
 
+// Timeout executes the exported timeout operation.
 func (ms *MessageStream) Timeout() uint64 {
 	return ms.timeout
 }
 
+// SetTimeout sets timeout on the receiver.
 func (ms *MessageStream) SetTimeout(timeout uint64) *MessageStream {
 	ms.timeout = timeout
 	return ms
 }
 
+// Depth executes the exported depth operation.
 func (ms *MessageStream) Depth() uint64 {
 	return ms.queue.length()
 }
 
+// MaxDepth executes the exported maxdepth operation.
 func (ms *MessageStream) MaxDepth() uint64 {
 	return ms.depth
 }
 
+// SetMaxDepth sets max depth on the receiver.
 func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
 	ms.depth = depth
 	return ms
 }
 
+// HasNext reports whether the receiver has next configured.
 func (ms *MessageStream) HasNext() bool {
 	if ms.state == messageStreamStateComplete {
 		return false
@@ -126,6 +134,7 @@ func (ms *MessageStream) HasNext() bool {
 	return false
 }
 
+// Next executes the exported next operation.
 func (ms *MessageStream) Next() (message *Message) {
 	if ms.timedOut {
 		ms.timedOut = false
@@ -182,6 +191,7 @@ func (ms *MessageStream) Next() (message *Message) {
 	return returnVal
 }
 
+// Conflate executes the exported conflate operation.
 func (ms *MessageStream) Conflate() {
 	if ms.sowKeyMap == nil {
 		ms.sowKeyMap = make(map[string]*Message)
@@ -193,6 +203,7 @@ func (ms *MessageStream) isConflating() bool {
 	return ms.sowKeyMap != nil
 }
 
+// Close is an alias for Disconnect.
 func (ms *MessageStream) Close() (err error) {
 	if ms.client == nil {
 		ms.commandID = ""

@@ -20,6 +20,11 @@ Key behaviors:
 - `Replay(replayer)` emits unpersisted commands in sequence order.
 - `Flush(timeout)` waits until unpersisted set is empty.
 
+Failure behavior:
+
+- Store/write errors are returned to caller.
+- Replay callback errors halt replay with propagated error.
+
 ## Bookmark Store
 
 Interface: `BookmarkStore`
@@ -38,6 +43,11 @@ Key behaviors:
 - `GetMostRecent(subID)` resume point lookup.
 - `Persisted(subID, bookmark)` mark persisted checkpoint.
 
+Failure behavior:
+
+- Invalid bookmark/message state may no-op or return default values based on implementation.
+- File-backed persistence failures can affect restart continuity.
+
 ## File-Backed Format
 
 File stores are Go-native persisted formats. Binary compatibility with non-Go client stores is not required.
@@ -46,6 +56,20 @@ File stores are Go-native persisted formats. Binary compatibility with non-Go cl
 
 - Memory stores: simplest runtime setup, non-durable.
 - File stores: durable replay/resume across process restarts.
+
+## Example: Configure Durable Stores
+
+```go
+client.SetPublishStore(amps.NewFilePublishStore("state/publish.json"))
+client.SetBookmarkStore(amps.NewFileBookmarkStore("state/bookmarks.json"))
+
+if err := client.Publish("orders", `{"id":42}`); err != nil {
+	panic(err)
+}
+if err := client.PublishFlush(2 * time.Second); err != nil {
+	panic(err)
+}
+```
 
 ## Related
 

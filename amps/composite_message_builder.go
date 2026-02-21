@@ -1,9 +1,11 @@
 package amps
 
+// CompositeMessageBuilder builds protocol payload data for publish and helper APIs.
 type CompositeMessageBuilder struct {
 	message []byte
 }
 
+// Clear executes the exported clear operation.
 func (cmb *CompositeMessageBuilder) Clear() {
 	cmb.message = make([]byte, 0)
 }
@@ -18,6 +20,7 @@ func (cmb *CompositeMessageBuilder) buildHeader(length int) {
 
 }
 
+// AppendBytes executes the exported appendbytes operation.
 func (cmb *CompositeMessageBuilder) AppendBytes(data []byte, offset int, length int) error {
 	if length > 0 {
 		cmb.buildHeader(length)
@@ -27,20 +30,24 @@ func (cmb *CompositeMessageBuilder) AppendBytes(data []byte, offset int, length 
 	return nil
 }
 
+// Append executes the exported append operation.
 func (cmb *CompositeMessageBuilder) Append(data string) error {
 	buffer := []byte(data)
 	length := len(buffer)
 	return cmb.AppendBytes(buffer, 0, length)
 }
 
+// GetData returns the current data value.
 func (cmb *CompositeMessageBuilder) GetData() string {
 	return string(cmb.message)
 }
 
+// GetBytes returns the current bytes value.
 func (cmb *CompositeMessageBuilder) GetBytes() []byte {
 	return cmb.message
 }
 
+// NewCompositeMessageBuilder returns a new CompositeMessageBuilder.
 func NewCompositeMessageBuilder() *CompositeMessageBuilder {
 	return &CompositeMessageBuilder{make([]byte, 0)}
 }

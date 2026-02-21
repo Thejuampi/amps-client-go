@@ -3,6 +3,7 @@ package amps
 import "errors"
 import "strconv"
 
+// FixMessageBuilder builds protocol payload data for publish and helper APIs.
 type FixMessageBuilder struct {
 	message        []byte
 	fieldSeparator byte
@@ -35,23 +36,28 @@ func (fmb *FixMessageBuilder) checkCapacity(bytesNeeded int) {
 	}
 }
 
+// Clear executes the exported clear operation.
 func (fmb *FixMessageBuilder) Clear() {
 	fmb.message = make([]byte, 0)
 	fmb.size = 0
 }
 
+// Size executes the exported size operation.
 func (fmb *FixMessageBuilder) Size() int {
 	return fmb.size
 }
 
+// Bytes executes the exported bytes operation.
 func (fmb *FixMessageBuilder) Bytes() []byte {
 	return fmb.message
 }
 
+// Data executes the exported data operation.
 func (fmb *FixMessageBuilder) Data() string {
 	return string(fmb.message)
 }
 
+// AppendBytes executes the exported appendbytes operation.
 func (fmb *FixMessageBuilder) AppendBytes(tag int, value []byte, offset int, length int) error {
 	if tag < 0 {
 		return errors.New("Illegal argument: negative tag value used in FIX builder")
@@ -72,10 +78,12 @@ func (fmb *FixMessageBuilder) AppendBytes(tag int, value []byte, offset int, len
 	return nil
 }
 
+// Append executes the exported append operation.
 func (fmb *FixMessageBuilder) Append(tag int, value string) error {
 	return fmb.AppendBytes(tag, []byte(value), 0, len(value))
 }
 
+// NewFIXBuilder returns a new FIXBuilder.
 func NewFIXBuilder(fieldSep ...byte) *FixMessageBuilder {
 	var _fieldSep byte
 

@@ -16,6 +16,7 @@ This document covers stream and query entrypoints:
 
 - Connected and logged on.
 - Topic exists and caller has entitlement.
+- Handler callbacks are safe for concurrent invocation.
 
 ## Pub/Sub Commands
 
@@ -34,7 +35,7 @@ This document covers stream and query entrypoints:
 | `SowAndDeltaSubscribe(...)` / `SowAndDeltaSubscribeAsync(...)` | Snapshot + delta stream | Remains active until unsubscribe.
 | `SowDelete(...)` / `SowDeleteByData(...)` / `SowDeleteByKeys(...)` | Mutation + stats ack | Stats ack consumed by helper.
 
-## Ack and Handler Behavior
+## Ack and Handler Order
 
 Route handling order for inbound messages:
 
@@ -46,22 +47,66 @@ Route handling order for inbound messages:
 
 For queue-specific ack semantics, see [Queue Ack Semantics](queue_ack_semantics.md).
 
-## Stream Management
+## Command Flow and Termination Semantics
 
-Synchronous calls return `MessageStream`.
+`Subscribe*`:
 
-Typical controls:
+- Continuous stream until `Unsubscribe`.
+- Initial command ack indicates route setup success/failure.
 
-- `SetTimeout(...)`
-- `SetMaxDepth(...)`
-- `Conflate()`
-- `Close()`
+`Sow*`:
+
+- Finite query stream.
+- Terminates on group-end/completed ack.
+
+`SowAndSubscribe*` / `SowAndDeltaSubscribe*`:
+
+- SOW snapshot first, then live stream continuation.
+- Requires explicit unsubscribe for termination.
+
+## Stream Management Controls
+
+Synchronous variants return `MessageStream` with these controls:
+
+- `SetTimeout(...)` for blocking reads.
+- `SetMaxDepth(...)` for queue depth bound.
+- `Conflate()` for queue compaction.
+- `Close()` to terminate local stream consumption.
 
 ## Failure Modes
 
 - Entitlement errors -> command failure ack / returned error.
 - Invalid topic/filter -> command failure ack / returned error.
 - Connection loss -> disconnect flow; resubscribe depends on manager and retry settings.
+
+Recovery path:
+
+1. Validate session state with `GetConnectionInfo()`.
+2. Reconnect/logon as needed.
+3. Re-execute subscription or query.
+4. Re-verify route handler registration.
+
+## Example: SOW-and-Subscribe Lifecycle
+
+```go
+stream, err := client.SowAndSubscribe("orders", "/status = 'open'")
+if err != nil {
+	panic(err)
+}
+defer stream.Close()
+
+for stream.HasNext() {
+	msg := stream.Next()
+	if msg == nil {
+		break
+	}
+	// process snapshot or live update
+}
+
+if err := client.Unsubscribe(); err != nil {
+	panic(err)
+}
+```
 
 ## Related
 

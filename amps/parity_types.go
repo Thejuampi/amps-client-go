@@ -9,10 +9,13 @@ import (
 	"time"
 )
 
+// ConnectionInfo contains best-effort transport and session metadata.
 type ConnectionInfo map[string]string
 
+// ConnectionState identifies lifecycle transitions for client connectivity.
 type ConnectionState int
 
+// ConnectionStateDisconnected and related constants define protocol and client behavior values.
 const (
 	ConnectionStateDisconnected       ConnectionState = 0
 	ConnectionStateShutdown           ConnectionState = 1
@@ -24,40 +27,53 @@ const (
 	ConnectionStateUnknown            ConnectionState = 16384
 )
 
+// ConnectionStateListener defines callbacks for observing client state changes.
 type ConnectionStateListener interface {
 	ConnectionStateChanged(ConnectionState)
 }
 
+// ConnectionStateListenerFunc adapts a function to the corresponding callback interface.
 type ConnectionStateListenerFunc func(ConnectionState)
 
+// ConnectionStateChanged executes the exported connectionstatechanged operation.
 func (f ConnectionStateListenerFunc) ConnectionStateChanged(state ConnectionState) { f(state) }
 
+// ExceptionListener defines callbacks for observing client state changes.
 type ExceptionListener interface {
 	ExceptionThrown(error)
 }
 
+// ExceptionListenerFunc adapts a function to the corresponding callback interface.
 type ExceptionListenerFunc func(error)
 
+// ExceptionThrown executes the exported exceptionthrown operation.
 func (f ExceptionListenerFunc) ExceptionThrown(err error) { f(err) }
 
+// FailedWriteHandler defines callbacks for client event handling.
 type FailedWriteHandler interface {
 	FailedWrite(message *Message, reason string)
 }
 
+// FailedWriteHandlerFunc adapts a function to the corresponding callback interface.
 type FailedWriteHandlerFunc func(message *Message, reason string)
 
+// FailedWrite executes the exported failedwrite operation.
 func (f FailedWriteHandlerFunc) FailedWrite(message *Message, reason string) { f(message, reason) }
 
+// FailedResubscribeHandler defines callbacks for client event handling.
 type FailedResubscribeHandler interface {
 	Failure(command *Command, requestedAckTypes int, err error) bool
 }
 
+// FailedResubscribeHandlerFunc adapts a function to the corresponding callback interface.
 type FailedResubscribeHandlerFunc func(command *Command, requestedAckTypes int, err error) bool
 
+// Failure executes the exported failure operation.
 func (f FailedResubscribeHandlerFunc) Failure(command *Command, requestedAckTypes int, err error) bool {
 	return f(command, requestedAckTypes, err)
 }
 
+// SubscriptionManager defines behavior required by exported AMPS client components.
 type SubscriptionManager interface {
 	Subscribe(messageHandler func(*Message) error, command *Command, requestedAckTypes int)
 	Unsubscribe(subID string)
@@ -66,6 +82,7 @@ type SubscriptionManager interface {
 	SetFailedResubscribeHandler(handler FailedResubscribeHandler)
 }
 
+// ServerChooser defines endpoint selection behavior for reconnect flows.
 type ServerChooser interface {
 	CurrentURI() string
 	CurrentAuthenticator() Authenticator
@@ -76,11 +93,13 @@ type ServerChooser interface {
 	Remove(uri string)
 }
 
+// ReconnectDelayStrategy defines delay selection behavior for reconnect attempts.
 type ReconnectDelayStrategy interface {
 	GetConnectWaitDuration(uri string) (time.Duration, error)
 	Reset()
 }
 
+// PublishStore defines persistence operations used for replay and deduplication.
 type PublishStore interface {
 	Store(command *Command) (uint64, error)
 	DiscardUpTo(sequence uint64) error
@@ -94,6 +113,7 @@ type PublishStore interface {
 	ErrorOnPublishGap() bool
 }
 
+// BookmarkStore defines persistence operations used for replay and deduplication.
 type BookmarkStore interface {
 	Log(message *Message) uint64
 	Discard(subID string, bookmarkSeqNo uint64)
@@ -106,13 +126,16 @@ type BookmarkStore interface {
 	SetServerVersion(version string)
 }
 
+// TransportFilterDirection identifies inbound or outbound filter execution.
 type TransportFilterDirection int
 
+// TransportFilterInbound and related constants define protocol and client behavior values.
 const (
 	TransportFilterInbound TransportFilterDirection = iota
 	TransportFilterOutbound
 )
 
+// TransportFilter transforms framed transport bytes before parse or write.
 type TransportFilter func(direction TransportFilterDirection, payload []byte) []byte
 
 type retryCommand struct {

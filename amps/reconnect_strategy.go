@@ -6,10 +6,12 @@ import (
 	"time"
 )
 
+// FixedDelayStrategy stores reconnect delay parameters.
 type FixedDelayStrategy struct {
 	Delay time.Duration
 }
 
+// NewFixedDelayStrategy returns a new FixedDelayStrategy.
 func NewFixedDelayStrategy(delay time.Duration) *FixedDelayStrategy {
 	if delay < 0 {
 		delay = 0
@@ -17,6 +19,7 @@ func NewFixedDelayStrategy(delay time.Duration) *FixedDelayStrategy {
 	return &FixedDelayStrategy{Delay: delay}
 }
 
+// GetConnectWaitDuration returns the current connect wait duration value.
 func (strategy *FixedDelayStrategy) GetConnectWaitDuration(uri string) (time.Duration, error) {
 	if strategy == nil {
 		return 0, nil
@@ -24,8 +27,10 @@ func (strategy *FixedDelayStrategy) GetConnectWaitDuration(uri string) (time.Dur
 	return strategy.Delay, nil
 }
 
+// Reset executes the exported reset operation.
 func (strategy *FixedDelayStrategy) Reset() {}
 
+// ExponentialDelayStrategy stores reconnect delay parameters.
 type ExponentialDelayStrategy struct {
 	lock      sync.Mutex
 	BaseDelay time.Duration
@@ -34,6 +39,7 @@ type ExponentialDelayStrategy struct {
 	attempts  map[string]uint32
 }
 
+// NewExponentialDelayStrategy returns a new ExponentialDelayStrategy.
 func NewExponentialDelayStrategy(baseDelay time.Duration, maxDelay time.Duration, factor float64) *ExponentialDelayStrategy {
 	if baseDelay < 0 {
 		baseDelay = 0
@@ -52,6 +58,7 @@ func NewExponentialDelayStrategy(baseDelay time.Duration, maxDelay time.Duration
 	}
 }
 
+// GetConnectWaitDuration returns the current connect wait duration value.
 func (strategy *ExponentialDelayStrategy) GetConnectWaitDuration(uri string) (time.Duration, error) {
 	if strategy == nil {
 		return 0, nil
@@ -84,6 +91,7 @@ func (strategy *ExponentialDelayStrategy) GetConnectWaitDuration(uri string) (ti
 	return delay, nil
 }
 
+// Reset executes the exported reset operation.
 func (strategy *ExponentialDelayStrategy) Reset() {
 	if strategy == nil {
 		return

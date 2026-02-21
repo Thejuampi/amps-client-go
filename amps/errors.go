@@ -2,6 +2,7 @@ package amps
 
 import "fmt"
 
+// AlreadyConnectedError and related constants define protocol and client behavior values.
 const (
 	AlreadyConnectedError = iota
 
@@ -61,6 +62,7 @@ func reasonToError(reason string) error {
 	return NewError(err)
 }
 
+// NewError returns a new Error.
 func NewError(errorCode int, message ...interface{}) error {
 	var errorName string
 

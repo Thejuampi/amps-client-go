@@ -7,6 +7,7 @@ type chooserEndpoint struct {
 	authenticator Authenticator
 }
 
+// DefaultServerChooser holds endpoint selection state for HA reconnect attempts.
 type DefaultServerChooser struct {
 	lock      sync.Mutex
 	endpoints []chooserEndpoint
@@ -14,6 +15,7 @@ type DefaultServerChooser struct {
 	lastError string
 }
 
+// NewDefaultServerChooser returns a new DefaultServerChooser.
 func NewDefaultServerChooser(uris ...string) *DefaultServerChooser {
 	chooser := &DefaultServerChooser{
 		endpoints: make([]chooserEndpoint, 0, len(uris)),
@@ -24,6 +26,7 @@ func NewDefaultServerChooser(uris ...string) *DefaultServerChooser {
 	return chooser
 }
 
+// CurrentURI executes the exported currenturi operation.
 func (chooser *DefaultServerChooser) CurrentURI() string {
 	if chooser == nil {
 		return ""
@@ -39,6 +42,7 @@ func (chooser *DefaultServerChooser) CurrentURI() string {
 	return chooser.endpoints[chooser.index].uri
 }
 
+// CurrentAuthenticator executes the exported currentauthenticator operation.
 func (chooser *DefaultServerChooser) CurrentAuthenticator() Authenticator {
 	if chooser == nil {
 		return nil
@@ -54,6 +58,7 @@ func (chooser *DefaultServerChooser) CurrentAuthenticator() Authenticator {
 	return chooser.endpoints[chooser.index].authenticator
 }
 
+// ReportFailure executes the exported reportfailure operation.
 func (chooser *DefaultServerChooser) ReportFailure(err error, info ConnectionInfo) {
 	if chooser == nil {
 		return
@@ -69,6 +74,7 @@ func (chooser *DefaultServerChooser) ReportFailure(err error, info ConnectionInf
 	_ = info
 }
 
+// ReportSuccess executes the exported reportsuccess operation.
 func (chooser *DefaultServerChooser) ReportSuccess(info ConnectionInfo) {
 	if chooser == nil {
 		return
@@ -79,6 +85,7 @@ func (chooser *DefaultServerChooser) ReportSuccess(info ConnectionInfo) {
 	_ = info
 }
 
+// Error executes the exported error operation.
 func (chooser *DefaultServerChooser) Error() string {
 	if chooser == nil {
 		return ""
@@ -88,6 +95,7 @@ func (chooser *DefaultServerChooser) Error() string {
 	return chooser.lastError
 }
 
+// Add executes the exported add operation.
 func (chooser *DefaultServerChooser) Add(uri string) ServerChooser {
 	if chooser == nil {
 		return chooser
@@ -101,6 +109,7 @@ func (chooser *DefaultServerChooser) Add(uri string) ServerChooser {
 	return chooser
 }
 
+// AddWithAuthenticator adds with authenticator behavior on the receiver.
 func (chooser *DefaultServerChooser) AddWithAuthenticator(uri string, authenticator Authenticator) *DefaultServerChooser {
 	if chooser == nil || uri == "" {
 		return chooser
@@ -111,6 +120,7 @@ func (chooser *DefaultServerChooser) AddWithAuthenticator(uri string, authentica
 	return chooser
 }
 
+// Remove executes the exported remove operation.
 func (chooser *DefaultServerChooser) Remove(uri string) {
 	if chooser == nil || uri == "" {
 		return

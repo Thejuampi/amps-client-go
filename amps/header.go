@@ -221,6 +221,7 @@ func (header *_Header) parseField(key []byte, value []byte) {
 	}
 }
 
+// Constants in this block define protocol and client behavior values.
 const (
 	closeStringValue = "\","
 	closeNumberValue = ","

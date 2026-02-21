@@ -21,6 +21,7 @@ type publishStoreFileState struct {
 	Records       []publishStoreRecord `json:"records"`
 }
 
+// MemoryPublishStore stores replay or bookmark state for recovery-oriented workflows.
 type MemoryPublishStore struct {
 	lock              sync.Mutex
 	entries           map[uint64]*Command
@@ -29,6 +30,7 @@ type MemoryPublishStore struct {
 	errorOnPublishGap bool
 }
 
+// NewMemoryPublishStore returns a new MemoryPublishStore.
 func NewMemoryPublishStore() *MemoryPublishStore {
 	return &MemoryPublishStore{
 		entries:       make(map[uint64]*Command),
@@ -37,6 +39,7 @@ func NewMemoryPublishStore() *MemoryPublishStore {
 	}
 }
 
+// Store returns the configured store instance used by the receiver.
 func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 	if store == nil {
 		return 0, errors.New("nil publish store")
@@ -65,6 +68,7 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 	return sequence, nil
 }
 
+// DiscardUpTo executes the exported discardupto operation.
 func (store *MemoryPublishStore) DiscardUpTo(sequence uint64) error {
 	if store == nil {
 		return errors.New("nil publish store")
@@ -89,6 +93,7 @@ func (store *MemoryPublishStore) DiscardUpTo(sequence uint64) error {
 	return nil
 }
 
+// Replay executes the exported replay operation.
 func (store *MemoryPublishStore) Replay(replayer func(*Command) error) error {
 	if store == nil {
 		return errors.New("nil publish store")
@@ -119,6 +124,7 @@ func (store *MemoryPublishStore) Replay(replayer func(*Command) error) error {
 	return nil
 }
 
+// ReplaySingle executes the exported replaysingle operation.
 func (store *MemoryPublishStore) ReplaySingle(replayer func(*Command) error, sequence uint64) (bool, error) {
 	if store == nil {
 		return false, errors.New("nil publish store")
@@ -140,6 +146,7 @@ func (store *MemoryPublishStore) ReplaySingle(replayer func(*Command) error, seq
 	return true, replayer(command)
 }
 
+// UnpersistedCount executes the exported unpersistedcount operation.
 func (store *MemoryPublishStore) UnpersistedCount() int {
 	if store == nil {
 		return 0
@@ -149,6 +156,7 @@ func (store *MemoryPublishStore) UnpersistedCount() int {
 	return len(store.entries)
 }
 
+// Flush executes the exported flush operation.
 func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 	if store == nil {
 		return errors.New("nil publish store")
@@ -175,6 +183,7 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 	}
 }
 
+// GetLowestUnpersisted returns the current lowest unpersisted value.
 func (store *MemoryPublishStore) GetLowestUnpersisted() uint64 {
 	if store == nil {
 		return 0
@@ -193,6 +202,7 @@ func (store *MemoryPublishStore) GetLowestUnpersisted() uint64 {
 	return lowest
 }
 
+// GetLastPersisted returns the current last persisted value.
 func (store *MemoryPublishStore) GetLastPersisted() uint64 {
 	if store == nil {
 		return 0
@@ -202,6 +212,7 @@ func (store *MemoryPublishStore) GetLastPersisted() uint64 {
 	return store.lastPersisted
 }
 
+// SetErrorOnPublishGap sets error on publish gap on the receiver.
 func (store *MemoryPublishStore) SetErrorOnPublishGap(enabled bool) {
 	if store == nil {
 		return
@@ -211,6 +222,7 @@ func (store *MemoryPublishStore) SetErrorOnPublishGap(enabled bool) {
 	store.lock.Unlock()
 }
 
+// ErrorOnPublishGap executes the exported erroronpublishgap operation.
 func (store *MemoryPublishStore) ErrorOnPublishGap() bool {
 	if store == nil {
 		return false
@@ -220,11 +232,13 @@ func (store *MemoryPublishStore) ErrorOnPublishGap() bool {
 	return store.errorOnPublishGap
 }
 
+// FilePublishStore stores replay or bookmark state for recovery-oriented workflows.
 type FilePublishStore struct {
 	*MemoryPublishStore
 	path string
 }
 
+// NewFilePublishStore returns a new FilePublishStore.
 func NewFilePublishStore(path string) *FilePublishStore {
 	fileStore := &FilePublishStore{
 		MemoryPublishStore: NewMemoryPublishStore(),
@@ -234,6 +248,7 @@ func NewFilePublishStore(path string) *FilePublishStore {
 	return fileStore
 }
 
+// Store returns the configured store instance used by the receiver.
 func (store *FilePublishStore) Store(command *Command) (uint64, error) {
 	sequence, err := store.MemoryPublishStore.Store(command)
 	if err != nil {
@@ -245,6 +260,7 @@ func (store *FilePublishStore) Store(command *Command) (uint64, error) {
 	return sequence, nil
 }
 
+// DiscardUpTo executes the exported discardupto operation.
 func (store *FilePublishStore) DiscardUpTo(sequence uint64) error {
 	if err := store.MemoryPublishStore.DiscardUpTo(sequence); err != nil {
 		return err
@@ -252,6 +268,7 @@ func (store *FilePublishStore) DiscardUpTo(sequence uint64) error {
 	return store.save()
 }
 
+// SetErrorOnPublishGap sets error on publish gap on the receiver.
 func (store *FilePublishStore) SetErrorOnPublishGap(enabled bool) {
 	store.MemoryPublishStore.SetErrorOnPublishGap(enabled)
 	_ = store.save()

@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+// ClientVersion and related constants define protocol and client behavior values.
 const (
 	ClientVersion = "0.1.0"
 
@@ -30,6 +31,7 @@ const (
 	AckTypeStats     = 32
 )
 
+// Client manages a single AMPS connection, command execution, and message routing.
 type Client struct {
 	clientName         string
 	serverVersion      string
@@ -554,45 +556,56 @@ func (client *Client) checkAndSendHeartbeat(force bool) {
 	}
 }
 
+// LogonParams stores exported state used by AMPS client APIs.
 type LogonParams struct {
 	Timeout       uint
 	Authenticator Authenticator
 	CorrelationID string
 }
 
+// ClientName executes the exported clientname operation.
 func (client *Client) ClientName() string { return client.clientName }
 
+// SetClientName sets client name on the receiver.
 func (client *Client) SetClientName(clientName string) *Client {
 	client.clientName = clientName
 	return client
 }
 
+// ErrorHandler executes the exported errorhandler operation.
 func (client *Client) ErrorHandler() func(error) { return client.errorHandler }
 
+// SetErrorHandler sets error handler on the receiver.
 func (client *Client) SetErrorHandler(errorHandler func(error)) *Client {
 	client.errorHandler = errorHandler
 	return client
 }
 
+// DisconnectHandler executes the exported disconnecthandler operation.
 func (client *Client) DisconnectHandler() func(*Client, error) { return client.disconnectHandler }
 
+// SetDisconnectHandler sets disconnect handler on the receiver.
 func (client *Client) SetDisconnectHandler(disconnectHandler func(*Client, error)) *Client {
 	client.disconnectHandler = disconnectHandler
 	return client
 }
 
+// SetTLSConfig sets tlsconfig on the receiver.
 func (client *Client) SetTLSConfig(config *tls.Config) *Client {
 	client.tlsConfig = config
 	return client
 }
 
+// LogonCorrelationID executes the exported logoncorrelationid operation.
 func (client *Client) LogonCorrelationID() string { return client.logonCorrelationID }
 
+// SetLogonCorrelationID sets logon correlation id on the receiver.
 func (client *Client) SetLogonCorrelationID(logonCorrelationID string) *Client {
 	client.logonCorrelationID = logonCorrelationID
 	return client
 }
 
+// SetHeartbeat sets heartbeat on the receiver.
 func (client *Client) SetHeartbeat(interval uint, providedTimeout ...uint) *Client {
 	var timeout uint
 	if len(providedTimeout) > 0 {
@@ -606,8 +619,10 @@ func (client *Client) SetHeartbeat(interval uint, providedTimeout ...uint) *Clie
 	return client
 }
 
+// ServerVersion executes the exported serverversion operation.
 func (client *Client) ServerVersion() string { return client.serverVersion }
 
+// Connect opens a transport connection to the provided AMPS URI.
 func (client *Client) Connect(uri string) error {
 	if client.connected {
 		return NewError(AlreadyConnectedError)
@@ -678,6 +693,7 @@ func (client *Client) Connect(uri string) error {
 	return nil
 }
 
+// Logon authenticates the connected session and initializes server metadata.
 func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 	client.lock.Lock()
 
@@ -827,10 +843,12 @@ func (client *Client) sendHeartbeat() error {
 	return nil
 }
 
+// Publish sends a textual publish command for the specified topic.
 func (client *Client) Publish(topic string, data string, expiration ...uint) error {
 	return client.PublishBytes(topic, []byte(data), expiration...)
 }
 
+// PublishBytes sends a binary publish command for the specified topic.
 func (client *Client) PublishBytes(topic string, data []byte, expiration ...uint) error {
 	if len(topic) == 0 {
 		return NewError(InvalidTopicError, "A topic must be specified")
@@ -859,10 +877,12 @@ func (client *Client) PublishBytes(topic string, data []byte, expiration ...uint
 	return nil
 }
 
+// DeltaPublish executes the exported deltapublish operation.
 func (client *Client) DeltaPublish(topic string, data string, expiration ...uint) error {
 	return client.DeltaPublishBytes(topic, []byte(data), expiration...)
 }
 
+// DeltaPublishBytes executes the exported deltapublishbytes operation.
 func (client *Client) DeltaPublishBytes(topic string, data []byte, expiration ...uint) error {
 	if len(topic) == 0 {
 		return NewError(InvalidTopicError, "A topic must be specified")
@@ -891,6 +911,7 @@ func (client *Client) DeltaPublishBytes(topic string, data []byte, expiration ..
 	return nil
 }
 
+// Execute sends a command and returns a MessageStream for synchronous consumption.
 func (client *Client) Execute(command *Command) (*MessageStream, error) {
 	var messageStream *MessageStream
 
@@ -946,6 +967,7 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 	return messageStream, err
 }
 
+// Subscribe executes a subscription command and returns a MessageStream.
 func (client *Client) Subscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -954,6 +976,7 @@ func (client *Client) Subscribe(topic string, filter ...string) (*MessageStream,
 	return client.Execute(cmd)
 }
 
+// Flush executes the exported flush operation.
 func (client *Client) Flush() (err error) {
 	result := make(chan error)
 
@@ -979,6 +1002,7 @@ func (client *Client) Flush() (err error) {
 	return nil
 }
 
+// DeltaSubscribe executes the exported deltasubscribe operation.
 func (client *Client) DeltaSubscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("delta_subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -987,6 +1011,7 @@ func (client *Client) DeltaSubscribe(topic string, filter ...string) (*MessageSt
 	return client.Execute(cmd)
 }
 
+// Sow executes the exported sow operation.
 func (client *Client) Sow(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("sow").SetTopic(topic)
 	if len(filter) > 0 {
@@ -995,6 +1020,7 @@ func (client *Client) Sow(topic string, filter ...string) (*MessageStream, error
 	return client.Execute(cmd)
 }
 
+// SowAndSubscribe executes the exported sowandsubscribe operation.
 func (client *Client) SowAndSubscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("sow_and_subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -1003,6 +1029,7 @@ func (client *Client) SowAndSubscribe(topic string, filter ...string) (*MessageS
 	return client.Execute(cmd)
 }
 
+// SowAndDeltaSubscribe executes the exported sowanddeltasubscribe operation.
 func (client *Client) SowAndDeltaSubscribe(topic string, filter ...string) (*MessageStream, error) {
 	cmd := NewCommand("sow_and_delta_subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -1011,6 +1038,7 @@ func (client *Client) SowAndDeltaSubscribe(topic string, filter ...string) (*Mes
 	return client.Execute(cmd)
 }
 
+// ExecuteAsync sends a command and routes resulting messages to a callback.
 func (client *Client) ExecuteAsync(command *Command, messageHandler func(message *Message) error) (string, error) {
 	if command == nil || command.header.command == CommandUnknown {
 		return "", NewError(CommandError, "Invalid Command provided")
@@ -1258,6 +1286,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	return commandID, NewError(DisconnectedError, "Client is not connected while trying to send data")
 }
 
+// SubscribeAsync executes a subscription command and dispatches messages to a callback.
 func (client *Client) SubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -1266,6 +1295,7 @@ func (client *Client) SubscribeAsync(messageHandler func(*Message) error, topic 
 	return client.ExecuteAsync(cmd, messageHandler)
 }
 
+// DeltaSubscribeAsync performs the asynchronous deltasubscribeasync operation.
 func (client *Client) DeltaSubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("delta_subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -1274,6 +1304,7 @@ func (client *Client) DeltaSubscribeAsync(messageHandler func(*Message) error, t
 	return client.ExecuteAsync(cmd, messageHandler)
 }
 
+// SowAsync performs the asynchronous sowasync operation.
 func (client *Client) SowAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("sow").SetTopic(topic)
 	if len(filter) > 0 {
@@ -1282,6 +1313,7 @@ func (client *Client) SowAsync(messageHandler func(*Message) error, topic string
 	return client.ExecuteAsync(cmd, messageHandler)
 }
 
+// SowAndSubscribeAsync performs the asynchronous sowandsubscribeasync operation.
 func (client *Client) SowAndSubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("sow_and_subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -1290,6 +1322,7 @@ func (client *Client) SowAndSubscribeAsync(messageHandler func(*Message) error, 
 	return client.ExecuteAsync(cmd, messageHandler)
 }
 
+// SowAndDeltaSubscribeAsync performs the asynchronous sowanddeltasubscribeasync operation.
 func (client *Client) SowAndDeltaSubscribeAsync(messageHandler func(*Message) error, topic string, filter ...string) (string, error) {
 	cmd := NewCommand("sow_and_delta_subscribe").SetTopic(topic)
 	if len(filter) > 0 {
@@ -1298,6 +1331,7 @@ func (client *Client) SowAndDeltaSubscribeAsync(messageHandler func(*Message) er
 	return client.ExecuteAsync(cmd, messageHandler)
 }
 
+// SowDelete executes the exported sowdelete operation.
 func (client *Client) SowDelete(topic string, filter string) (*Message, error) {
 	result := make(chan _Stats)
 
@@ -1327,6 +1361,7 @@ func (client *Client) SowDelete(topic string, filter string) (*Message, error) {
 	return stats.Stats, stats.Error
 }
 
+// SowDeleteByData executes the exported sowdeletebydata operation.
 func (client *Client) SowDeleteByData(topic string, data []byte) (*Message, error) {
 	result := make(chan _Stats)
 
@@ -1356,6 +1391,7 @@ func (client *Client) SowDeleteByData(topic string, data []byte) (*Message, erro
 	return stats.Stats, stats.Error
 }
 
+// SowDeleteByKeys executes the exported sowdeletebykeys operation.
 func (client *Client) SowDeleteByKeys(topic string, keys string) (*Message, error) {
 	result := make(chan _Stats)
 
@@ -1385,6 +1421,7 @@ func (client *Client) SowDeleteByKeys(topic string, keys string) (*Message, erro
 	return stats.Stats, stats.Error
 }
 
+// Unsubscribe executes the exported unsubscribe operation.
 func (client *Client) Unsubscribe(subID ...string) error {
 	var subIDInternal string
 	if len(subID) > 0 {
@@ -1399,6 +1436,7 @@ func (client *Client) Unsubscribe(subID ...string) error {
 	return err
 }
 
+// Disconnect stops receive processing and closes the active connection.
 func (client *Client) Disconnect() (err error) {
 	client.lock.Lock()
 	defer client.lock.Unlock()
@@ -1451,10 +1489,12 @@ func (client *Client) Disconnect() (err error) {
 	return NewError(DisconnectedError, "Client is not Connected")
 }
 
+// Close is an alias for Disconnect.
 func (client *Client) Close() error {
 	return client.Disconnect()
 }
 
+// NewClient returns a new Client.
 func NewClient(clientName ...string) *Client {
 	var clientNameInternal string
 	if len(clientName) > 0 {

@@ -1,8 +1,8 @@
-## AMPS Go Client (`github.com/Thejuampi/amps-client-go/amps`)
+# AMPS Go Client (`github.com/Thejuampi/amps-client-go/amps`)
 
 Version: `0.1.0`
 
-This repository provides a Go implementation of an AMPS client API with C++ 5.3.5.1 parity-oriented behavior for `Client` and `HAClient`.
+This repository provides a custom Go implementation of an AMPS client API with parity-oriented behavior for C++ `Client`/`HAClient` 5.3.5.1.
 
 ## Install
 
@@ -46,19 +46,19 @@ func main() {
 }
 ```
 
-## Documentation
+## Documentation Entry Point
 
 Primary portal:
 
 - [Documentation Index](docs/index.md)
 
-Common entry points:
+Where to start:
 
-- [Getting Started](docs/getting_started.md)
-- [Client Entrypoints](docs/client_entrypoints.md)
-- [HA Failover](docs/ha_failover.md)
-- [Testing and Validation](docs/testing_and_validation.md)
-- [C++ to Go Parity Matrix](docs/cpp_to_go_parity_matrix.md)
+- Fast integration: [Getting Started](docs/getting_started.md), [Client Entrypoints](docs/client_entrypoints.md), [Pub/Sub and SOW](docs/pub_sub_and_sow.md)
+- Production hardening: [Queue Ack Semantics](docs/queue_ack_semantics.md), [Bookmarks and Replay](docs/bookmarks_and_replay.md), [HA Failover](docs/ha_failover.md), [Operational Playbook](docs/operational_playbook.md)
+- Scope and constraints: [Supported Scope and Constraints](docs/supported_scope.md)
+- API lookup: [Reference: Client](docs/reference_client.md), [Reference: HAClient](docs/reference_ha_client.md), [Reference: Types and Handlers](docs/reference_types_and_handlers.md)
+- C++ parity mapping: [C++ to Go Parity Matrix](docs/cpp_to_go_parity_matrix.md)
 
 ## Build and Test
 

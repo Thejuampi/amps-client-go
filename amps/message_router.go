@@ -2,6 +2,7 @@ package amps
 
 import "sync"
 
+// MessageRouter stores exported state used by AMPS client APIs.
 type MessageRouter struct {
 	routes *sync.Map
 	key    string
@@ -9,6 +10,7 @@ type MessageRouter struct {
 	client *Client
 }
 
+// MessageRoute stores exported state used by AMPS client APIs.
 type MessageRoute struct {
 	messageHandler func(*Message) error
 	systemAcks     int
@@ -90,6 +92,7 @@ func (msgRouter *MessageRouter) processAckForRemoval(ackType int, commandID stri
 	}
 }
 
+// AddRoute adds route behavior on the receiver.
 func (msgRouter *MessageRouter) AddRoute(
 	commandID string,
 	messageHandler func(*Message) error,
@@ -107,10 +110,12 @@ func (msgRouter *MessageRouter) AddRoute(
 	))
 }
 
+// RemoveRoute removes previously registered route behavior.
 func (msgRouter *MessageRouter) RemoveRoute(commandID string) {
 	msgRouter.routes.Delete(commandID)
 }
 
+// FindRoute executes the exported findroute operation.
 func (msgRouter *MessageRouter) FindRoute(commandID string) func(*Message) error {
 	route := msgRouter.MessageRoute.messageHandler
 	msgHandler, _ := msgRouter.routes.Load(commandID)
@@ -121,6 +126,7 @@ func (msgRouter *MessageRouter) FindRoute(commandID string) func(*Message) error
 	return nil
 }
 
+// UnsubscribeAll executes the exported unsubscribeall operation.
 func (msgRouter *MessageRouter) UnsubscribeAll() {
 	msgRouter.routes.Range(func(key interface{}, ms interface{}) bool {
 		msgRouter.routes.Delete(key.(string))
@@ -129,10 +135,12 @@ func (msgRouter *MessageRouter) UnsubscribeAll() {
 	msgRouter.routes = new(sync.Map)
 }
 
+// Clear executes the exported clear operation.
 func (msgRouter *MessageRouter) Clear() {
 	msgRouter.routes = new(sync.Map)
 }
 
+// DeliverAck executes the exported deliverack operation.
 func (msgRouter *MessageRouter) DeliverAck(ackMessage *Message, ackType int) int {
 	messagesDelivered := 0
 	msgCmdID, _ := ackMessage.CommandID()
@@ -158,6 +166,7 @@ func (msgRouter *MessageRouter) DeliverAck(ackMessage *Message, ackType int) int
 	return messagesDelivered
 }
 
+// DeliverData executes the exported deliverdata operation.
 func (msgRouter *MessageRouter) DeliverData(dataMessage *Message) int {
 	messagesDelivered := 0
 	msgCommandID, _ := dataMessage.CommandID()
@@ -175,6 +184,7 @@ func (msgRouter *MessageRouter) DeliverData(dataMessage *Message) int {
 	return messagesDelivered
 }
 
+// DeliverDataWithID executes the exported deliverdatawithid operation.
 func (msgRouter *MessageRouter) DeliverDataWithID(dataMessage *Message, cmdID string) int {
 	messagesDelivered := 0
 	route, _ := msgRouter.routes.Load(cmdID)

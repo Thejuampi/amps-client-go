@@ -16,6 +16,7 @@ Path B: Production hardening
 2. [Bookmarks and Replay](bookmarks_and_replay.md)
 3. [HA Failover](ha_failover.md)
 4. [Operational Playbook](operational_playbook.md)
+5. [Supported Scope and Constraints](supported_scope.md)
 
 Path C: C++ parity lookup
 
@@ -35,6 +36,7 @@ Path C: C++ parity lookup
 - [Stores and Persistence](stores_and_persistence.md)
 - [Operational Playbook](operational_playbook.md)
 - [Testing and Validation](testing_and_validation.md)
+- [Supported Scope and Constraints](supported_scope.md)
 
 ## Reference Documents
 
@@ -47,3 +49,4 @@ Path C: C++ parity lookup
 
 - [Migration Guide](migration_guide.md)
 - [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)
+- [Supported Scope and Constraints](supported_scope.md)

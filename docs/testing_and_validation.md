@@ -44,14 +44,18 @@ go test ./... -run Integration
 5. Validate retry and replay behaviors under disconnect.
 6. Validate queue auto-ack batching and timeout behavior.
 7. Update parity matrix and relevant workflow docs.
+8. Confirm support matrix statements still match observed behavior.
 
 ## Link and Documentation Integrity
 
 - Ensure every new API behavior has at least one workflow or reference entry.
 - Ensure all relative links in `README.md` and `docs/*.md` resolve.
+- Ensure each major workflow page contains a runnable-style snippet.
+- Ensure README can reach quickstart, HA path, parity matrix, and support matrix in <=2 clicks.
 
 ## Related
 
 - [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)
+- [Supported Scope and Constraints](supported_scope.md)
 - [Reference: Client](reference_client.md)
 - [Reference: HAClient](reference_ha_client.md)

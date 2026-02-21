@@ -42,6 +42,8 @@ Verification markers:
 
 ## Related Reference
 
+- [Supported Scope and Constraints](supported_scope.md)
+- [Documentation Index](index.md)
 - [Reference: Client](reference_client.md)
 - [Reference: HAClient](reference_ha_client.md)
 - [Reference: Types and Handlers](reference_types_and_handlers.md)

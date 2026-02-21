@@ -2,22 +2,31 @@ package amps
 
 import "unicode"
 
+// BOOKMARK_EPOCH exposes an exported helper operation for package consumers.
 func BOOKMARK_EPOCH() string { return BookmarksEPOCH }
 
+// EPOCH exposes an exported helper operation for package consumers.
 func EPOCH() string { return BookmarksEPOCH }
 
+// BOOKMARK_RECENT exposes an exported helper operation for package consumers.
 func BOOKMARK_RECENT() string { return BookmarksRECENT }
 
+// RECENT exposes an exported helper operation for package consumers.
 func RECENT() string { return BookmarksRECENT }
 
+// MOST_RECENT exposes an exported helper operation for package consumers.
 func MOST_RECENT() string { return BookmarksRECENT }
 
+// BOOKMARK_MOST_RECENT exposes an exported helper operation for package consumers.
 func BOOKMARK_MOST_RECENT() string { return BookmarksRECENT }
 
+// BOOKMARK_NOW exposes an exported helper operation for package consumers.
 func BOOKMARK_NOW() string { return BookmarksNOW }
 
+// NOW exposes an exported helper operation for package consumers.
 func NOW() string { return BookmarksNOW }
 
+// ConvertVersionToNumber converts a dotted version string into a sortable numeric value.
 func ConvertVersionToNumber(version string) uint64 {
 	if len(version) == 0 {
 		return 0

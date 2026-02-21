@@ -1,42 +1,60 @@
 # Client Entrypoints
 
-## Client State Model
+## Scope
 
-Relevant states for API usage:
+This document covers the connection/session control surface on `Client` and the command execution entrypoints used by higher-level workflows.
 
-- Constructed: `NewClient(...)` called.
-- Connected: `Connect(...)` succeeded.
-- Logged on: `Logon(...)` succeeded.
-- Disconnected: `Disconnect()` or connection failure.
+## State Model and Preconditions
 
-State assumptions:
+Lifecycle states:
 
-- Most command execution paths require connected state.
-- Logon is required before normal data flows.
+- Constructed: `NewClient(...)` completed.
+- Connected: `Connect(...)` completed.
+- Logged on: `Logon(...)` completed.
+- Disconnected: `Disconnect()`/`Close()` called or transport failed.
+
+Required state assumptions:
+
+- `Connect` requires a constructed client with a valid URI.
+- `Logon` requires connected state.
+- Publish/query/subscribe APIs generally require logged-on state.
+- `Disconnect`/`Close` are valid from any state.
 
 ## Core Entrypoint Methods
 
 | Method | Required State | Purpose | Notes |
 |---|---|---|---|
-| `NewClient(clientName ...string)` | None | Construct client | Assigns client identity.
-| `Connect(uri string)` | Constructed | Open transport connection | URI persisted for connection info.
-| `Logon(optionalParams ...LogonParams)` | Connected | Authenticate/log on | Supports timeout/authenticator/correlation.
-| `Disconnect()` / `Close()` | Any | Stop transport and routes | Broadcasts disconnect states.
-| `ClientName()` / `SetClientName(...)` | Any | Identity management | Alias parity available (`SetName`, `Name`).
-| `SetLogonCorrelationID(...)` | Before `Logon` | Correlation metadata | Alias parity available.
-| `SetHeartbeat(interval, timeout)` | Connected/logged on | Heartbeat setup | Endpoint support required.
+| `NewClient(clientName ...string)` | None | Construct client instance | Initializes routing and parity state.
+| `Connect(uri string)` | Constructed | Open transport connection | Persists URI for connection info and reconnect.
+| `Logon(optionalParams ...LogonParams)` | Connected | Authenticate session | Supports timeout, auth, and correlation options.
+| `Disconnect()` / `Close()` | Any | Stop transport and message routes | Emits disconnect path and closes socket resources.
+| `ClientName()` / `SetClientName(...)` | Any | Manage client identity | C++ parity aliases: `Name` / `SetName`.
+| `SetLogonCorrelationID(...)` | Before `Logon` | Set logon correlation metadata | Alias parity: `SetLogonCorrelationData`.
+| `SetHeartbeat(interval, timeout)` | Connected/logged on | Configure heartbeat policy | Effective only when endpoint heartbeat behavior is enabled.
 
-## Command Entrypoints
+## Command Execution Entrypoints
 
 | Method | Required State | Purpose | Return |
 |---|---|---|---|
 | `Execute(command)` | Connected | Sync command execution | `*MessageStream`
-| `ExecuteAsync(command, handler)` | Connected | Async command execution | route ID
-| `ExecuteAsyncNoResubscribe(...)` | Connected | Async command excluding resubscribe tracking | route ID
+| `ExecuteAsync(command, handler)` | Connected | Async command with callback routing | route ID
+| `ExecuteAsyncNoResubscribe(...)` | Connected | Async command excluded from resubscribe tracking | route ID
 
-## Failure Model
+Execution semantics:
 
-Common error families:
+- Route registration occurs before send for APIs that expect acknowledgements.
+- Command failure acks are surfaced as returned errors for sync flows.
+- Async flows dispatch callback errors through configured error/exception paths.
+
+## Expected Acks and Events
+
+- Session setup: `Connect` + `Logon` yields connection and logon acks.
+- Sync command APIs use processed/completed ack gates when required by command type.
+- Disconnect path broadcasts connection state transitions to registered listeners.
+
+## Failure and Recovery
+
+Common error kinds:
 
 - `ConnectionError`
 - `DisconnectedError`
@@ -44,9 +62,34 @@ Common error families:
 - `CommandError`
 - `TimedOutError`
 
-Synchronous `Execute(...)` uses route-managed ack processing for operations that require processed/completed termination.
+Recovery checklist:
 
-## Observability and State Introspection
+1. Confirm endpoint URI and protocol path.
+2. Reconnect and logon.
+3. Validate `GetConnectionInfo()` output and server version.
+4. Re-run the failed command path with explicit timeout and handler instrumentation.
+
+## Example: Connect, Logon, and Execute
+
+```go
+client := amps.NewClient("entrypoint-example")
+if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
+	panic(err)
+}
+defer client.Close()
+
+if err := client.Logon(); err != nil {
+	panic(err)
+}
+
+stream, err := client.Execute(amps.NewCommand("flush"))
+if err != nil {
+	panic(err)
+}
+defer stream.Close()
+```
+
+## Observability and Introspection
 
 - `ServerVersion()`
 - `URI()`

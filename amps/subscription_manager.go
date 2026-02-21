@@ -5,12 +5,14 @@ import (
 	"sync"
 )
 
+// DefaultSubscriptionManager stores exported state used by AMPS client APIs.
 type DefaultSubscriptionManager struct {
 	lock                     sync.Mutex
 	subscriptions            map[string]trackedSubscription
 	failedResubscribeHandler FailedResubscribeHandler
 }
 
+// NewDefaultSubscriptionManager returns a new DefaultSubscriptionManager.
 func NewDefaultSubscriptionManager() *DefaultSubscriptionManager {
 	return &DefaultSubscriptionManager{
 		subscriptions: make(map[string]trackedSubscription),
@@ -33,6 +35,7 @@ func trackedSubscriptionID(command *Command) string {
 	return ""
 }
 
+// Subscribe executes a subscription command and returns a MessageStream.
 func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Message) error, command *Command, requestedAckTypes int) {
 	if manager == nil || command == nil {
 		return
@@ -65,6 +68,7 @@ func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Messag
 	manager.lock.Unlock()
 }
 
+// Unsubscribe executes the exported unsubscribe operation.
 func (manager *DefaultSubscriptionManager) Unsubscribe(subID string) {
 	if manager == nil {
 		return
@@ -79,6 +83,7 @@ func (manager *DefaultSubscriptionManager) Unsubscribe(subID string) {
 	delete(manager.subscriptions, subID)
 }
 
+// Clear executes the exported clear operation.
 func (manager *DefaultSubscriptionManager) Clear() {
 	if manager == nil {
 		return
@@ -88,6 +93,7 @@ func (manager *DefaultSubscriptionManager) Clear() {
 	manager.lock.Unlock()
 }
 
+// SetFailedResubscribeHandler sets failed resubscribe handler on the receiver.
 func (manager *DefaultSubscriptionManager) SetFailedResubscribeHandler(handler FailedResubscribeHandler) {
 	if manager == nil {
 		return
@@ -97,6 +103,7 @@ func (manager *DefaultSubscriptionManager) SetFailedResubscribeHandler(handler F
 	manager.lock.Unlock()
 }
 
+// Resubscribe executes the exported resubscribe operation.
 func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 	if manager == nil || client == nil {
 		return nil

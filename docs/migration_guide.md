@@ -41,5 +41,6 @@ This guide describes how to align existing AMPS usage with this Go API surface.
 ## Related
 
 - [Documentation Index](index.md)
+- [Supported Scope and Constraints](supported_scope.md)
 - [Testing and Validation](testing_and_validation.md)
 - [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)

@@ -4,11 +4,13 @@ import (
 	"errors"
 )
 
+// Message stores exported state used by AMPS client APIs.
 type Message struct {
 	header *_Header
 	data   []byte
 }
 
+// Constants in this block define protocol and client behavior values.
 const (
 	inHeader = iota
 	inKey
@@ -78,6 +80,7 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 	return array, errors.New("Unexpected end of AMPS header")
 }
 
+// Copy executes the exported copy operation.
 func (msg *Message) Copy() *Message {
 	message := &Message{header: new(_Header)}
 
@@ -211,6 +214,7 @@ func (msg *Message) Copy() *Message {
 	return message
 }
 
+// AckType executes the exported acktype operation.
 func (msg *Message) AckType() (int, bool) {
 	if msg.header.ackType != nil {
 		return *msg.header.ackType, true
@@ -218,6 +222,7 @@ func (msg *Message) AckType() (int, bool) {
 	return AckTypeNone, false
 }
 
+// BatchSize executes the exported batchsize operation.
 func (msg *Message) BatchSize() (uint, bool) {
 	if msg.header.batchSize != nil {
 		return *msg.header.batchSize, true
@@ -225,22 +230,28 @@ func (msg *Message) BatchSize() (uint, bool) {
 	return 0, false
 }
 
+// Bookmark executes the exported bookmark operation.
 func (msg *Message) Bookmark() (string, bool) {
 	return string(msg.header.bookmark), msg.header.bookmark != nil
 }
 
+// Command executes the exported command operation.
 func (msg *Message) Command() (int, bool) { return msg.header.command, true }
 
+// CommandID executes the exported commandid operation.
 func (msg *Message) CommandID() (string, bool) {
 	return string(msg.header.commandID), msg.header.commandID != nil
 }
 
+// CorrelationID executes the exported correlationid operation.
 func (msg *Message) CorrelationID() (string, bool) {
 	return string(msg.header.correlationID), msg.header.correlationID != nil
 }
 
+// Data executes the exported data operation.
 func (msg *Message) Data() []byte { return msg.data }
 
+// Expiration executes the exported expiration operation.
 func (msg *Message) Expiration() (uint, bool) {
 	if msg.header.expiration != nil {
 		return *msg.header.expiration, true
@@ -248,10 +259,12 @@ func (msg *Message) Expiration() (uint, bool) {
 	return 0, false
 }
 
+// Filter executes the exported filter operation.
 func (msg *Message) Filter() (string, bool) {
 	return string(msg.header.filter), msg.header.filter != nil
 }
 
+// GroupSequenceNumber executes the exported groupsequencenumber operation.
 func (msg *Message) GroupSequenceNumber() (uint, bool) {
 	if msg.header.groupSequenceNumber != nil {
 		return *msg.header.groupSequenceNumber, true
@@ -259,10 +272,12 @@ func (msg *Message) GroupSequenceNumber() (uint, bool) {
 	return 0, false
 }
 
+// LeasePeriod executes the exported leaseperiod operation.
 func (msg *Message) LeasePeriod() (string, bool) {
 	return string(msg.header.leasePeriod), msg.header.leasePeriod != nil
 }
 
+// Matches executes the exported matches operation.
 func (msg *Message) Matches() (uint, bool) {
 	if msg.header.matches != nil {
 		return *msg.header.matches, true
@@ -270,6 +285,7 @@ func (msg *Message) Matches() (uint, bool) {
 	return 0, false
 }
 
+// MessageLength executes the exported messagelength operation.
 func (msg *Message) MessageLength() (uint, bool) {
 	if msg.header.messageLength != nil {
 		return *msg.header.messageLength, true
@@ -277,22 +293,27 @@ func (msg *Message) MessageLength() (uint, bool) {
 	return 0, false
 }
 
+// Options executes the exported options operation.
 func (msg *Message) Options() (string, bool) {
 	return string(msg.header.options), msg.header.options != nil
 }
 
+// OrderBy executes the exported orderby operation.
 func (msg *Message) OrderBy() (string, bool) {
 	return string(msg.header.orderBy), msg.header.orderBy != nil
 }
 
+// QueryID executes the exported queryid operation.
 func (msg *Message) QueryID() (string, bool) {
 	return string(msg.header.queryID), msg.header.queryID != nil
 }
 
+// Reason executes the exported reason operation.
 func (msg *Message) Reason() (string, bool) {
 	return string(msg.header.reason), msg.header.reason != nil
 }
 
+// RecordsDeleted executes the exported recordsdeleted operation.
 func (msg *Message) RecordsDeleted() (uint, bool) {
 	if msg.header.recordsDeleted != nil {
 		return *msg.header.recordsDeleted, true
@@ -300,6 +321,7 @@ func (msg *Message) RecordsDeleted() (uint, bool) {
 	return 0, false
 }
 
+// RecordsInserted executes the exported recordsinserted operation.
 func (msg *Message) RecordsInserted() (uint, bool) {
 	if msg.header.recordsInserted != nil {
 		return *msg.header.recordsInserted, true
@@ -307,6 +329,7 @@ func (msg *Message) RecordsInserted() (uint, bool) {
 	return 0, false
 }
 
+// RecordsReturned executes the exported recordsreturned operation.
 func (msg *Message) RecordsReturned() (uint, bool) {
 	if msg.header.recordsReturned != nil {
 		return *msg.header.recordsReturned, true
@@ -314,6 +337,7 @@ func (msg *Message) RecordsReturned() (uint, bool) {
 	return 0, false
 }
 
+// RecordsUpdated executes the exported recordsupdated operation.
 func (msg *Message) RecordsUpdated() (uint, bool) {
 	if msg.header.recordsUpdated != nil {
 		return *msg.header.recordsUpdated, true
@@ -321,6 +345,7 @@ func (msg *Message) RecordsUpdated() (uint, bool) {
 	return 0, false
 }
 
+// SequenceID executes the exported sequenceid operation.
 func (msg *Message) SequenceID() (uint64, bool) {
 	if msg.header.sequenceID != nil {
 		return *msg.header.sequenceID, true
@@ -328,28 +353,35 @@ func (msg *Message) SequenceID() (uint64, bool) {
 	return 0, false
 }
 
+// SowKey executes the exported sowkey operation.
 func (msg *Message) SowKey() (string, bool) {
 	return string(msg.header.sowKey), msg.header.sowKey != nil
 }
 
+// SowKeys executes the exported sowkeys operation.
 func (msg *Message) SowKeys() (string, bool) {
 	return string(msg.header.sowKeys), msg.header.sowKeys != nil
 }
 
+// Status executes the exported status operation.
 func (msg *Message) Status() (string, bool) {
 	return string(msg.header.status), msg.header.status != nil
 }
 
+// SubID executes the exported subid operation.
 func (msg *Message) SubID() (string, bool) { return string(msg.header.subID), msg.header.subID != nil }
 
+// SubIDs executes the exported subids operation.
 func (msg *Message) SubIDs() (string, bool) {
 	return string(msg.header.subIDs), msg.header.subIDs != nil
 }
 
+// Timestamp executes the exported timestamp operation.
 func (msg *Message) Timestamp() (string, bool) {
 	return string(msg.header.timestamp), msg.header.timestamp != nil
 }
 
+// TopN executes the exported topn operation.
 func (msg *Message) TopN() (uint, bool) {
 	if msg.header.topN != nil {
 		return *msg.header.topN, true
@@ -357,8 +389,10 @@ func (msg *Message) TopN() (uint, bool) {
 	return 0, false
 }
 
+// Topic executes the exported topic operation.
 func (msg *Message) Topic() (string, bool) { return string(msg.header.topic), msg.header.topic != nil }
 
+// TopicMatches executes the exported topicmatches operation.
 func (msg *Message) TopicMatches() (uint, bool) {
 	if msg.header.topicMatches != nil {
 		return *msg.header.topicMatches, true
@@ -366,6 +400,7 @@ func (msg *Message) TopicMatches() (uint, bool) {
 	return 0, false
 }
 
+// UserID executes the exported userid operation.
 func (msg *Message) UserID() (string, bool) {
 	return string(msg.header.userID), msg.header.userID != nil
 }

@@ -2,10 +2,12 @@ package amps
 
 import "strconv"
 
+// FixMessageShredder parses protocol payload data into structured parts.
 type FixMessageShredder struct {
 	fieldSeparator byte
 }
 
+// NewFIXShredder returns a new FIXShredder.
 func NewFIXShredder(fieldSep ...byte) *FixMessageShredder {
 	var _fieldSep byte
 
@@ -18,6 +20,7 @@ func NewFIXShredder(fieldSep ...byte) *FixMessageShredder {
 	return &FixMessageShredder{_fieldSep}
 }
 
+// ToMap executes the exported tomap operation.
 func (fms *FixMessageShredder) ToMap(fix []byte) map[int]string {
 	fixMap := make(map[int]string, 0)
 	delimiterIndex := 0

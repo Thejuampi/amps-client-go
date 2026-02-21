@@ -14,6 +14,7 @@ type bookmarkRecord struct {
 	Discarded bool   `json:"discarded"`
 }
 
+// MemoryBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
 type MemoryBookmarkStore struct {
 	lock          sync.Mutex
 	nextSeqNo     uint64
@@ -23,6 +24,7 @@ type MemoryBookmarkStore struct {
 	serverVersion string
 }
 
+// NewMemoryBookmarkStore returns a new MemoryBookmarkStore.
 func NewMemoryBookmarkStore() *MemoryBookmarkStore {
 	return &MemoryBookmarkStore{
 		nextSeqNo:     1,
@@ -68,6 +70,7 @@ func (store *MemoryBookmarkStore) ensureSubID(subID string) map[string]*bookmark
 	return records
 }
 
+// Log executes the exported log operation.
 func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 	if store == nil {
 		return 0
@@ -94,6 +97,7 @@ func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 	return record.SeqNo
 }
 
+// Discard executes the exported discard operation.
 func (store *MemoryBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	if store == nil || subID == "" {
 		return
@@ -107,6 +111,7 @@ func (store *MemoryBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	}
 }
 
+// DiscardMessage executes the exported discardmessage operation.
 func (store *MemoryBookmarkStore) DiscardMessage(message *Message) {
 	if store == nil {
 		return
@@ -130,6 +135,7 @@ func (store *MemoryBookmarkStore) DiscardMessage(message *Message) {
 	}
 }
 
+// GetMostRecent returns the current most recent value.
 func (store *MemoryBookmarkStore) GetMostRecent(subID string) string {
 	if store == nil {
 		return ""
@@ -139,6 +145,7 @@ func (store *MemoryBookmarkStore) GetMostRecent(subID string) string {
 	return store.mostRecent[subID]
 }
 
+// IsDiscarded reports whether discarded is true for the receiver.
 func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 	if store == nil {
 		return false
@@ -171,6 +178,7 @@ func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 	return record.Count > 1
 }
 
+// Purge executes the exported purge operation.
 func (store *MemoryBookmarkStore) Purge(subID ...string) {
 	if store == nil {
 		return
@@ -194,6 +202,7 @@ func (store *MemoryBookmarkStore) Purge(subID ...string) {
 	}
 }
 
+// GetOldestBookmarkSeq returns the current oldest bookmark seq value.
 func (store *MemoryBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
 	if store == nil || subID == "" {
 		return 0
@@ -219,6 +228,7 @@ func (store *MemoryBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
 	return oldest
 }
 
+// Persisted executes the exported persisted operation.
 func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) string {
 	if store == nil || subID == "" || bookmark == "" {
 		return ""
@@ -243,6 +253,7 @@ func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) strin
 	return bookmark
 }
 
+// SetServerVersion sets server version on the receiver.
 func (store *MemoryBookmarkStore) SetServerVersion(version string) {
 	if store == nil {
 		return
@@ -266,11 +277,13 @@ type bookmarkFileState struct {
 	Entries       []bookmarkFileEntry `json:"entries"`
 }
 
+// FileBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
 type FileBookmarkStore struct {
 	*MemoryBookmarkStore
 	path string
 }
 
+// NewFileBookmarkStore returns a new FileBookmarkStore.
 func NewFileBookmarkStore(path string) *FileBookmarkStore {
 	store := &FileBookmarkStore{
 		MemoryBookmarkStore: NewMemoryBookmarkStore(),
@@ -382,50 +395,60 @@ func (store *FileBookmarkStore) load() error {
 	return nil
 }
 
+// Log executes the exported log operation.
 func (store *FileBookmarkStore) Log(message *Message) uint64 {
 	seqNo := store.MemoryBookmarkStore.Log(message)
 	_ = store.save()
 	return seqNo
 }
 
+// Discard executes the exported discard operation.
 func (store *FileBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	store.MemoryBookmarkStore.Discard(subID, bookmarkSeqNo)
 	_ = store.save()
 }
 
+// DiscardMessage executes the exported discardmessage operation.
 func (store *FileBookmarkStore) DiscardMessage(message *Message) {
 	store.MemoryBookmarkStore.DiscardMessage(message)
 	_ = store.save()
 }
 
+// Purge executes the exported purge operation.
 func (store *FileBookmarkStore) Purge(subID ...string) {
 	store.MemoryBookmarkStore.Purge(subID...)
 	_ = store.save()
 }
 
+// Persisted executes the exported persisted operation.
 func (store *FileBookmarkStore) Persisted(subID string, bookmark string) string {
 	value := store.MemoryBookmarkStore.Persisted(subID, bookmark)
 	_ = store.save()
 	return value
 }
 
+// SetServerVersion sets server version on the receiver.
 func (store *FileBookmarkStore) SetServerVersion(version string) {
 	store.MemoryBookmarkStore.SetServerVersion(version)
 	_ = store.save()
 }
 
+// MMapBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
 type MMapBookmarkStore struct {
 	*FileBookmarkStore
 }
 
+// NewMMapBookmarkStore returns a new MMapBookmarkStore.
 func NewMMapBookmarkStore(path string) *MMapBookmarkStore {
 	return &MMapBookmarkStore{FileBookmarkStore: NewFileBookmarkStore(path)}
 }
 
+// RingBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
 type RingBookmarkStore struct {
 	*MemoryBookmarkStore
 }
 
+// NewRingBookmarkStore returns a new RingBookmarkStore.
 func NewRingBookmarkStore() *RingBookmarkStore {
 	return &RingBookmarkStore{MemoryBookmarkStore: NewMemoryBookmarkStore()}
 }

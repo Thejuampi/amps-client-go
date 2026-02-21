@@ -38,6 +38,13 @@ After reconnect and logon:
 - Resubscribe executes via subscription manager.
 - Connection-state listeners receive state events.
 
+## Failure Behavior
+
+- URI selection failure returns a `ConnectionError`.
+- Retry loop termination obeys `SetTimeout` when configured.
+- Delay strategy errors abort reconnect loop immediately.
+- Per-attempt failures are reported to `ServerChooser.ReportFailure(...)`.
+
 ## Constraints
 
 `HAClient.SetDisconnectHandler(...)` intentionally returns usage error. Disconnect behavior is HA-managed.
@@ -50,6 +57,25 @@ Inspect:
 - `GetConnectionInfo()` output
 - reconnect strategy parameters
 - store state and replay depth
+
+## Example: HA Setup with Delay Strategy
+
+```go
+ha := amps.NewHAClient("ha-example")
+ha.SetServerChooser(
+	amps.NewDefaultServerChooser(
+		"tcp://amps-a:9000/amps/json",
+		"tcp://amps-b:9000/amps/json",
+	),
+).SetReconnectDelayStrategy(
+	amps.NewExponentialDelayStrategy(200*time.Millisecond, 5*time.Second, 2.0),
+).SetTimeout(30 * time.Second)
+
+if err := ha.ConnectAndLogon(); err != nil {
+	panic(err)
+}
+defer ha.Disconnect()
+```
 
 ## Related
 

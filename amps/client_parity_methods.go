@@ -379,6 +379,7 @@ func (client *Client) maybeAutoAck(message *Message) {
 	}
 }
 
+// FlushAcks sends all pending queue acknowledgement batches immediately.
 func (client *Client) FlushAcks() error {
 	state := ensureClientState(client)
 	if state == nil {
@@ -476,22 +477,27 @@ func (client *Client) postLogonRecovery() {
 	}
 }
 
+// SetName sets name on the receiver.
 func (client *Client) SetName(name string) *Client {
 	return client.SetClientName(name)
 }
 
+// Name executes the exported name operation.
 func (client *Client) Name() string {
 	return client.ClientName()
 }
 
+// SetLogonCorrelationData sets logon correlation data on the receiver.
 func (client *Client) SetLogonCorrelationData(correlationData string) *Client {
 	return client.SetLogonCorrelationID(correlationData)
 }
 
+// LogonCorrelationData executes the exported logoncorrelationdata operation.
 func (client *Client) LogonCorrelationData() string {
 	return client.LogonCorrelationID()
 }
 
+// URI executes the exported uri operation.
 func (client *Client) URI() string {
 	state := ensureClientState(client)
 	if state == nil {
@@ -509,14 +515,17 @@ func (client *Client) URI() string {
 	return ""
 }
 
+// GetConnectionInfo returns the current connection info value.
 func (client *Client) GetConnectionInfo() ConnectionInfo {
 	return client.buildConnectionInfo()
 }
 
+// GatherConnectionInfo executes the exported gatherconnectioninfo operation.
 func (client *Client) GatherConnectionInfo() ConnectionInfo {
 	return client.GetConnectionInfo()
 }
 
+// BookmarkSubscribe executes the exported bookmarksubscribe operation.
 func (client *Client) BookmarkSubscribe(topic string, bookmark string, filter ...string) (*MessageStream, error) {
 	command := NewCommand("subscribe").SetTopic(topic).SetBookmark(bookmark).AddAckType(AckTypeCompleted)
 	if len(filter) > 0 {
@@ -533,6 +542,7 @@ func (client *Client) BookmarkSubscribe(topic string, bookmark string, filter ..
 	return client.Execute(command)
 }
 
+// BookmarkSubscribeAsync performs the asynchronous bookmarksubscribeasync operation.
 func (client *Client) BookmarkSubscribeAsync(messageHandler func(*Message) error, topic string, bookmark string, filter ...string) (string, error) {
 	command := NewCommand("subscribe").SetTopic(topic).SetBookmark(bookmark).AddAckType(AckTypeCompleted)
 	if len(filter) > 0 {
@@ -549,6 +559,7 @@ func (client *Client) BookmarkSubscribeAsync(messageHandler func(*Message) error
 	return client.ExecuteAsync(command, messageHandler)
 }
 
+// Ack sends an explicit queue acknowledgement for a topic and bookmark.
 func (client *Client) Ack(topic string, bookmark string, subID ...string) error {
 	if topic == "" {
 		return NewError(CommandError, "topic is required for ack")
@@ -570,6 +581,7 @@ func (client *Client) Ack(topic string, bookmark string, subID ...string) error 
 	return client.send(command)
 }
 
+// AckMessage extracts topic and bookmark fields from a message and acknowledges it.
 func (client *Client) AckMessage(message *Message) error {
 	if message == nil {
 		return NewError(CommandError, "nil message")
@@ -583,6 +595,7 @@ func (client *Client) AckMessage(message *Message) error {
 	return client.Ack(topic, bookmark, subID)
 }
 
+// SetAutoAck sets auto ack on the receiver.
 func (client *Client) SetAutoAck(enabled bool) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -594,6 +607,7 @@ func (client *Client) SetAutoAck(enabled bool) *Client {
 	return client
 }
 
+// AutoAck executes the exported autoack operation.
 func (client *Client) AutoAck() bool {
 	state := ensureClientState(client)
 	if state == nil {
@@ -604,6 +618,7 @@ func (client *Client) AutoAck() bool {
 	return state.autoAck
 }
 
+// SetAckBatchSize sets ack batch size on the receiver.
 func (client *Client) SetAckBatchSize(batchSize uint) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -618,6 +633,7 @@ func (client *Client) SetAckBatchSize(batchSize uint) *Client {
 	return client
 }
 
+// AckBatchSize executes the exported ackbatchsize operation.
 func (client *Client) AckBatchSize() uint {
 	state := ensureClientState(client)
 	if state == nil {
@@ -628,6 +644,7 @@ func (client *Client) AckBatchSize() uint {
 	return state.ackBatchSize
 }
 
+// SetAckTimeout sets ack timeout on the receiver.
 func (client *Client) SetAckTimeout(timeout time.Duration) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -639,6 +656,7 @@ func (client *Client) SetAckTimeout(timeout time.Duration) *Client {
 	return client
 }
 
+// AckTimeout executes the exported acktimeout operation.
 func (client *Client) AckTimeout() time.Duration {
 	state := ensureClientState(client)
 	if state == nil {
@@ -649,6 +667,7 @@ func (client *Client) AckTimeout() time.Duration {
 	return state.ackTimeout
 }
 
+// SetRetryOnDisconnect sets retry on disconnect on the receiver.
 func (client *Client) SetRetryOnDisconnect(enabled bool) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -660,6 +679,7 @@ func (client *Client) SetRetryOnDisconnect(enabled bool) *Client {
 	return client
 }
 
+// RetryOnDisconnect executes the exported retryondisconnect operation.
 func (client *Client) RetryOnDisconnect() bool {
 	state := ensureClientState(client)
 	if state == nil {
@@ -670,6 +690,7 @@ func (client *Client) RetryOnDisconnect() bool {
 	return state.retryOnDisconnect
 }
 
+// SetDefaultMaxDepth sets default max depth on the receiver.
 func (client *Client) SetDefaultMaxDepth(depth uint) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -681,6 +702,7 @@ func (client *Client) SetDefaultMaxDepth(depth uint) *Client {
 	return client
 }
 
+// DefaultMaxDepth executes the exported defaultmaxdepth operation.
 func (client *Client) DefaultMaxDepth() uint {
 	state := ensureClientState(client)
 	if state == nil {
@@ -691,6 +713,7 @@ func (client *Client) DefaultMaxDepth() uint {
 	return state.defaultMaxDepth
 }
 
+// PublishFlush executes the exported publishflush operation.
 func (client *Client) PublishFlush(timeout ...time.Duration) error {
 	state := ensureClientState(client)
 	if state == nil {
@@ -714,6 +737,7 @@ func (client *Client) PublishFlush(timeout ...time.Duration) error {
 	return err
 }
 
+// StartTimer executes the exported starttimer operation.
 func (client *Client) StartTimer(timerID string, options ...string) (string, error) {
 	command := NewCommand("start_timer")
 	if timerID != "" {
@@ -725,6 +749,7 @@ func (client *Client) StartTimer(timerID string, options ...string) (string, err
 	return client.ExecuteAsync(command, nil)
 }
 
+// StopTimer executes the exported stoptimer operation.
 func (client *Client) StopTimer(timerID string, options ...string) (string, error) {
 	command := NewCommand("stop_timer")
 	if timerID != "" {
@@ -736,6 +761,7 @@ func (client *Client) StopTimer(timerID string, options ...string) (string, erro
 	return client.ExecuteAsync(command, nil)
 }
 
+// ExecuteAsyncNoResubscribe executes the exported executeasyncnoresubscribe operation.
 func (client *Client) ExecuteAsyncNoResubscribe(command *Command, messageHandler func(*Message) error) (string, error) {
 	routeID, err := client.ExecuteAsync(command, messageHandler)
 	if err != nil || routeID == "" {
@@ -756,6 +782,7 @@ func (client *Client) ExecuteAsyncNoResubscribe(command *Command, messageHandler
 	return routeID, nil
 }
 
+// SetBookmarkStore sets bookmark store on the receiver.
 func (client *Client) SetBookmarkStore(store BookmarkStore) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -767,6 +794,7 @@ func (client *Client) SetBookmarkStore(store BookmarkStore) *Client {
 	return client
 }
 
+// BookmarkStore returns the configured store instance used by the receiver.
 func (client *Client) BookmarkStore() BookmarkStore {
 	state := ensureClientState(client)
 	if state == nil {
@@ -777,6 +805,7 @@ func (client *Client) BookmarkStore() BookmarkStore {
 	return state.bookmarkStore
 }
 
+// SetPublishStore sets publish store on the receiver.
 func (client *Client) SetPublishStore(store PublishStore) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -788,6 +817,7 @@ func (client *Client) SetPublishStore(store PublishStore) *Client {
 	return client
 }
 
+// PublishStore returns the configured store instance used by the receiver.
 func (client *Client) PublishStore() PublishStore {
 	state := ensureClientState(client)
 	if state == nil {
@@ -798,6 +828,7 @@ func (client *Client) PublishStore() PublishStore {
 	return state.publishStore
 }
 
+// SetSubscriptionManager sets subscription manager on the receiver.
 func (client *Client) SetSubscriptionManager(manager SubscriptionManager) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -812,6 +843,7 @@ func (client *Client) SetSubscriptionManager(manager SubscriptionManager) *Clien
 	return client
 }
 
+// SubscriptionManager executes the exported subscriptionmanager operation.
 func (client *Client) SubscriptionManager() SubscriptionManager {
 	state := ensureClientState(client)
 	if state == nil {
@@ -822,6 +854,7 @@ func (client *Client) SubscriptionManager() SubscriptionManager {
 	return state.subscriptionManager
 }
 
+// SetDuplicateMessageHandler sets duplicate message handler on the receiver.
 func (client *Client) SetDuplicateMessageHandler(handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -833,6 +866,7 @@ func (client *Client) SetDuplicateMessageHandler(handler func(*Message) error) *
 	return client
 }
 
+// DuplicateMessageHandler executes the exported duplicatemessagehandler operation.
 func (client *Client) DuplicateMessageHandler() func(*Message) error {
 	state := ensureClientState(client)
 	if state == nil {
@@ -843,6 +877,7 @@ func (client *Client) DuplicateMessageHandler() func(*Message) error {
 	return state.duplicateHandler
 }
 
+// SetFailedWriteHandler sets failed write handler on the receiver.
 func (client *Client) SetFailedWriteHandler(handler FailedWriteHandler) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -854,6 +889,7 @@ func (client *Client) SetFailedWriteHandler(handler FailedWriteHandler) *Client 
 	return client
 }
 
+// FailedWriteHandler executes the exported failedwritehandler operation.
 func (client *Client) FailedWriteHandler() FailedWriteHandler {
 	state := ensureClientState(client)
 	if state == nil {
@@ -864,6 +900,7 @@ func (client *Client) FailedWriteHandler() FailedWriteHandler {
 	return state.failedWriteHandler
 }
 
+// SetExceptionListener sets exception listener on the receiver.
 func (client *Client) SetExceptionListener(listener ExceptionListener) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -875,6 +912,7 @@ func (client *Client) SetExceptionListener(listener ExceptionListener) *Client {
 	return client
 }
 
+// ExceptionListener executes the exported exceptionlistener operation.
 func (client *Client) ExceptionListener() ExceptionListener {
 	state := ensureClientState(client)
 	if state == nil {
@@ -885,6 +923,7 @@ func (client *Client) ExceptionListener() ExceptionListener {
 	return state.exceptionListener
 }
 
+// SetUnhandledMessageHandler sets unhandled message handler on the receiver.
 func (client *Client) SetUnhandledMessageHandler(handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -896,6 +935,7 @@ func (client *Client) SetUnhandledMessageHandler(handler func(*Message) error) *
 	return client
 }
 
+// SetLastChanceMessageHandler sets last chance message handler on the receiver.
 func (client *Client) SetLastChanceMessageHandler(handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -907,6 +947,7 @@ func (client *Client) SetLastChanceMessageHandler(handler func(*Message) error) 
 	return client
 }
 
+// SetGlobalCommandTypeMessageHandler sets global command type message handler on the receiver.
 func (client *Client) SetGlobalCommandTypeMessageHandler(commandType int, handler func(*Message) error) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -922,6 +963,7 @@ func (client *Client) SetGlobalCommandTypeMessageHandler(commandType int, handle
 	return client
 }
 
+// AddConnectionStateListener adds connection state listener behavior on the receiver.
 func (client *Client) AddConnectionStateListener(listener ConnectionStateListener) *Client {
 	if listener == nil {
 		return client
@@ -936,6 +978,7 @@ func (client *Client) AddConnectionStateListener(listener ConnectionStateListene
 	return client
 }
 
+// RemoveConnectionStateListener removes previously registered connection state listener behavior.
 func (client *Client) RemoveConnectionStateListener(listener ConnectionStateListener) *Client {
 	if listener == nil {
 		return client
@@ -950,6 +993,7 @@ func (client *Client) RemoveConnectionStateListener(listener ConnectionStateList
 	return client
 }
 
+// ClearConnectionStateListeners clears configured connection state listeners state on the receiver.
 func (client *Client) ClearConnectionStateListeners() *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -961,6 +1005,7 @@ func (client *Client) ClearConnectionStateListeners() *Client {
 	return client
 }
 
+// AddHTTPPreflightHeader adds httppreflight header behavior on the receiver.
 func (client *Client) AddHTTPPreflightHeader(header string) *Client {
 	if strings.TrimSpace(header) == "" {
 		return client
@@ -975,6 +1020,7 @@ func (client *Client) AddHTTPPreflightHeader(header string) *Client {
 	return client
 }
 
+// ClearHTTPPreflightHeaders clears configured httppreflight headers state on the receiver.
 func (client *Client) ClearHTTPPreflightHeaders() *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -986,6 +1032,7 @@ func (client *Client) ClearHTTPPreflightHeaders() *Client {
 	return client
 }
 
+// SetHTTPPreflightHeaders sets httppreflight headers on the receiver.
 func (client *Client) SetHTTPPreflightHeaders(headers []string) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1004,10 +1051,12 @@ func (client *Client) SetHTTPPreflightHeaders(headers []string) *Client {
 	return client
 }
 
+// RawConnection executes the exported rawconnection operation.
 func (client *Client) RawConnection() net.Conn {
 	return client.connection
 }
 
+// SetTransportFilter sets transport filter on the receiver.
 func (client *Client) SetTransportFilter(filter TransportFilter) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1019,6 +1068,7 @@ func (client *Client) SetTransportFilter(filter TransportFilter) *Client {
 	return client
 }
 
+// SetReceiveRoutineStartedCallback sets receive routine started callback on the receiver.
 func (client *Client) SetReceiveRoutineStartedCallback(callback func()) *Client {
 	state := ensureClientState(client)
 	if state == nil {
@@ -1040,6 +1090,7 @@ func (client *Client) setInternalDisconnectHandler(handler func(error)) {
 	state.lock.Unlock()
 }
 
+// String returns a diagnostic summary of current connection state.
 func (client *Client) String() string {
 	connectionInfo := client.GetConnectionInfo()
 	if len(connectionInfo) == 0 {
