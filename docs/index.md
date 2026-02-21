@@ -35,7 +35,7 @@ Path C: C++ parity lookup
 - [Transport and Hooks](transport_and_hooks.md)
 - [Stores and Persistence](stores_and_persistence.md)
 - [Operational Playbook](operational_playbook.md)
-- [Testing and Validation](testing_and_validation.md)
+- [Testing and Validation](testing_and_validation.md) (coverage policy and validation commands)
 - [Supported Scope and Constraints](supported_scope.md)
 
 ## Reference Documents

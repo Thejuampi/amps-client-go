@@ -15,6 +15,24 @@ Symbol gate baseline:
 - current mapped symbols: `253`
 - required gate: `MISSING_HEADER_SYMBOLS=0` and `MISSING_GO_SYMBOLS=0`
 
+## Quality Gates
+
+Parity symbol gate:
+
+- command: `go run ./tools/paritycheck -manifest tools/parity_manifest.json`
+- required result: `MISSING_HEADER_SYMBOLS=0` and `MISSING_GO_SYMBOLS=0`
+
+Coverage gate:
+
+- scope: `./amps/...` (not full `./...`)
+- aggregate threshold: `>=90.0%`
+- pure-functional threshold: `100.0%`
+- I/O/stateful threshold: `>=80.0%`
+- commands:
+  - `go test -count=1 ./amps/... -coverprofile=coverage.out`
+  - `go run ./tools/coveragegate -profile coverage.out`
+- source of truth for thresholds and file classification: `tools/coveragegate/main.go`
+
 ## Supported Workflows
 
 | Workflow | Status | Primary APIs |

@@ -69,9 +69,21 @@ make build
 make test
 make integration-test
 make parity-check
+make coverage-check
 make release
-go run ./tools/paritycheck -manifest tools/parity_manifest.json
 ```
+
+Equivalent direct commands:
+
+```bash
+go run ./tools/paritycheck -manifest tools/parity_manifest.json
+go test -count=1 ./amps/... -coverprofile=coverage.out
+go run ./tools/coveragegate -profile coverage.out
+```
+
+Coverage gating is expected before merge for `./amps/...`: aggregate `>=90.0%`, pure-functional files `100.0%`, and I/O/stateful files `>=80.0%` as enforced by `tools/coveragegate/main.go`.
+
+PowerShell note: quote the coverprofile flag if needed, for example `go test -count=1 ./amps/... '-coverprofile=coverage.out'`.
 
 ## License
 

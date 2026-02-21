@@ -16,6 +16,7 @@ Integration tests:
 make test
 make integration-test
 make parity-check
+make coverage-check
 make release
 ```
 
@@ -24,7 +25,23 @@ Equivalent direct commands:
 ```bash
 go test ./...
 go test ./... -run Integration
+go test -count=1 ./amps/... -coverprofile=coverage.out
+go run ./tools/coveragegate -profile coverage.out
 ```
+
+## Coverage Gate (`./amps/...`)
+
+Coverage gate policy:
+
+- Aggregate coverage: `>=90.0%`
+- Pure-functional files: `100.0%`
+- I/O/stateful files: `>=80.0%`
+
+Coverage gate classification and file allowlists are source-of-truth in `tools/coveragegate/main.go`.
+
+Coverage gate scope is `./amps/...` and is separate from integration tests.
+
+PowerShell note: quote the coverprofile flag if needed, for example `go test -count=1 ./amps/... '-coverprofile=coverage.out'`.
 
 ## Integration Environment Contract
 
@@ -40,12 +57,13 @@ go test ./... -run Integration
 
 1. Confirm no exported API signature regressions.
 2. Run full unit suite.
-3. Run integration suite with target endpoint.
-4. Validate handler order expectations.
-5. Validate retry and replay behaviors under disconnect.
-6. Validate queue auto-ack batching and timeout behavior.
-7. Update parity matrix and relevant workflow docs.
-8. Confirm support matrix statements still match observed behavior.
+3. Run coverage gate for `./amps/...`.
+4. Run integration suite with target endpoint.
+5. Validate handler order expectations.
+6. Validate retry and replay behaviors under disconnect.
+7. Validate queue auto-ack batching and timeout behavior.
+8. Update parity matrix and relevant workflow docs.
+9. Confirm support matrix statements still match observed behavior.
 
 ## Link and Documentation Integrity
 

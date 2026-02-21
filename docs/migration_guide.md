@@ -38,6 +38,19 @@ This guide describes how to align existing AMPS usage with this Go API surface.
 4. Validate failover behavior with HA client and server chooser.
 5. Run integration suite against target endpoint.
 
+## Validation Commands
+
+Use these commands as the default contributor validation path:
+
+- `make test`
+- `make parity-check`
+- `make coverage-check`
+
+Integration tests remain environment-gated and separate from the coverage gate workflow:
+
+- `make integration-test`
+- `go test ./... -run Integration`
+
 ## Related
 
 - [Documentation Index](index.md)
