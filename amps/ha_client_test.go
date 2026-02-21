@@ -10,13 +10,13 @@ type fixedChooser struct {
 	uri string
 }
 
-func (chooser *fixedChooser) CurrentURI() string                         { return chooser.uri }
-func (chooser *fixedChooser) CurrentAuthenticator() Authenticator        { return nil }
-func (chooser *fixedChooser) ReportFailure(error, ConnectionInfo)        {}
-func (chooser *fixedChooser) ReportSuccess(ConnectionInfo)               {}
-func (chooser *fixedChooser) Error() string                              { return "" }
-func (chooser *fixedChooser) Add(uri string) ServerChooser               { chooser.uri = uri; return chooser }
-func (chooser *fixedChooser) Remove(string)                              {}
+func (chooser *fixedChooser) CurrentURI() string                  { return chooser.uri }
+func (chooser *fixedChooser) CurrentAuthenticator() Authenticator { return nil }
+func (chooser *fixedChooser) ReportFailure(error, ConnectionInfo) {}
+func (chooser *fixedChooser) ReportSuccess(ConnectionInfo)        {}
+func (chooser *fixedChooser) Error() string                       { return "" }
+func (chooser *fixedChooser) Add(uri string) ServerChooser        { chooser.uri = uri; return chooser }
+func (chooser *fixedChooser) Remove(string)                       {}
 
 type errorReconnectStrategy struct{}
 
@@ -188,5 +188,70 @@ func TestCreateFileBackedAliases(t *testing.T) {
 	}
 	if alias := CreateFileBacked(publishPath, bookmarkPath, "ha-file-alias"); alias == nil || alias.Client() == nil {
 		t.Fatalf("expected file-backed alias client")
+	}
+}
+
+func TestHAConnectAndLogonNilClientGuard(t *testing.T) {
+	var nilHA *HAClient
+	if err := nilHA.ConnectAndLogon(); err == nil {
+		t.Fatalf("expected nil HAClient ConnectAndLogon error")
+	}
+}
+
+func TestHAClientConnectAndLogonNoChooserFallsBackToClientURI(t *testing.T) {
+	// When chooser returns an empty URI, ConnectAndLogon falls back to
+	// client.URI() (also empty), and should return a meaningful error.
+	ha := NewHAClient("ha-no-chooser-uri")
+	ha.SetServerChooser(&fixedChooser{uri: ""})
+	ha.SetTimeout(20 * time.Millisecond)
+	ha.SetReconnectDelay(0)
+	ha.SetReconnectDelayStrategy(nil)
+	err := ha.ConnectAndLogon()
+	if err == nil {
+		t.Fatalf("expected error when both chooser and client URI are empty")
+	}
+}
+
+func TestHAClientReconnectWaitNilStrategyUsesDelay(t *testing.T) {
+	ha := NewHAClient("ha-reconnect-wait")
+	d, err := ha.reconnectWait(nil, 42*time.Millisecond, "")
+	if err != nil {
+		t.Fatalf("expected no error from nil-strategy reconnectWait: %v", err)
+	}
+	if d != 42*time.Millisecond {
+		t.Fatalf("expected fallback delay 42ms, got %v", d)
+	}
+}
+
+func TestHAClientConnectAndLogonOnceWithLogonOptions(t *testing.T) {
+	ha := NewHAClient("ha-logon-options")
+	// hasLogonOptions=true exercises the Logon(options) code path.
+	// The connect itself fails (no listener), so the Disconnect() after Logon
+	// failure is also exercised.
+	err := ha.connectAndLogonOnce(
+		"tcp://127.0.0.1:1/amps/json",
+		nil,
+		LogonParams{CorrelationID: "test-corr"},
+		true,
+	)
+	if err == nil {
+		t.Fatalf("expected connectAndLogonOnce to fail against refused endpoint")
+	}
+}
+
+func TestHAClientDisconnectedFalseWhenConnected(t *testing.T) {
+	ha := NewHAClient("ha-disconnected-false")
+	ha.client.connected = true
+	if ha.Disconnected() {
+		t.Fatalf("expected Disconnected() = false when client.connected = true")
+	}
+	ha.client.connected = false
+}
+
+func TestHAClientLogonOptionsZeroValue(t *testing.T) {
+	ha := NewHAClient("ha-logon-opts-zero")
+	got := ha.LogonOptions()
+	if got.CorrelationID != "" || got.Timeout != 0 {
+		t.Fatalf("expected zero-value LogonOptions, got %+v", got)
 	}
 }

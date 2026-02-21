@@ -450,3 +450,72 @@ func TestFilePublishStoreSaveCheckpointErrorPreservesMutationCounter(t *testing.
 		t.Fatalf("expected mutation counter to remain unchanged on save failure, got %d", store.opsSinceCheckpoint)
 	}
 }
+
+func TestFilePublishStoreWALFailurePaths(t *testing.T) {
+	// Use a directory as the WAL path so all wal.Append calls fail,
+	// exercising the error-return branches in Store, DiscardUpTo, and
+	// SetErrorOnPublishGap that are otherwise unreachable.
+	tempDir := t.TempDir()
+	walDir := filepath.Join(tempDir, "waldir") // will be created as a directory below
+	if err := os.MkdirAll(walDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll walDir: %v", err)
+	}
+
+	// Construct a store whose walPath is a directory — guaranteed write failure.
+	store := &FilePublishStore{
+		MemoryPublishStore: NewMemoryPublishStore(),
+		path:               filepath.Join(tempDir, "checkpoint.json"),
+		walPath:            walDir, // directory, not a file → append will fail
+		options: FileStoreOptions{
+			UseWAL:             true,
+			SyncOnWrite:        false,
+			CheckpointInterval: 100,
+		},
+	}
+
+	// Store: appendWal fails → error is returned, but sequence is still valid.
+	seq, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	if err == nil {
+		t.Fatalf("expected Store to propagate WAL-append error")
+	}
+	if seq == 0 {
+		t.Fatalf("expected non-zero sequence even on WAL failure")
+	}
+
+	// DiscardUpTo: appendWal fails → error is returned.
+	// Seed a real entry first via the in-memory layer directly.
+	seq2, _ := store.MemoryPublishStore.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":2}`)))
+	if err2 := store.DiscardUpTo(seq2); err2 == nil {
+		t.Fatalf("expected DiscardUpTo to propagate WAL-append error")
+	}
+
+	// SetErrorOnPublishGap: appendWal fails → error is silently swallowed but
+	// the in-memory flag is still updated. We just verify no panic occurs and
+	// the flag is set in memory.
+	store.SetErrorOnPublishGap(true)
+	if !store.ErrorOnPublishGap() {
+		t.Fatalf("expected in-memory flag to be set even when WAL write fails")
+	}
+}
+
+func TestFilePublishStoreLoadPropagatesCheckpointError(t *testing.T) {
+	// load() calls loadCheckpoint() first; a parse failure there should be
+	// returned by load() without calling replayWal.
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "bad_checkpoint.json")
+
+	// Write an intentionally malformed JSON checkpoint file.
+	if err := os.WriteFile(path, []byte("{bad json"), 0o600); err != nil {
+		t.Fatalf("write malformed checkpoint: %v", err)
+	}
+
+	store := &FilePublishStore{
+		MemoryPublishStore: NewMemoryPublishStore(),
+		path:               path,
+		walPath:            path + ".wal",
+		options:            defaultFileStoreOptions(),
+	}
+	if err := store.load(); err == nil {
+		t.Fatalf("expected load() to propagate checkpoint parse error")
+	}
+}

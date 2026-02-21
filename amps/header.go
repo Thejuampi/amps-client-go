@@ -59,40 +59,12 @@ type _Header struct {
 }
 
 func (header *_Header) reset() {
-	header.ackType = nil
-	header.bookmark = nil
-	header.batchSize = nil
+	// Bulk zero: compiles to a single runtime.memclr rather than 25+ individual
+	// store instructions, measurably faster on the message-receive hot path.
+	// CommandUnknown is not zero (it is the last iota in its block), so restore
+	// it explicitly after the zero — one store vs 25+ is still a significant win.
+	*header = _Header{}
 	header.command = CommandUnknown
-	header.commandID = nil
-	header.clientName = nil
-	header.expiration = nil
-	header.filter = nil
-	header.groupSequenceNumber = nil
-	header.sowKey = nil
-	header.messageLength = nil
-	header.leasePeriod = nil
-	header.matches = nil
-	header.options = nil
-	header.orderBy = nil
-	header.queryID = nil
-	header.reason = nil
-	header.recordsDeleted = nil
-	header.recordsInserted = nil
-	header.recordsReturned = nil
-	header.recordsUpdated = nil
-	header.sequenceID = nil
-	header.subIDs = nil
-	header.sowKeys = nil
-	header.status = nil
-	header.subID = nil
-	header.topic = nil
-	header.topN = nil
-	header.topicMatches = nil
-	header.timestamp = nil
-	header.userID = nil
-	header.password = nil
-	header.version = nil
-	header.correlationID = nil
 }
 
 func parseUintBytes(value []byte) (uint64, bool) {
@@ -380,12 +352,17 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 	_ = buffer.WriteByte('{')
 
 	writeStringField := func(key string, value []byte) {
-		_, _ = buffer.WriteString(`"` + key + `":"`)
+		// Avoid `"` + key + `":"` string concat (allocates a temp string per call).
+		_ = buffer.WriteByte('"')
+		_, _ = buffer.WriteString(key)
+		_, _ = buffer.WriteString(`":"`)
 		_, _ = buffer.Write(value)
 		_, _ = buffer.WriteString(closeStringValue)
 	}
 	writeNumberField := func(key string, value uint64) {
-		_, _ = buffer.WriteString(`"` + key + `":`)
+		_ = buffer.WriteByte('"')
+		_, _ = buffer.WriteString(key)
+		_, _ = buffer.WriteString(`":`)
 		_ = writeUintToBuffer(buffer, value)
 		_, _ = buffer.WriteString(closeNumberValue)
 	}
