@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate tag matches VERSION
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION_FILE="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$TAG" != "$VERSION_FILE" ]]; then
+            echo "Tag/version mismatch: tag=$TAG VERSION=$VERSION_FILE"
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Parity check
+        run: go run ./tools/paritycheck -manifest tools/parity_manifest.json
+
+      - name: Coverage profile
+        run: go test -count=1 ./amps/... -coverprofile=coverage.out
+
+      - name: Coverage gate
+        run: go run ./tools/coveragegate -profile coverage.out
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+
+      - name: Warm Go proxy and pkg.go.dev (non-blocking)
+        shell: bash
+        run: |
+          set +e
+          URLS=(
+            "https://proxy.golang.org/github.com/Thejuampi/amps-client-go/@v/${GITHUB_REF_NAME}.info"
+            "https://pkg.go.dev/github.com/Thejuampi/amps-client-go/amps@${GITHUB_REF_NAME}"
+          )
+          for URL in "${URLS[@]}"; do
+            echo "Requesting ${URL}"
+            curl -fsS --retry 3 --retry-delay 2 "${URL}" || true
+          done
+          exit 0

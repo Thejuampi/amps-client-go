@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Parity check
+        run: go run ./tools/paritycheck -manifest tools/parity_manifest.json
+
+      - name: Coverage profile
+        run: go test -count=1 ./amps/... -coverprofile=coverage.out
+
+      - name: Coverage gate
+        run: go run ./tools/coveragegate -profile coverage.out
