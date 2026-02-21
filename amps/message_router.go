@@ -72,21 +72,28 @@ func (msgRoute *MessageRoute) getMessageHandler() (message func(*Message) error)
 
 func (msgRouter *MessageRouter) deliverAck(ackMessage *Message, ackType int) int {
 	messagesDelivered := 0
-	commandID, _ := ackMessage.CommandID()
-	route, _ := msgRouter.routes.Load(commandID)
+	if msgRouter == nil || msgRouter.routes == nil {
+		return 0
+	}
+	route, _ := msgRouter.routes.Load(msgRouter.key)
 	if route != nil {
 		messagesDelivered += msgRouter.MessageRoute.deliverAck(ackMessage, ackType)
 		if msgRouter.MessageRoute.isTerminationAck(ackType) {
-			msgRouter.routes.Delete(commandID)
+			msgRouter.routes.Delete(msgRouter.key)
 		}
 	}
 	return messagesDelivered
 }
 
 func (msgRouter *MessageRouter) processAckForRemoval(ackType int, commandID string) {
-	route := msgRouter.MessageRoute.messageHandler
-	msgStream, _ := msgRouter.routes.Load(commandID)
-	route = msgStream.(func(*Message) error)
+	if msgRouter == nil || msgRouter.routes == nil {
+		return
+	}
+	msgStream, exists := msgRouter.routes.Load(commandID)
+	if !exists {
+		return
+	}
+	route, _ := msgStream.(func(*Message) error)
 	if route != nil && msgRouter.MessageRoute.isTerminationAck(ackType) {
 		msgRouter.routes.Delete(commandID)
 	}
@@ -117,11 +124,16 @@ func (msgRouter *MessageRouter) RemoveRoute(commandID string) {
 
 // FindRoute executes the exported findroute operation.
 func (msgRouter *MessageRouter) FindRoute(commandID string) func(*Message) error {
-	route := msgRouter.MessageRoute.messageHandler
-	msgHandler, _ := msgRouter.routes.Load(commandID)
-	route = msgHandler.(func(*Message) error)
+	if msgRouter == nil || msgRouter.routes == nil {
+		return nil
+	}
+	msgHandler, exists := msgRouter.routes.Load(commandID)
+	if !exists {
+		return nil
+	}
+	route, _ := msgHandler.(func(*Message) error)
 	if route != nil {
-		return msgRouter.MessageRoute.getMessageHandler()
+		return route
 	}
 	return nil
 }

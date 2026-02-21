@@ -27,7 +27,11 @@ func (point *FixedRecoveryPoint) Next() string {
 }
 
 // Reset resets fixed recovery point state.
-func (point *FixedRecoveryPoint) Reset() {}
+func (point *FixedRecoveryPoint) Reset() {
+	if point == nil {
+		return
+	}
+}
 
 // DynamicRecoveryPoint computes bookmarks using callback.
 type DynamicRecoveryPoint struct {
@@ -48,7 +52,11 @@ func (point *DynamicRecoveryPoint) Next() string {
 }
 
 // Reset resets dynamic point state.
-func (point *DynamicRecoveryPoint) Reset() {}
+func (point *DynamicRecoveryPoint) Reset() {
+	if point == nil {
+		return
+	}
+}
 
 // RecoveryPointAdapter adapts multiple recovery points into ordered sequence.
 type RecoveryPointAdapter struct {

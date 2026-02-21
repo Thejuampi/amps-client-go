@@ -263,3 +263,99 @@ func TestMessageStreamParitySelectors(t *testing.T) {
 		t.Fatalf("expected end iterator to terminate immediately")
 	}
 }
+
+func TestClientCppParityAdditionalWrappers(t *testing.T) {
+	client := NewClient("cpp-extra")
+	client.nameHash = ""
+	client.nameHashValue = 0
+	if client.GetNameHash() == "" || client.GetNameHashValue() == 0 {
+		t.Fatalf("expected computed hash fallback values")
+	}
+
+	state := ensureClientState(client)
+	state.lock.Lock()
+	state.uri = "tcp://localhost:9007/amps/json"
+	state.lock.Unlock()
+	if client.GetURI() == "" {
+		t.Fatalf("expected URI from parity state")
+	}
+
+	client.SetLogonCorrelationData("corr-extra")
+	if client.GetLogonCorrelationData() != "corr-extra" {
+		t.Fatalf("unexpected logon correlation value")
+	}
+
+	client.AddHttpPreflightHeader("X-Test: 1")
+	client.AddHttpPreflightHeaderKV("", "value")
+	client.SetHttpPreflightHeaders([]string{"A: 1", " ", "B: 2"})
+	client.ClearHttpPreflightHeaders()
+
+	if err := client.AddMessageHandlerForCommandType("route-sub", func(*Message) error { return nil }, AckTypeProcessed, CommandSubscribe); err != nil {
+		t.Fatalf("AddMessageHandlerForCommandType subscribe failed: %v", err)
+	}
+	if !client.RemoveMessageHandler("route-sub") {
+		t.Fatalf("expected remove route-sub to succeed")
+	}
+	if err := client.AddMessageHandlerForCommandType("", nil, AckTypeNone, CommandPublish); err == nil {
+		t.Fatalf("expected missing route id error")
+	}
+
+	var nilClient *Client
+	if err := nilClient.Send(nil); err == nil {
+		t.Fatalf("expected nil client send error")
+	}
+	if _, err := nilClient.SendWithHandler(nil, nil); err == nil {
+		t.Fatalf("expected nil client SendWithHandler error")
+	}
+	if err := client.Send(nil); err == nil {
+		t.Fatalf("expected nil message send error")
+	}
+	if _, err := client.SendWithHandler(nil, nil); err == nil {
+		t.Fatalf("expected nil message SendWithHandler error")
+	}
+	if _, err := client.SendWithHandler(func(*Message) error { return nil }, NewCommand("publish").SetTopic("orders").GetMessage(), 10); err == nil {
+		t.Fatalf("expected disconnected SendWithHandler error")
+	}
+
+	if err := client.AckDeferredAutoAck("", ""); err == nil {
+		t.Fatalf("expected AckDeferredAutoAck validation error")
+	}
+	if _, err := client.DeltaPublishWithSequence("orders", `{"id":1}`); err == nil {
+		t.Fatalf("expected disconnected delta publish with sequence error")
+	}
+	if _, err := client.DeltaPublishBytesWithSequence("orders", []byte(`{"id":2}`)); err == nil {
+		t.Fatalf("expected disconnected delta publish bytes with sequence error")
+	}
+
+	client.SetAutoAck(true).SetAckBatchSize(4).SetAckTimeout(125 * time.Millisecond).SetRetryOnDisconnect(true).SetDefaultMaxDepth(9)
+	if !client.GetAutoAck() || client.GetAckBatchSize() != 4 || client.GetAckTimeout() != 125 || !client.GetRetryOnDisconnect() || client.GetDefaultMaxDepth() != 9 {
+		t.Fatalf("unexpected getter values for ack/retry/depth")
+	}
+	client.SetAckTimeoutMillis(-5)
+	if client.GetAckTimeout() != 0 {
+		t.Fatalf("negative SetAckTimeoutMillis should clamp to zero")
+	}
+
+	bookmarkStore := NewMemoryBookmarkStore()
+	publishStore := NewMemoryPublishStore()
+	subscriptionManager := NewDefaultSubscriptionManager()
+	duplicateHandler := func(*Message) error { return nil }
+	failedWriteHandler := FailedWriteHandlerFunc(func(*Message, string) {})
+	exceptionListener := ExceptionListenerFunc(func(error) {})
+
+	client.SetBookmarkStore(bookmarkStore)
+	client.SetPublishStore(publishStore)
+	client.SetSubscriptionManager(subscriptionManager)
+	client.SetDuplicateMessageHandler(duplicateHandler)
+	client.SetFailedWriteHandler(failedWriteHandler)
+	client.SetExceptionListener(exceptionListener)
+	client.SetTransportFilterFunction(nil)
+	client.SetThreadCreatedCallback(nil)
+
+	if client.GetBookmarkStore() != bookmarkStore || client.GetPublishStore() != publishStore || client.GetSubscriptionManager() != subscriptionManager {
+		t.Fatalf("unexpected store/manager getters")
+	}
+	if client.GetDuplicateMessageHandler() == nil || client.GetFailedWriteHandler() == nil || client.GetExceptionListener() == nil {
+		t.Fatalf("expected non-nil parity handlers")
+	}
+}

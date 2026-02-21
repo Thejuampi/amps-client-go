@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestMemoryPublishStoreReplayAndDiscard(t *testing.T) {
@@ -68,5 +69,86 @@ func TestFilePublishStoreRoundTrip(t *testing.T) {
 
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected persisted file at %s: %v", path, err)
+	}
+}
+
+func TestMemoryPublishStoreAdditionalCoverage(t *testing.T) {
+	store := NewMemoryPublishStore()
+	command := NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":10}`))
+	sequence, err := store.Store(command)
+	if err != nil || sequence == 0 {
+		t.Fatalf("store failed: seq=%d err=%v", sequence, err)
+	}
+
+	found, err := store.ReplaySingle(func(replayed *Command) error {
+		if replayed == nil {
+			t.Fatalf("expected replayed command")
+		}
+		return nil
+	}, sequence)
+	if err != nil || !found {
+		t.Fatalf("expected ReplaySingle hit: found=%v err=%v", found, err)
+	}
+	found, err = store.ReplaySingle(func(*Command) error { return nil }, sequence+100)
+	if err != nil || found {
+		t.Fatalf("expected ReplaySingle miss")
+	}
+
+	if lowest := store.GetLowestUnpersisted(); lowest != sequence {
+		t.Fatalf("unexpected lowest unpersisted: %d", lowest)
+	}
+	if persisted := store.GetLastPersisted(); persisted != 0 {
+		t.Fatalf("unexpected last persisted before discard: %d", persisted)
+	}
+
+	store.SetErrorOnPublishGap(true)
+	if !store.ErrorOnPublishGap() {
+		t.Fatalf("expected error-on-gap enabled")
+	}
+	if err := store.DiscardUpTo(sequence); err != nil {
+		t.Fatalf("discard up to sequence failed: %v", err)
+	}
+	if err := store.DiscardUpTo(sequence - 1); err == nil {
+		t.Fatalf("expected publish gap error")
+	}
+
+	if err := store.Flush(20 * time.Millisecond); err != nil {
+		t.Fatalf("flush should succeed when store empty: %v", err)
+	}
+
+	store.SetErrorOnPublishGap(false)
+	seq2, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":11}`)))
+	if err != nil || seq2 == 0 {
+		t.Fatalf("second store failed: seq=%d err=%v", seq2, err)
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = store.DiscardUpTo(seq2)
+	}()
+	if err := store.Flush(0); err != nil {
+		t.Fatalf("zero-timeout flush should block until empty: %v", err)
+	}
+
+	_, _ = store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":12}`)))
+	if err := store.Flush(5 * time.Millisecond); err == nil {
+		t.Fatalf("expected timed flush error when entries remain")
+	}
+}
+
+func TestFilePublishStoreAdditionalCoverage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_wrappers.json")
+	store := NewFilePublishStore(path)
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte("payload")))
+	if err != nil || sequence == 0 {
+		t.Fatalf("store failed: seq=%d err=%v", sequence, err)
+	}
+	store.SetErrorOnPublishGap(true)
+	if err := store.DiscardUpTo(sequence); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	reloaded := NewFilePublishStore(path)
+	if !reloaded.ErrorOnPublishGap() {
+		t.Fatalf("expected persisted error-on-gap setting")
 	}
 }

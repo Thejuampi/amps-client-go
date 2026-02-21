@@ -365,361 +365,100 @@ func writeUintToBuffer(buffer *bytes.Buffer, value uint64) error {
 }
 
 func (header *_Header) write(buffer *bytes.Buffer) (err error) {
+	_ = buffer.WriteByte('{')
 
-	err = buffer.WriteByte('{')
-	if err != nil {
-		return
+	writeStringField := func(key string, value []byte) {
+		_, _ = buffer.WriteString(`"` + key + `":"`)
+		_, _ = buffer.Write(value)
+		_, _ = buffer.WriteString(closeStringValue)
+	}
+	writeNumberField := func(key string, value uint64) {
+		_, _ = buffer.WriteString(`"` + key + `":`)
+		_ = writeUintToBuffer(buffer, value)
+		_, _ = buffer.WriteString(closeNumberValue)
 	}
 
 	if header.command >= 0 {
-		_, err = buffer.WriteString("\"c\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(commandIntToString(header.command))
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		_, _ = buffer.WriteString(`"c":"`)
+		_, _ = buffer.WriteString(commandIntToString(header.command))
+		_, _ = buffer.WriteString(closeStringValue)
 	}
-
 	if header.commandID != nil {
-		_, err = buffer.WriteString("\"cid\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.commandID)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("cid", header.commandID)
 	}
-
 	if header.topic != nil {
-		_, err = buffer.WriteString("\"t\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.topic)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("t", header.topic)
 	}
-
 	if header.batchSize != nil {
-		_, err = buffer.WriteString("\"bs\":")
-		if err != nil {
-			return
-		}
-		err = writeUintToBuffer(buffer, uint64(*header.batchSize))
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeNumberValue)
-		if err != nil {
-			return
-		}
+		writeNumberField("bs", uint64(*header.batchSize))
 	}
-
 	if header.bookmark != nil {
-		_, err = buffer.WriteString("\"bm\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.bookmark)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("bm", header.bookmark)
 	}
-
 	if header.correlationID != nil {
-		_, err = buffer.WriteString("\"x\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.correlationID)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("x", header.correlationID)
 	}
-
 	if header.expiration != nil {
-		_, err = buffer.WriteString("\"e\":")
-		if err != nil {
-			return
-		}
-		err = writeUintToBuffer(buffer, uint64(*header.expiration))
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeNumberValue)
-		if err != nil {
-			return
-		}
+		writeNumberField("e", uint64(*header.expiration))
 	}
-
 	if header.filter != nil {
-		_, err = buffer.WriteString("\"filter\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.filter)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("filter", header.filter)
 	}
-
 	if header.options != nil {
-		_, err = buffer.WriteString("\"opts\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.options)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("opts", header.options)
 	}
-
 	if header.ackType != nil {
 		ack := ackToString(*header.ackType)
-		if len(ack) > 0 {
-			_, err = buffer.WriteString("\"a\":\"")
-			if err != nil {
-				return
-			}
-			_, err = buffer.WriteString(ack)
-			if err != nil {
-				return
-			}
-			_, err = buffer.WriteString(closeStringValue)
-			if err != nil {
-				return
-			}
+		if ack != "" {
+			_, _ = buffer.WriteString(`"a":"`)
+			_, _ = buffer.WriteString(ack)
+			_, _ = buffer.WriteString(closeStringValue)
 		}
 	}
-
 	if header.clientName != nil {
-		_, err = buffer.WriteString("\"client_name\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.clientName)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("client_name", header.clientName)
 	}
-
 	if header.userID != nil {
-		_, err = buffer.WriteString("\"user_id\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.userID)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("user_id", header.userID)
 	}
-
 	if header.password != nil {
-		_, err = buffer.WriteString("\"pw\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.password)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("pw", header.password)
 	}
-
 	if header.orderBy != nil {
-		_, err = buffer.WriteString("\"orderby\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.orderBy)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("orderby", header.orderBy)
 	}
-
 	if header.queryID != nil {
-		_, err = buffer.WriteString("\"query_id\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.queryID)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("query_id", header.queryID)
 	}
-
 	if header.sequenceID != nil {
-		_, err = buffer.WriteString("\"s\":")
-		if err != nil {
-			return
-		}
-		err = writeUintToBuffer(buffer, *header.sequenceID)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeNumberValue)
-		if err != nil {
-			return
-		}
+		writeNumberField("s", *header.sequenceID)
 	}
-
 	if header.sowKey != nil {
-		_, err = buffer.WriteString("\"k\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.sowKey)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("k", header.sowKey)
 	}
-
 	if header.sowKeys != nil {
-		_, err = buffer.WriteString("\"sow_keys\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.sowKeys)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("sow_keys", header.sowKeys)
 	}
-
 	if header.subID != nil {
-		_, err = buffer.WriteString("\"sub_id\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.subID)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("sub_id", header.subID)
 	}
-
 	if header.subIDs != nil {
-		_, err = buffer.WriteString("\"sids\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.subIDs)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
+		writeStringField("sids", header.subIDs)
 	}
-
 	if header.topN != nil {
-		_, err = buffer.WriteString("\"top_n\":")
-		if err != nil {
-			return
-		}
-		err = writeUintToBuffer(buffer, uint64(*header.topN))
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeNumberValue)
-		if err != nil {
-			return
-		}
+		writeNumberField("top_n", uint64(*header.topN))
 	}
-
 	if header.version != nil {
-		_, err = buffer.WriteString("\"version\":\"")
-		if err != nil {
-			return
-		}
-		_, err = buffer.Write(header.version)
-		if err != nil {
-			return
-		}
-		_, err = buffer.WriteString(closeStringValue)
-		if err != nil {
-			return
-		}
-
+		writeStringField("version", header.version)
 		if header.messageType != nil {
-			_, err = buffer.WriteString("\"mt\":\"")
-			if err != nil {
-				return
-			}
-			_, err = buffer.Write(header.messageType)
-			if err != nil {
-				return
-			}
-			_, err = buffer.WriteString(closeStringValue)
-			if err != nil {
-				return
-			}
+			writeStringField("mt", header.messageType)
 		}
 	}
 
+	if buffer.Len() == 1 {
+		_ = buffer.WriteByte('}')
+		return nil
+	}
 	buffer.Bytes()[buffer.Len()-1] = '}'
-
-	return
+	return nil
 }

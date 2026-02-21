@@ -28,7 +28,11 @@ func (strategy *FixedDelayStrategy) GetConnectWaitDuration(uri string) (time.Dur
 }
 
 // Reset executes the exported reset operation.
-func (strategy *FixedDelayStrategy) Reset() {}
+func (strategy *FixedDelayStrategy) Reset() {
+	if strategy == nil {
+		return
+	}
+}
 
 // ExponentialDelayStrategy stores reconnect delay parameters.
 type ExponentialDelayStrategy struct {

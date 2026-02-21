@@ -29,10 +29,7 @@ func NormalizeSubID(subIDs string) string {
 			case ' ', '\t', '\n', '\r':
 				tokenEnd--
 			default:
-				if tokenEnd > tokenStart {
-					return subIDs[tokenStart:tokenEnd]
-				}
-				break
+				return subIDs[tokenStart:tokenEnd]
 			}
 		}
 

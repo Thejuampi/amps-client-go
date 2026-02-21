@@ -50,7 +50,7 @@ func (iterator *MessageStreamIterator) Next() (*Message, bool) {
 		return nil, false
 	}
 	message := iterator.stream.Next()
-	if message == nil && !iterator.stream.HasNext() {
+	if message == nil {
 		return nil, false
 	}
 	return message, true
@@ -233,10 +233,7 @@ func (ms *MessageStream) Next() (message *Message) {
 			ms.queryID = ""
 		} else {
 			if len(ms.queryID) > 0 {
-				err := ms.client.deleteRoute(ms.queryID)
-				if err != nil {
-					return
-				}
+				_ = ms.client.deleteRoute(ms.queryID)
 				ms.queryID = ""
 			}
 		}
@@ -250,16 +247,10 @@ func (ms *MessageStream) Next() (message *Message) {
 				ms.queryID = ""
 			} else {
 				if len(ms.commandID) > 0 {
-					err := ms.client.deleteRoute(ms.commandID)
-					if err != nil {
-						return
-					}
+					_ = ms.client.deleteRoute(ms.commandID)
 					ms.commandID = ""
 				} else if len(ms.queryID) > 0 {
-					err := ms.client.deleteRoute(ms.queryID)
-					if err != nil {
-						return
-					}
+					_ = ms.client.deleteRoute(ms.queryID)
 					ms.queryID = ""
 				}
 			}

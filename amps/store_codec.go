@@ -102,9 +102,6 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 
 func commandFromSnapshot(snapshot commandSnapshot) *Command {
 	command := NewCommand(snapshot.Command)
-	if command.header == nil {
-		command.header = new(_Header)
-	}
 
 	if snapshot.AckType != nil {
 		value := *snapshot.AckType

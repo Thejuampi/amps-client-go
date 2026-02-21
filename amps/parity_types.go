@@ -235,16 +235,15 @@ func listenerKey(listener ConnectionStateListener) uintptr {
 		return 0
 	}
 	val := reflect.ValueOf(listener)
-	if !val.IsValid() {
-		return 0
-	}
-	if val.Kind() == reflect.Pointer || val.Kind() == reflect.UnsafePointer || val.Kind() == reflect.Func || val.Kind() == reflect.Map || val.Kind() == reflect.Slice || val.Kind() == reflect.Chan {
-		if val.Kind() != reflect.UnsafePointer && val.IsNil() {
+	switch val.Kind() {
+	case reflect.Pointer, reflect.Func:
+		if val.IsNil() {
 			return 0
 		}
 		return val.Pointer()
+	default:
+		return uintptr(unsafeStringHash(fmt.Sprintf("%T:%v", listener, listener)))
 	}
-	return uintptr(unsafeStringHash(fmt.Sprintf("%T:%v", listener, listener)))
 }
 
 func unsafeStringHash(value string) uint64 {
