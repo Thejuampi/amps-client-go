@@ -529,3 +529,15 @@ func TestFixShredderFirstAndSubsequentFieldCoverage(t *testing.T) {
 		t.Fatalf("unexpected FIX parse map: %+v", values)
 	}
 }
+
+func TestFixAndNVFixShredderMalformedCoverage(t *testing.T) {
+	fixValues := NewFIXShredder('|').ToMap([]byte("broken|8=FIX.4.4|=bad|35=D|49=SENDER|"))
+	if fixValues[8] != "FIX.4.4" || fixValues[35] != "D" || fixValues[49] != "SENDER" {
+		t.Fatalf("unexpected FIX parse map with malformed segments: %+v", fixValues)
+	}
+
+	nvfixValues := NewNVFIXShredder('|').ToMap([]byte("broken|=bad|symbol=AAPL|venue=XNAS|"))
+	if nvfixValues["symbol"] != "AAPL" || nvfixValues["venue"] != "XNAS" {
+		t.Fatalf("unexpected NVFIX parse map with malformed segments: %+v", nvfixValues)
+	}
+}

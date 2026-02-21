@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -104,23 +105,39 @@ func replay(path string, apply func([]byte) error, copyLine bool) error {
 	}
 	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		var line []byte
-		if copyLine {
-			line = append([]byte(nil), scanner.Bytes()...)
-		} else {
-			line = scanner.Bytes()
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			if line[len(line)-1] == '\n' {
+				line = line[:len(line)-1]
+			}
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
 		}
 		if len(line) == 0 {
-			continue
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return nil
+				}
+				return readErr
+			}
+		} else {
+			if copyLine {
+				line = append([]byte(nil), line...)
+			}
+			if err = apply(line); err != nil {
+				return err
+			}
 		}
-		if err = apply(line); err != nil {
-			return err
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return readErr
 		}
 	}
-	return scanner.Err()
 }
 
 func Truncate(path string) error {

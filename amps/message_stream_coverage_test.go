@@ -262,6 +262,30 @@ func TestMessageQueueCoverage(t *testing.T) {
 	}
 }
 
+func TestMessageStreamCloseUnblocksHasNext(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.setRunning()
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- stream.HasNext()
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	if err := stream.Close(); err != nil {
+		t.Fatalf("close should not fail for nil client: %v", err)
+	}
+
+	select {
+	case hasNext := <-done:
+		if hasNext {
+			t.Fatalf("expected blocked HasNext to stop after Close")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("Close did not unblock waiting HasNext")
+	}
+}
+
 func TestMessageStreamIteratorCoverage(t *testing.T) {
 	var nilIterator *MessageStreamIterator
 	if message, ok := nilIterator.Next(); ok || message != nil {

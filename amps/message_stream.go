@@ -189,6 +189,9 @@ func (ms *MessageStream) HasNext() bool {
 		ms.consumeConflateState()
 		return true
 	}
+	if ms.state == messageStreamStateComplete {
+		return false
+	}
 
 	ms.timedOut = true
 	return true
@@ -345,6 +348,9 @@ func (ms *MessageStream) setState(state int) {
 	if state != messageStreamStateDisconnected {
 		ms.state = state
 	}
+	if state == messageStreamStateComplete && ms.queue != nil {
+		ms.queue.close()
+	}
 }
 
 func newMessageStream(client *Client) *MessageStream {
@@ -357,6 +363,7 @@ type _MessageQueue struct {
 	first    uint64
 	last     uint64
 	ring     []*Message
+	closed   bool
 
 	lock     sync.Mutex
 	notEmpty *sync.Cond
@@ -384,9 +391,15 @@ func (queue *_MessageQueue) enqueue(message *Message) {
 func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
+	if queue.closed {
+		return
+	}
 
-	for depth != 0 && queue._length > depth {
+	for depth != 0 && queue._length > depth && !queue.closed {
 		queue.notFull.Wait()
+	}
+	if queue.closed {
+		return
 	}
 
 	if queue.capacity == queue._length {
@@ -449,8 +462,11 @@ func (queue *_MessageQueue) waitDequeue() (*Message, bool) {
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
 
-	for queue._length == 0 {
+	for queue._length == 0 && !queue.closed {
 		queue.notEmpty.Wait()
+	}
+	if queue._length == 0 {
+		return nil, false
 	}
 
 	return queue.dequeueLocked(), true
@@ -473,7 +489,7 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 	})
 	defer timer.Stop()
 
-	for queue._length == 0 && !timedOut {
+	for queue._length == 0 && !timedOut && !queue.closed {
 		queue.notEmpty.Wait()
 	}
 
@@ -491,9 +507,18 @@ func (queue *_MessageQueue) clear() {
 	queue.first = uint64(0)
 	queue.last = uint64(0)
 	queue._length = uint64(0)
+	queue.closed = false
 
 	queue.ring = make([]*Message, queue.capacity)
 	queue.notFull.Broadcast()
+}
+
+func (queue *_MessageQueue) close() {
+	queue.lock.Lock()
+	queue.closed = true
+	queue.notEmpty.Broadcast()
+	queue.notFull.Broadcast()
+	queue.lock.Unlock()
 }
 
 func (queue *_MessageQueue) resize() {

@@ -148,6 +148,7 @@ type sslHandleObject struct {
 	readBuffer  bytes.Buffer
 	writeBuffer bytes.Buffer
 	lastError   int
+	lock        sync.Mutex
 }
 
 var (
@@ -1019,9 +1020,11 @@ func SSLSetFD(ssl SSLHandle, fd int) int {
 		return -1
 	}
 	handle := value.(*sslHandleObject)
+	handle.lock.Lock()
 	handle.fd = fd
 	handle.shutdown = false
 	handle.lastError = 0
+	handle.lock.Unlock()
 	sslCode.Store(0)
 	return 1
 }
@@ -1032,7 +1035,11 @@ func SSLGetErrorCode(ssl SSLHandle, result int) int {
 		return 0
 	}
 	if value, ok := sslHandles.Load(ssl); ok {
-		if code := value.(*sslHandleObject).lastError; code > 0 {
+		handle := value.(*sslHandleObject)
+		handle.lock.Lock()
+		code := handle.lastError
+		handle.lock.Unlock()
+		if code > 0 {
 			return code
 		}
 	}
@@ -1053,15 +1060,18 @@ func SSLConnect(ssl SSLHandle) int {
 		return -1
 	}
 	handle := value.(*sslHandleObject)
+	handle.lock.Lock()
 	if handle.fd < 0 {
 		sslCode.Store(1)
 		handle.lastError = 1
 		sslError = "ssl file descriptor is not set"
+		handle.lock.Unlock()
 		return -1
 	}
 	handle.connected = true
 	handle.shutdown = false
 	handle.lastError = 0
+	handle.lock.Unlock()
 	sslCode.Store(0)
 	return 1
 }
@@ -1083,6 +1093,8 @@ func SSLRead(ssl SSLHandle, buffer []byte) int {
 	if len(buffer) == 0 {
 		return 0
 	}
+	handle.lock.Lock()
+	defer handle.lock.Unlock()
 	if !handle.connected || handle.shutdown {
 		return 0
 	}
@@ -1124,6 +1136,8 @@ func SSLWrite(ssl SSLHandle, buffer []byte) int {
 		return -1
 	}
 	handle := value.(*sslHandleObject)
+	handle.lock.Lock()
+	defer handle.lock.Unlock()
 	if handle.shutdown {
 		sslCode.Store(1)
 		handle.lastError = 1
@@ -1165,8 +1179,10 @@ func SSLShutdown(ssl SSLHandle) int {
 		return -1
 	}
 	handle := value.(*sslHandleObject)
+	handle.lock.Lock()
 	handle.connected = false
 	handle.shutdown = true
+	handle.lock.Unlock()
 	return 1
 }
 
@@ -1179,7 +1195,11 @@ func SSLPending(ssl SSLHandle) int {
 	if !ok {
 		return 0
 	}
-	return value.(*sslHandleObject).readBuffer.Len()
+	handle := value.(*sslHandleObject)
+	handle.lock.Lock()
+	pending := handle.readBuffer.Len()
+	handle.lock.Unlock()
+	return pending
 }
 
 // SSLFreeHandle releases a compatibility SSL handle.

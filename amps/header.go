@@ -248,6 +248,9 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			header.version = value
 		}
 	default:
+		if len(key) == 0 {
+			return
+		}
 		switch key[0] {
 		case 'c':
 			if bytesEqualString(key, "client_name") {

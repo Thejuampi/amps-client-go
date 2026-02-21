@@ -31,6 +31,8 @@ const (
 	AckTypePersisted = 8
 	AckTypeCompleted = 16
 	AckTypeStats     = 32
+
+	maxInboundFrameLength = 256 * 1024 * 1024
 )
 
 // Client manages a single AMPS connection, command execution, and message routing.
@@ -117,6 +119,41 @@ trimEnd:
 		}
 	}
 	return value[:0]
+}
+
+func (client *Client) setSyncAckProcessing(channel chan _Result) {
+	client.ackProcessingLock.Lock()
+	client.syncAckProcessing = channel
+	client.ackProcessingLock.Unlock()
+}
+
+func (client *Client) getSyncAckProcessing() chan _Result {
+	client.ackProcessingLock.Lock()
+	defer client.ackProcessingLock.Unlock()
+	return client.syncAckProcessing
+}
+
+func (client *Client) closeSyncAckProcessing() {
+	client.ackProcessingLock.Lock()
+	if client.syncAckProcessing != nil {
+		close(client.syncAckProcessing)
+		client.syncAckProcessing = nil
+	}
+	client.ackProcessingLock.Unlock()
+}
+
+func (client *Client) signalSyncAckProcessing(result _Result) bool {
+	client.ackProcessingLock.Lock()
+	defer client.ackProcessingLock.Unlock()
+	if client.syncAckProcessing == nil {
+		return false
+	}
+	select {
+	case client.syncAckProcessing <- result:
+		return true
+	default:
+		return false
+	}
 }
 
 func (client *Client) makeCommandID() string {
@@ -226,9 +263,16 @@ func (client *Client) readRoutine() {
 		}
 
 		for client.receivePosition-client.readPosition >= 4 {
-			messageLength := int(binary.BigEndian.Uint32(client.receiveBuffer[client.readPosition:]))
+			messageLength := binary.BigEndian.Uint32(client.receiveBuffer[client.readPosition:])
+			if messageLength > maxInboundFrameLength {
+				client.onConnectionError(NewError(
+					ProtocolError,
+					fmt.Sprintf("inbound frame length %d exceeds maximum %d", messageLength, maxInboundFrameLength),
+				))
+				return
+			}
 
-			endByte := client.readPosition + messageLength + 4
+			endByte := client.readPosition + int(messageLength) + 4
 
 			for endByte > client.receivePosition {
 				if endByte > len(client.receiveBuffer) {
@@ -286,15 +330,25 @@ func (client *Client) readRoutine() {
 						return
 					}
 
-					dataLength := (*client.message.header.messageLength)
-					client.message.data = left[:dataLength]
+					if client.message.header.messageLength == nil {
+						client.onError(NewError(ProtocolError, "SOW record missing message length"))
+						return
+					}
+
+					dataLength := *client.message.header.messageLength
+					if dataLength > uint(len(left)) {
+						client.onError(NewError(ProtocolError, "SOW record payload exceeds frame bounds"))
+						return
+					}
+					dataLengthValue := int(dataLength)
+					client.message.data = left[:dataLengthValue]
 
 					err = client.onMessage(client.message)
 					if err != nil {
 						client.onError(NewError(MessageHandlerError, err))
 					}
 
-					left = left[dataLength:]
+					left = left[dataLengthValue:]
 				}
 			} else {
 
@@ -469,13 +523,11 @@ func (client *Client) addRoute(
 
 				systemAcks &^= ack
 
-				if ack == AckTypeProcessed && client.syncAckProcessing != nil {
+				if ack == AckTypeProcessed {
 					status, _ := message.Status()
 					reason, _ := message.Reason()
 					success = status == "success"
-					client.syncAckProcessing <- _Result{success, reason}
-
-					client.acksLock.Unlock()
+					_ = client.signalSyncAckProcessing(_Result{success, reason})
 				}
 			}
 
@@ -546,12 +598,7 @@ func (client *Client) onConnectionError(err error) {
 		state.lock.Unlock()
 	}
 
-	client.ackProcessingLock.Lock()
-	if client.syncAckProcessing != nil {
-		close(client.syncAckProcessing)
-		client.syncAckProcessing = nil
-	}
-	client.ackProcessingLock.Unlock()
+	client.closeSyncAckProcessing()
 
 	client.routes = new(sync.Map)
 	client.messageStreams = new(sync.Map)
@@ -1066,28 +1113,36 @@ func (client *Client) Subscribe(topic string, filter ...string) (*MessageStream,
 
 // Flush executes the exported flush operation.
 func (client *Client) Flush() (err error) {
-	result := make(chan error)
+	result := make(chan error, 1)
+	signalResult := func(flushErr error) {
+		select {
+		case result <- flushErr:
+		default:
+		}
+	}
 
 	cmd := NewCommand("flush").AddAckType(AckTypeCompleted)
 	_, err = client.ExecuteAsync(cmd, func(message *Message) error {
-
-		if status, hasStatus := client.message.Status(); hasStatus && status == "success" {
-			result <- nil
+		if status, hasStatus := message.Status(); hasStatus && status == "success" {
+			signalResult(nil)
 			return nil
 		}
 
-		reason, hasReason := client.message.Reason()
+		reason, hasReason := message.Reason()
 		if hasReason {
-			result <- errors.New(reason)
-			return errors.New(reason)
+			flushErr := errors.New(reason)
+			signalResult(flushErr)
+			return flushErr
 		}
-		return nil
+		flushErr := errors.New("flush failed")
+		signalResult(flushErr)
+		return flushErr
 	})
 
 	if err != nil {
 		return err
 	}
-	return nil
+	return <-result
 }
 
 // DeltaSubscribe executes the exported deltasubscribe operation.
@@ -1204,7 +1259,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			routeID = commandID
 		}
 
-		client.syncAckProcessing = make(chan _Result)
+		client.setSyncAckProcessing(make(chan _Result, 1))
 
 		err := client.addRoute(routeID, messageHandler, systemAcks, userAcks, isSubscribe, isReplace)
 		if err != nil {
@@ -1222,7 +1277,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	case CommandUnsubscribe:
 
 		systemAcks = AckTypeNone
-		client.syncAckProcessing = nil
+		client.closeSyncAckProcessing()
 		subID, hasSubID := command.SubID()
 		if !hasSubID || subID == "all" {
 
@@ -1255,7 +1310,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	case CommandFlush:
 		systemAcks = AckTypeProcessed
 
-		client.syncAckProcessing = make(chan _Result)
+		client.setSyncAckProcessing(make(chan _Result, 1))
 		routeID = commandID
 
 		err := client.addRoute(commandID, messageHandler, systemAcks, userAcks, false, false)
@@ -1306,8 +1361,10 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	}
 
 	if client.connected {
-		if client.syncAckProcessing != nil {
+		syncAckProcessing := client.getSyncAckProcessing()
+		if syncAckProcessing != nil {
 			client.acksLock.Lock()
+			defer client.acksLock.Unlock()
 
 			sendErr := client.send(command)
 			if sendErr != nil {
@@ -1320,26 +1377,21 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 					return routeID, errors.New("Error deleting route")
 				}
 
-				client.ackProcessingLock.Lock()
-				if client.syncAckProcessing != nil {
-					close(client.syncAckProcessing)
-					client.syncAckProcessing = nil
-				}
-				client.ackProcessingLock.Unlock()
-
-				client.acksLock.Unlock()
+				client.closeSyncAckProcessing()
 
 				client.handleSendFailure(command, sendErr)
 				return commandID, NewError(DisconnectedError, sendErr)
 			}
 
-			result := <-client.syncAckProcessing
-			client.ackProcessingLock.Lock()
-			if client.syncAckProcessing != nil {
-				close(client.syncAckProcessing)
-				client.syncAckProcessing = nil
+			result, ok := <-syncAckProcessing
+			client.closeSyncAckProcessing()
+			if !ok {
+				routeErr := client.deleteRoute(routeID)
+				if routeErr != nil {
+					return routeID, errors.New("Error deleting route")
+				}
+				return commandID, NewError(ConnectionError, "sync ack channel closed")
 			}
-			client.ackProcessingLock.Unlock()
 
 			if result.Status {
 				return routeID, nil
@@ -1566,12 +1618,7 @@ func (client *Client) Disconnect() (err error) {
 		client.heartbeatTimeoutID = nil
 	}
 
-	client.ackProcessingLock.Lock()
-	if client.syncAckProcessing != nil {
-		close(client.syncAckProcessing)
-		client.syncAckProcessing = nil
-	}
-	client.ackProcessingLock.Unlock()
+	client.closeSyncAckProcessing()
 
 	client.notifyConnectionState(ConnectionStateDisconnected)
 	return NewError(DisconnectedError, "Client is not Connected")

@@ -21,24 +21,34 @@ func NewNVFIXShredder(fieldSep ...byte) *NvfixMessageShredder {
 // ToMap executes the exported tomap operation.
 func (nfs *NvfixMessageShredder) ToMap(nvfix []byte) map[string]string {
 	nvfixMap := make(map[string]string, 0)
-	delimiterIndex := 0
-	equalIndex := 0
-	key := ""
-	value := ""
+	fieldStart := 0
+	equalIndex := -1
+	parseField := func(fieldEnd int) {
+		if equalIndex <= fieldStart || equalIndex >= fieldEnd {
+			return
+		}
+		key := string(nvfix[fieldStart:equalIndex])
+		if key == "" {
+			return
+		}
+		nvfixMap[key] = string(nvfix[equalIndex+1 : fieldEnd])
+	}
 
 	for i, c := range nvfix {
 		if c == '=' {
-			equalIndex = i
-			if key == "" && value == "" {
-				key = string(nvfix[delimiterIndex:equalIndex])
-			} else {
-				key = string(nvfix[delimiterIndex+1 : equalIndex])
+			if equalIndex < fieldStart {
+				equalIndex = i
 			}
-		} else if c == nfs.fieldSeparator {
-			delimiterIndex = i
-			value = string(nvfix[equalIndex+1 : delimiterIndex])
-			nvfixMap[key] = value
+			continue
 		}
+		if c == nfs.fieldSeparator {
+			parseField(i)
+			fieldStart = i + 1
+			equalIndex = -1
+		}
+	}
+	if fieldStart < len(nvfix) {
+		parseField(len(nvfix))
 	}
 
 	return nvfixMap

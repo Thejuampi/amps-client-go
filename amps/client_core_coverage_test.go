@@ -100,6 +100,12 @@ func buildSOWFrame(t *testing.T, routeID string, data []byte) []byte {
 	return append([]byte(nil), frame...)
 }
 
+func buildFramePrefix(length uint32) []byte {
+	frame := make([]byte, 4)
+	binary.BigEndian.PutUint32(frame, length)
+	return frame
+}
+
 func TestClientCoreWrappersCoverage(t *testing.T) {
 	client := NewClient("client-core-wrappers")
 	errCalled := 0
@@ -372,6 +378,28 @@ func TestClientReadRoutineAdditionalBranches(t *testing.T) {
 	command := NewCommand("publish").SetSubID("sub-invalid").SetData([]byte("x"))
 	conn.enqueueRead(buildFrameFromCommand(t, command))
 	client.readRoutine()
+}
+
+func TestClientReadRoutineOversizedFrameCoverage(t *testing.T) {
+	client := NewClient("read-routine-oversized")
+	conn := newTestConn()
+	client.connection = conn
+	client.connected = true
+	client.stopped = false
+	errorCount := 0
+	client.SetErrorHandler(func(error) {
+		errorCount++
+	})
+
+	conn.enqueueRead(buildFramePrefix(maxInboundFrameLength + 1))
+	client.readRoutine()
+
+	if client.connected {
+		t.Fatalf("expected oversized frame to disconnect client")
+	}
+	if errorCount == 0 {
+		t.Fatalf("expected protocol error callback for oversized frame")
+	}
 }
 
 func TestClientRouteHelpersCoverage(t *testing.T) {

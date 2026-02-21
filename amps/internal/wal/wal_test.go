@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -144,5 +145,30 @@ func TestWALAppendReplayAndTruncateCoverage(t *testing.T) {
 	}
 	if err := ReplayNoCopy("", func([]byte) error { return nil }); err == nil {
 		t.Fatalf("expected no-copy replay path error")
+	}
+}
+
+func TestReplayHandlesLargeLine(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "large.wal")
+	largeLine := bytes.Repeat([]byte("a"), (17*1024*1024)+7)
+	record := append(append([]byte(nil), largeLine...), '\n')
+
+	if err := Append(logPath, record, false); err != nil {
+		t.Fatalf("append large line failed: %v", err)
+	}
+
+	lines := 0
+	if err := Replay(logPath, func(line []byte) error {
+		lines++
+		if len(line) != len(largeLine) {
+			t.Fatalf("unexpected replay line length: got %d want %d", len(line), len(largeLine))
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("replay large line failed: %v", err)
+	}
+	if lines != 1 {
+		t.Fatalf("expected one replayed line, got %d", lines)
 	}
 }

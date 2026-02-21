@@ -23,24 +23,34 @@ func NewFIXShredder(fieldSep ...byte) *FixMessageShredder {
 // ToMap executes the exported tomap operation.
 func (fms *FixMessageShredder) ToMap(fix []byte) map[int]string {
 	fixMap := make(map[int]string, 0)
-	delimiterIndex := 0
-	equalIndex := 0
-	key := 0
-	value := ""
+	fieldStart := 0
+	equalIndex := -1
+	parseField := func(fieldEnd int) {
+		if equalIndex <= fieldStart || equalIndex >= fieldEnd {
+			return
+		}
+		key, err := strconv.Atoi(string(fix[fieldStart:equalIndex]))
+		if err != nil {
+			return
+		}
+		fixMap[key] = string(fix[equalIndex+1 : fieldEnd])
+	}
 
 	for i, c := range fix {
 		if c == '=' {
-			equalIndex = i
-			if key == 0 && value == "" {
-				key, _ = strconv.Atoi(string(fix[delimiterIndex:equalIndex]))
-			} else {
-				key, _ = strconv.Atoi(string(fix[delimiterIndex+1 : equalIndex]))
+			if equalIndex < fieldStart {
+				equalIndex = i
 			}
-		} else if c == fms.fieldSeparator {
-			delimiterIndex = i
-			value = string(fix[equalIndex+1 : delimiterIndex])
-			fixMap[key] = value
+			continue
 		}
+		if c == fms.fieldSeparator {
+			parseField(i)
+			fieldStart = i + 1
+			equalIndex = -1
+		}
+	}
+	if fieldStart < len(fix) {
+		parseField(len(fix))
 	}
 
 	return fixMap
