@@ -180,7 +180,7 @@ func BenchmarkStreamHotTimeout(b *testing.B) {
 	b.ResetTimer()
 
 	for index := 0; index < b.N; index++ {
-		stream.timedOut = true
+		stream.timedOut.Store(true)
 		if next := stream.Next(); next != nil {
 			b.Fatalf("expected nil on timeout")
 		}

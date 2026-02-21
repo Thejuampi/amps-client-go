@@ -2,8 +2,8 @@ package amps
 
 import (
 	"sync"
+	"sync/atomic"
 
-	"errors"
 	"time"
 )
 
@@ -26,10 +26,10 @@ type MessageStream struct {
 	current   *Message
 	sowKeyMap map[string]*Message
 
-	state    int
+	state    int32
 	depth    uint64
 	timeout  uint64
-	timedOut bool
+	timedOut atomic.Bool
 
 	queue *_MessageQueue
 
@@ -58,7 +58,7 @@ func (iterator *MessageStreamIterator) Next() (*Message, bool) {
 
 // IsValid reports whether the stream handle is usable.
 func (ms *MessageStream) IsValid() bool {
-	return ms != nil && ms.state != messageStreamStateUnset
+	return ms != nil && atomic.LoadInt32(&ms.state) != messageStreamStateUnset
 }
 
 // Begin returns an iterator for this stream.
@@ -159,15 +159,15 @@ func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
 
 // HasNext reports whether the receiver has next configured.
 func (ms *MessageStream) HasNext() bool {
-	if ms.state == messageStreamStateComplete {
+	if atomic.LoadInt32(&ms.state) == messageStreamStateComplete {
 		return false
 	}
-	ms.timedOut = false
+	ms.timedOut.Store(false)
 	if ms.current != nil {
 		return true
 	}
 
-	reading := (ms.state & messageStreamStateReading) != 0
+	reading := (atomic.LoadInt32(&ms.state) & messageStreamStateReading) != 0
 	if !reading {
 		if message, ok := ms.queue.tryDequeue(); ok {
 			ms.current = message
@@ -189,11 +189,11 @@ func (ms *MessageStream) HasNext() bool {
 		ms.consumeConflateState()
 		return true
 	}
-	if ms.state == messageStreamStateComplete {
+	if atomic.LoadInt32(&ms.state) == messageStreamStateComplete {
 		return false
 	}
 
-	ms.timedOut = true
+	ms.timedOut.Store(true)
 	return true
 }
 
@@ -214,8 +214,8 @@ func (ms *MessageStream) consumeConflateState() {
 
 // Next executes the exported next operation.
 func (ms *MessageStream) Next() (message *Message) {
-	if ms.timedOut {
-		ms.timedOut = false
+	if ms.timedOut.Load() {
+		ms.timedOut.Store(false)
 		return nil
 	}
 
@@ -228,7 +228,7 @@ func (ms *MessageStream) Next() (message *Message) {
 	returnVal := ms.current
 	ms.current = nil
 
-	if ms.state == messageStreamStateSOWOnly && returnVal != nil && returnVal.header.command == CommandGroupEnd {
+	if atomic.LoadInt32(&ms.state) == messageStreamStateSOWOnly && returnVal != nil && returnVal.header.command == CommandGroupEnd {
 		ms.setState(messageStreamStateComplete)
 
 		if ms.client == nil {
@@ -240,7 +240,7 @@ func (ms *MessageStream) Next() (message *Message) {
 				ms.queryID = ""
 			}
 		}
-	} else if ms.state == messageStreamStateStatsOnly && returnVal != nil {
+	} else if atomic.LoadInt32(&ms.state) == messageStreamStateStatsOnly && returnVal != nil {
 		ackType, hasAckType := returnVal.AckType()
 		if hasAckType && ackType == AckTypeStats {
 			ms.setState(messageStreamStateComplete)
@@ -283,7 +283,7 @@ func (ms *MessageStream) Close() (err error) {
 	} else {
 		if len(ms.commandID) > 0 {
 
-			if ms.state == messageStreamStateSubscribed {
+			if atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed {
 				ms.setState(messageStreamStateComplete)
 				err = ms.client.Unsubscribe(ms.commandID)
 			} else {
@@ -293,7 +293,7 @@ func (ms *MessageStream) Close() (err error) {
 			ms.commandID = ""
 		} else if len(ms.queryID) > 0 {
 
-			if ms.state >= messageStreamStateComplete {
+			if atomic.LoadInt32(&ms.state) >= messageStreamStateComplete {
 				ms.setState(messageStreamStateComplete)
 				err = ms.client.Unsubscribe(ms.queryID)
 			} else {
@@ -304,7 +304,7 @@ func (ms *MessageStream) Close() (err error) {
 		}
 	}
 
-	if ms.state != messageStreamStateComplete {
+	if atomic.LoadInt32(&ms.state) != messageStreamStateComplete {
 		ms.setState(messageStreamStateComplete)
 	}
 
@@ -346,7 +346,7 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 
 func (ms *MessageStream) setState(state int) {
 	if state != messageStreamStateDisconnected {
-		ms.state = state
+		atomic.StoreInt32(&ms.state, int32(state))
 	}
 	if state == messageStreamStateComplete && ms.queue != nil {
 		ms.queue.close()
@@ -406,14 +406,9 @@ func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
 		queue.resize()
 	}
 
-	if queue._length == 0 {
-		queue.ring[queue.last] = message
-		queue._length++
-		queue.notEmpty.Signal()
-		return
+	if queue._length != 0 {
+		queue.last = (queue.last + 1) % queue.capacity
 	}
-
-	queue.last = (queue.last + 1) % queue.capacity
 	queue.ring[queue.last] = message
 	queue._length++
 	queue.notEmpty.Signal()
@@ -440,7 +435,7 @@ func (queue *_MessageQueue) dequeue() (message *Message, err error) {
 	defer queue.lock.Unlock()
 
 	if queue._length == 0 {
-		err = errors.New("Queue is empty")
+		err = NewError(UnknownError, "Queue is empty")
 		return
 	}
 
@@ -480,16 +475,16 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
 
-	timedOut := false
+	var timedOut atomic.Bool
 	timer := time.AfterFunc(timeout, func() {
 		queue.lock.Lock()
-		timedOut = true
+		timedOut.Store(true)
 		queue.notEmpty.Broadcast()
 		queue.lock.Unlock()
 	})
 	defer timer.Stop()
 
-	for queue._length == 0 && !queue.closed && !timedOut {
+	for queue._length == 0 && !queue.closed && !timedOut.Load() {
 		queue.notEmpty.Wait()
 	}
 

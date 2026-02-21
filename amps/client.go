@@ -51,6 +51,7 @@ type Client struct {
 	heartbeatTimeout   uint
 	heartbeatTimestamp uint
 	heartbeatTimeoutID *time.Timer
+	heartbeatLock      sync.Mutex
 
 	lock              sync.Mutex
 	acksLock          sync.Mutex
@@ -382,13 +383,17 @@ func (client *Client) onMessage(message *Message) (err error) {
 	subIDsBytes := message.header.subIDs
 	subIDBytes := message.header.subID
 	commandIDBytes := message.header.commandID
-	hasHeartbeat := client.heartbeatInterval > 0
+	client.heartbeatLock.Lock()
+	heartbeatInterval := client.heartbeatInterval
+	heartbeatTimestamp := client.heartbeatTimestamp
+	client.heartbeatLock.Unlock()
+	hasHeartbeat := heartbeatInterval > 0
 	client.applyAckBookkeeping(message)
 
 	if command == commandHeartbeat {
 		if hasHeartbeat {
-			timedelta := uint(time.Now().Unix()) - client.heartbeatTimestamp
-			if timedelta > client.heartbeatInterval {
+			timedelta := uint(time.Now().Unix()) - heartbeatTimestamp
+			if timedelta > heartbeatInterval {
 				client.checkAndSendHeartbeat(true)
 			}
 		}
@@ -473,7 +478,7 @@ func (client *Client) onMessage(message *Message) (err error) {
 func (client *Client) deleteRoute(routeID string) (routeErr error) {
 	if messageStream, messageStreamExists := client.messageStreams.Load(routeID); messageStreamExists {
 		messageStream.(*MessageStream).client = nil
-		if messageStream.(*MessageStream).state != messageStreamStateComplete {
+		if atomic.LoadInt32(&messageStream.(*MessageStream).state) != messageStreamStateComplete {
 			routeErr = messageStream.(*MessageStream).Close()
 		}
 		client.messageStreams.Delete(routeID)
@@ -611,25 +616,49 @@ func (client *Client) onConnectionError(err error) {
 }
 
 func (client *Client) onHeartbeatAbsence() {
-	if (uint(time.Now().Unix()) - client.heartbeatTimestamp) > client.heartbeatTimeout {
-		_ = client.heartbeatTimeoutID.Stop()
+	now := uint(time.Now().Unix())
+	heartbeatMissing := false
 
+	client.heartbeatLock.Lock()
+	if client.heartbeatTimeout != 0 && client.heartbeatTimestamp != 0 && (now-client.heartbeatTimestamp) > client.heartbeatTimeout {
+		if client.heartbeatTimeoutID != nil {
+			_ = client.heartbeatTimeoutID.Stop()
+			client.heartbeatTimeoutID = nil
+		}
 		client.heartbeatTimestamp = 0
+		heartbeatMissing = true
+	}
+	client.heartbeatLock.Unlock()
+
+	if heartbeatMissing {
 		client.onError(errors.New("Heartbeat absence error"))
 	}
 }
 
 func (client *Client) establishHeartbeat() (hbError error) {
 	done := make(chan error)
-	client.heartbeatTimestamp = uint(time.Now().Unix())
 
-	heartbeat := NewCommand("heartbeat").AddAckType(AckTypeProcessed).SetOptions("start," + strconv.FormatUint(uint64(client.heartbeatInterval), 10))
+	client.heartbeatLock.Lock()
+	client.heartbeatTimestamp = uint(time.Now().Unix())
+	heartbeatInterval := client.heartbeatInterval
+	client.heartbeatLock.Unlock()
+
+	heartbeat := NewCommand("heartbeat").AddAckType(AckTypeProcessed).SetOptions("start," + strconv.FormatUint(uint64(heartbeatInterval), 10))
 	_, hbError = client.ExecuteAsync(heartbeat, func(message *Message) (err error) {
 		status, _ := message.Status()
 		command, _ := message.Command()
 		ackType, _ := message.AckType()
 		if status == "success" && command == CommandAck && ackType == AckTypeProcessed {
-			client.heartbeatTimeoutID = time.AfterFunc(time.Duration(client.heartbeatTimeout*1000), client.onHeartbeatAbsence)
+			client.heartbeatLock.Lock()
+			if client.heartbeatTimeoutID != nil {
+				_ = client.heartbeatTimeoutID.Stop()
+			}
+			if client.heartbeatTimeout > 0 {
+				client.heartbeatTimeoutID = time.AfterFunc(time.Duration(client.heartbeatTimeout*1000), client.onHeartbeatAbsence)
+			} else {
+				client.heartbeatTimeoutID = nil
+			}
+			client.heartbeatLock.Unlock()
 			client.notifyConnectionState(ConnectionStateHeartbeatInitiated)
 		} else {
 			err = errors.New("Heartbeat Establishment Error")
@@ -648,18 +677,26 @@ func (client *Client) establishHeartbeat() (hbError error) {
 }
 
 func (client *Client) checkAndSendHeartbeat(force bool) {
-	if client.heartbeatTimeout == 0 || (client.heartbeatTimeout != 0 && client.heartbeatTimestamp == 0) {
-		return
+	now := uint(time.Now().Unix())
+	shouldSend := false
+
+	client.heartbeatLock.Lock()
+	if client.heartbeatTimeout != 0 && client.heartbeatTimestamp != 0 {
+		if force || (now-client.heartbeatTimestamp) > client.heartbeatInterval {
+			client.heartbeatTimestamp = now
+			if client.heartbeatTimeoutID != nil {
+				_ = client.heartbeatTimeoutID.Stop()
+			}
+			client.heartbeatTimeoutID = time.AfterFunc(
+				time.Duration(client.heartbeatTimeout*1000),
+				client.onHeartbeatAbsence,
+			)
+			shouldSend = true
+		}
 	}
+	client.heartbeatLock.Unlock()
 
-	if force || ((uint(time.Now().Unix()) - client.heartbeatTimestamp) > client.heartbeatInterval) {
-		client.heartbeatTimestamp = uint(time.Now().Unix())
-		_ = client.heartbeatTimeoutID.Stop()
-		client.heartbeatTimeoutID = time.AfterFunc(
-			time.Duration(client.heartbeatTimeout*1000),
-			client.onHeartbeatAbsence,
-		)
-
+	if shouldSend {
 		err := client.sendHeartbeat()
 		if err != nil {
 			client.onConnectionError(err)
@@ -725,8 +762,10 @@ func (client *Client) SetHeartbeat(interval uint, providedTimeout ...uint) *Clie
 		timeout = interval * 2
 	}
 
+	client.heartbeatLock.Lock()
 	client.heartbeatTimeout = timeout
 	client.heartbeatInterval = interval
+	client.heartbeatLock.Unlock()
 	return client
 }
 
@@ -939,17 +978,20 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 
 	client.routes.Delete(commandID)
 
-	if logonFailed == nil {
-		client.lock.Unlock()
-		client.notifyConnectionState(ConnectionStateLoggedOn)
-		if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
-			bookmarkStore.SetServerVersion(client.serverVersion)
-		}
-		if client.heartbeatTimeout != 0 {
+		if logonFailed == nil {
+			client.lock.Unlock()
+			client.notifyConnectionState(ConnectionStateLoggedOn)
+			if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
+				bookmarkStore.SetServerVersion(client.serverVersion)
+			}
+			client.heartbeatLock.Lock()
+			hasHeartbeatTimeout := client.heartbeatTimeout != 0
+			client.heartbeatLock.Unlock()
+			if hasHeartbeatTimeout {
 
-			client.hbCommand.reset()
-			client.hbCommand.header.command = commandHeartbeat
-			client.hbCommand.header.options = []byte("beat")
+				client.hbCommand.reset()
+				client.hbCommand.header.command = commandHeartbeat
+				client.hbCommand.header.options = []byte("beat")
 
 			err = client.establishHeartbeat()
 			if err != nil {
@@ -1599,6 +1641,14 @@ func (client *Client) Disconnect() (err error) {
 	client.routes = new(sync.Map)
 	client.messageStreams = new(sync.Map)
 
+	client.heartbeatLock.Lock()
+	if client.heartbeatTimeoutID != nil {
+		_ = client.heartbeatTimeoutID.Stop()
+		client.heartbeatTimeoutID = nil
+	}
+	client.heartbeatTimestamp = 0
+	client.heartbeatLock.Unlock()
+
 	if client.connection != nil {
 		err = client.connection.Close()
 		client.connection = nil
@@ -1609,13 +1659,14 @@ func (client *Client) Disconnect() (err error) {
 		return
 	}
 
+	client.heartbeatLock.Lock()
 	if client.heartbeatTimeout != 0 {
-		_ = client.heartbeatTimeoutID.Stop()
 		client.heartbeatTimeout = 0
 		client.heartbeatInterval = 0
 		client.heartbeatTimestamp = 0
 		client.heartbeatTimeoutID = nil
 	}
+	client.heartbeatLock.Unlock()
 
 	client.closeSyncAckProcessing()
 
