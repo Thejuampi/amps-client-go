@@ -267,12 +267,14 @@ func NewFilePublishStoreWithOptions(path string, options FileStoreOptions) *File
 	return fileStore
 }
 
+// appendWal writes a WAL record for the given store operation.
+// Callers are responsible for any necessary synchronisation; this function
+// does not acquire store.lock so that callers holding the lock can call it
+// without deadlocking.
 func (store *FilePublishStore) appendWal(record publishStoreWalRecord) error {
 	if store == nil || store.walPath == "" || !store.options.UseWAL {
 		return nil
 	}
-	store.lock.Lock()
-	defer store.lock.Unlock()
 	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
 }
 

@@ -80,7 +80,7 @@ func TestPublishFlushUsesStore(t *testing.T) {
 func TestTransportFilterHook(t *testing.T) {
 	client := NewClient("transport-filter")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 
 	called := false

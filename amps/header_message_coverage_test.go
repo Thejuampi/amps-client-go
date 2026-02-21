@@ -532,7 +532,7 @@ func TestMessageAccessorsCoverage(t *testing.T) {
 
 	client := NewClient("ack-msg")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 	message.SetClientImpl(client)
 	message.header.topic = []byte("orders")

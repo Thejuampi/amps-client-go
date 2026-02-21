@@ -28,9 +28,6 @@ func (nfs *NvfixMessageShredder) ToMap(nvfix []byte) map[string]string {
 			return
 		}
 		key := string(nvfix[fieldStart:equalIndex])
-		if key == "" {
-			return
-		}
 		nvfixMap[key] = string(nvfix[equalIndex+1 : fieldEnd])
 	}
 

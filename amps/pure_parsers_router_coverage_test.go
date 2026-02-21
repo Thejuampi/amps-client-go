@@ -535,9 +535,18 @@ func TestFixAndNVFixShredderMalformedCoverage(t *testing.T) {
 	if fixValues[8] != "FIX.4.4" || fixValues[35] != "D" || fixValues[49] != "SENDER" {
 		t.Fatalf("unexpected FIX parse map with malformed segments: %+v", fixValues)
 	}
+	// Covers non-numeric FIX key parse failure and final-field parsing without trailing separator.
+	fixTailValues := NewFIXShredder('|').ToMap([]byte("badTag=value|35=D|49=SENDER"))
+	if fixTailValues[35] != "D" || fixTailValues[49] != "SENDER" {
+		t.Fatalf("unexpected FIX parse map with non-numeric key/tail field: %+v", fixTailValues)
+	}
 
 	nvfixValues := NewNVFIXShredder('|').ToMap([]byte("broken|=bad|symbol=AAPL|venue=XNAS|"))
 	if nvfixValues["symbol"] != "AAPL" || nvfixValues["venue"] != "XNAS" {
 		t.Fatalf("unexpected NVFIX parse map with malformed segments: %+v", nvfixValues)
+	}
+	nvfixTailValues := NewNVFIXShredder('|').ToMap([]byte("symbol=AAPL|venue=XNAS"))
+	if nvfixTailValues["symbol"] != "AAPL" || nvfixTailValues["venue"] != "XNAS" {
+		t.Fatalf("unexpected NVFIX parse map without trailing separator: %+v", nvfixTailValues)
 	}
 }

@@ -311,9 +311,9 @@ func (ms *MessageStream) Close() (err error) {
 	return
 }
 
-var messageStream = &MessageStream{state: messageStreamStateComplete, queue: newQueue(256)}
-
-func emptyMessageStream() *MessageStream { return messageStream }
+func emptyMessageStream() *MessageStream {
+	return &MessageStream{state: messageStreamStateComplete, queue: newQueue(256)}
+}
 
 func (ms *MessageStream) setSubID(subID string) {
 	ms.commandID = subID
@@ -489,14 +489,13 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 	})
 	defer timer.Stop()
 
-	for queue._length == 0 && !timedOut && !queue.closed {
+	for queue._length == 0 && !queue.closed && !timedOut {
 		queue.notEmpty.Wait()
 	}
 
 	if queue._length == 0 {
 		return nil, false
 	}
-
 	return queue.dequeueLocked(), true
 }
 
@@ -532,7 +531,11 @@ func (queue *_MessageQueue) resize() {
 
 	queue.ring = newRing
 	queue.first = 0
-	queue.last = j - 1
+	if j > 0 {
+		queue.last = j - 1
+	} else {
+		queue.last = 0
+	}
 
 	queue.capacity *= 2
 }

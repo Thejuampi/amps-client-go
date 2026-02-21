@@ -175,7 +175,7 @@ func (ha *HAClient) Disconnected() bool {
 	if ha == nil || ha.client == nil {
 		return true
 	}
-	return !ha.client.connected
+	return !ha.client.connected.Load()
 }
 
 // SetTimeout sets timeout on the receiver.

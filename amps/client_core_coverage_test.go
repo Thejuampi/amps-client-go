@@ -221,7 +221,7 @@ func TestClientCoreWrappersCoverage(t *testing.T) {
 
 func TestClientConnectAndDisconnectCoverage(t *testing.T) {
 	alreadyConnected := NewClient("already-connected")
-	alreadyConnected.connected = true
+	alreadyConnected.connected.Store(true)
 	if err := alreadyConnected.Connect("tcp://127.0.0.1:9007/amps/json"); err == nil {
 		t.Fatalf("expected already-connected error")
 	}
@@ -259,7 +259,7 @@ func TestClientConnectAndDisconnectCoverage(t *testing.T) {
 	if err := client.Connect(uri); err != nil {
 		t.Fatalf("expected successful connect, got %v", err)
 	}
-	if !client.connected {
+	if !client.connected.Load() {
 		t.Fatalf("expected connected client")
 	}
 	if err := client.Disconnect(); err != nil {
@@ -317,8 +317,8 @@ func TestClientReadRoutineCoverage(t *testing.T) {
 	client := NewClient("read-routine")
 	conn := newTestConn()
 	client.connection = conn
-	client.connected = true
-	client.stopped = false
+	client.connected.Store(true)
+	client.stopped.Store(false)
 	client.SetErrorHandler(func(error) {})
 
 	delivered := 0
@@ -337,7 +337,7 @@ func TestClientReadRoutineCoverage(t *testing.T) {
 	if delivered != 1 {
 		t.Fatalf("expected one delivered message, got %d", delivered)
 	}
-	if client.connected {
+	if client.connected.Load() {
 		t.Fatalf("expected connection to be closed after EOF")
 	}
 }
@@ -346,8 +346,8 @@ func TestClientReadRoutineAdditionalBranches(t *testing.T) {
 	client := NewClient("read-routine-extra")
 	conn := newTestConn()
 	client.connection = conn
-	client.connected = true
-	client.stopped = false
+	client.connected.Store(true)
+	client.stopped.Store(false)
 	client.SetErrorHandler(func(error) {})
 
 	delivered := 0
@@ -367,8 +367,8 @@ func TestClientReadRoutineAdditionalBranches(t *testing.T) {
 	client = NewClient("read-routine-filter-error")
 	conn = newTestConn()
 	client.connection = conn
-	client.connected = true
-	client.stopped = false
+	client.connected.Store(true)
+	client.stopped.Store(false)
 	client.SetErrorHandler(func(error) {})
 	client.SetTransportFilter(func(direction TransportFilterDirection, payload []byte) []byte {
 		_ = direction
@@ -384,8 +384,8 @@ func TestClientReadRoutineOversizedFrameCoverage(t *testing.T) {
 	client := NewClient("read-routine-oversized")
 	conn := newTestConn()
 	client.connection = conn
-	client.connected = true
-	client.stopped = false
+	client.connected.Store(true)
+	client.stopped.Store(false)
 	errorCount := 0
 	client.SetErrorHandler(func(error) {
 		errorCount++
@@ -394,7 +394,7 @@ func TestClientReadRoutineOversizedFrameCoverage(t *testing.T) {
 	conn.enqueueRead(buildFramePrefix(maxInboundFrameLength + 1))
 	client.readRoutine()
 
-	if client.connected {
+	if client.connected.Load() {
 		t.Fatalf("expected oversized frame to disconnect client")
 	}
 	if errorCount == 0 {
@@ -462,7 +462,7 @@ func TestClientRouteHelpersCoverage(t *testing.T) {
 func TestClientOnErrorAndConnectionErrorCoverage(t *testing.T) {
 	client := NewClient("error-paths")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 	client.logging = true
 
@@ -478,7 +478,7 @@ func TestClientOnErrorAndConnectionErrorCoverage(t *testing.T) {
 	state.lock.Unlock()
 
 	client.onConnectionError(NewError(ConnectionError, "boom"))
-	if client.connected || client.connection != nil || !client.stopped {
+	if client.connected.Load() || client.connection != nil || !client.stopped.Load() {
 		t.Fatalf("expected disconnected client state after connection error")
 	}
 	if disconnectCalled != 1 {
@@ -491,7 +491,7 @@ func TestClientOnErrorAndConnectionErrorCoverage(t *testing.T) {
 func TestClientExecuteAsyncSyncAckCoverage(t *testing.T) {
 	successClient := NewClient("execute-async-success")
 	successConn := newTestConn()
-	successClient.connected = true
+	successClient.connected.Store(true)
 	successClient.connection = successConn
 	subscribeCommand := NewCommand("subscribe").SetTopic("orders").SetSubID("sub-sync")
 
@@ -520,7 +520,7 @@ func TestClientExecuteAsyncSyncAckCoverage(t *testing.T) {
 
 	failureClient := NewClient("execute-async-failure")
 	failureConn := newTestConn()
-	failureClient.connected = true
+	failureClient.connected.Store(true)
 	failureClient.connection = failureConn
 	failureCommand := NewCommand("subscribe").SetTopic("orders").SetSubID("sub-fail")
 
@@ -542,7 +542,7 @@ func TestClientExecuteAsyncSyncAckCoverage(t *testing.T) {
 
 	closedConnClient := NewClient("execute-async-send-error")
 	closedConn := newTestConn()
-	closedConnClient.connected = true
+	closedConnClient.connected.Store(true)
 	closedConnClient.connection = closedConn
 	_ = closedConn.Close()
 	if _, err := closedConnClient.ExecuteAsync(NewCommand("subscribe").SetTopic("orders").SetSubID("sub-closed"), nil); err == nil {
@@ -551,7 +551,7 @@ func TestClientExecuteAsyncSyncAckCoverage(t *testing.T) {
 
 	unsubClient := NewClient("execute-async-unsub")
 	unsubConn := newTestConn()
-	unsubClient.connected = true
+	unsubClient.connected.Store(true)
 	unsubClient.connection = unsubConn
 	unsubClient.messageStreams.Store("to-remove", newMessageStream(nil))
 	unsubClient.routes.Store("to-remove", func(*Message) error { return nil })
@@ -563,7 +563,7 @@ func TestClientExecuteAsyncSyncAckCoverage(t *testing.T) {
 func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	sowClient := NewClient("sow-delete")
 	sowConn := newTestConn()
-	sowClient.connected = true
+	sowClient.connected.Store(true)
 	sowClient.connection = sowConn
 
 	type sowResult struct {
@@ -609,7 +609,7 @@ func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 
 	heartbeatClient := NewClient("establish-heartbeat")
 	heartbeatConn := newTestConn()
-	heartbeatClient.connected = true
+	heartbeatClient.connected.Store(true)
 	heartbeatClient.connection = heartbeatConn
 	heartbeatClient.heartbeatInterval = 1
 	heartbeatClient.heartbeatTimeout = 1
@@ -637,7 +637,7 @@ func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 func TestClientLogonAckPathsCoverage(t *testing.T) {
 	successClient := NewClient("logon-success")
 	successConn := newTestConn()
-	successClient.connected = true
+	successClient.connected.Store(true)
 	successClient.connection = successConn
 	successClient.url, _ = url.Parse("tcp://user:pass@localhost:9007/amps/json")
 	successClient.SetErrorHandler(func(error) {})
@@ -661,7 +661,7 @@ func TestClientLogonAckPathsCoverage(t *testing.T) {
 
 	failureClient := NewClient("logon-failure")
 	failureConn := newTestConn()
-	failureClient.connected = true
+	failureClient.connected.Store(true)
 	failureClient.connection = failureConn
 	failureClient.url, _ = url.Parse("tcp://user:pass@localhost:9007/amps/json")
 	failureClient.SetErrorHandler(func(error) {})
@@ -684,7 +684,7 @@ func TestClientLogonAckPathsCoverage(t *testing.T) {
 
 func TestClientLogonTimeoutCoverage(t *testing.T) {
 	timeoutClient := NewClient("logon-timeout")
-	timeoutClient.connected = true
+	timeoutClient.connected.Store(true)
 	timeoutClient.connection = newTestConn()
 	timeoutClient.url, _ = url.Parse("tcp://localhost:9007/amps/json")
 	timeoutClient.SetErrorHandler(func(error) {})

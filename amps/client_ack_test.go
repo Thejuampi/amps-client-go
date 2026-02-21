@@ -21,7 +21,7 @@ func makeAutoAckMessage(bookmark string) *Message {
 func TestAutoAckBatchFlush(t *testing.T) {
 	client := NewClient("auto-ack-batch")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 	client.SetAutoAck(true).SetAckBatchSize(2).SetAckTimeout(5 * time.Second)
 
@@ -43,7 +43,7 @@ func TestAutoAckBatchFlush(t *testing.T) {
 func TestAutoAckTimeoutFlush(t *testing.T) {
 	client := NewClient("auto-ack-timeout")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 	client.SetAutoAck(true).SetAckBatchSize(100).SetAckTimeout(25 * time.Millisecond)
 

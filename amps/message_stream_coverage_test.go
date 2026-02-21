@@ -260,6 +260,15 @@ func TestMessageQueueCoverage(t *testing.T) {
 	if queue.length() != 0 {
 		t.Fatalf("expected clear to reset queue")
 	}
+
+	emptyResize := newQueue(2)
+	emptyResize.resize()
+	if emptyResize.capacity != 4 {
+		t.Fatalf("expected resize to double empty queue capacity")
+	}
+	if emptyResize.first != 0 || emptyResize.last != 0 {
+		t.Fatalf("expected empty resize to keep first/last at zero")
+	}
 }
 
 func TestMessageStreamCloseUnblocksHasNext(t *testing.T) {
@@ -283,6 +292,54 @@ func TestMessageStreamCloseUnblocksHasNext(t *testing.T) {
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("Close did not unblock waiting HasNext")
+	}
+}
+
+func TestMessageStreamCompletionAndClosedQueueCoverage(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.setRunning()
+	stream.SetTimeout(200)
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- stream.HasNext()
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	stream.setState(messageStreamStateComplete)
+	select {
+	case hasNext := <-done:
+		if hasNext {
+			t.Fatalf("expected HasNext to return false after completion while waiting")
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatalf("HasNext did not unblock after completion")
+	}
+
+	queue := newQueue(2)
+	queue.close()
+	queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("x")}, 1)
+	if queue.length() != 0 {
+		t.Fatalf("expected closed queue to reject enqueue immediately")
+	}
+
+	queue = newQueue(2)
+	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("a")})
+	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")})
+	blocked := make(chan struct{}, 1)
+	go func() {
+		queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("c")}, 1)
+		blocked <- struct{}{}
+	}()
+	time.Sleep(10 * time.Millisecond)
+	queue.close()
+	select {
+	case <-blocked:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("enqueueWithDepth did not unblock after queue close")
+	}
+	if queue.length() != 2 {
+		t.Fatalf("expected blocked enqueue to exit without appending when closed")
 	}
 }
 

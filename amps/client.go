@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -42,7 +43,7 @@ type Client struct {
 	nameHashValue      uint64
 	serverVersion      string
 	logonCorrelationID string
-	nextID             uint64
+	nextID             atomic.Uint64
 	messageType        []byte
 	errorHandler       func(err error)
 	disconnectHandler  func(client *Client, err error)
@@ -58,7 +59,7 @@ type Client struct {
 	routes            *sync.Map
 	messageStreams    *sync.Map
 
-	connected  bool
+	connected  atomic.Bool
 	connection net.Conn
 	logging    bool
 	url        *url.URL
@@ -69,7 +70,7 @@ type Client struct {
 	sendHb     bool
 	hbCommand  *Command
 
-	stopped         bool
+	stopped         atomic.Bool
 	readTimeout     uint
 	receiveBuffer   []byte
 	readPosition    int
@@ -157,15 +158,14 @@ func (client *Client) signalSyncAckProcessing(result _Result) bool {
 }
 
 func (client *Client) makeCommandID() string {
-	commandID := strconv.FormatUint(client.nextID, 10)
+	commandID := strconv.FormatUint(client.nextID.Add(1)-1, 10)
 	client.command.SetCommandID(commandID)
-	client.nextID++
 
 	return commandID
 }
 
 func (client *Client) send(command *Command) (err error) {
-	if !client.connected {
+	if !client.connected.Load() {
 		return errors.New("Client is not connected while trying to send data")
 	}
 	if client.sendBuffer == nil {
@@ -185,8 +185,7 @@ func (client *Client) send(command *Command) (err error) {
 	}
 
 	if command.data != nil {
-		client.sendBuffer.Write(command.data)
-		if err != nil {
+		if _, err = client.sendBuffer.Write(command.data); err != nil {
 			return
 		}
 	}
@@ -218,10 +217,10 @@ func (client *Client) send(command *Command) (err error) {
 }
 
 func (client *Client) readRoutine() {
-	if !client.connected {
+	if !client.connected.Load() {
 		return
 	}
-	if client.stopped {
+	if client.stopped.Load() {
 		return
 	}
 	client.callReceiveRoutineStartedCallback()
@@ -234,7 +233,7 @@ func (client *Client) readRoutine() {
 	client.receivePosition = 0
 
 	for {
-		if client.stopped {
+		if client.stopped.Load() {
 			return
 		}
 
@@ -254,7 +253,7 @@ func (client *Client) readRoutine() {
 			count, err := client.connection.Read(client.receiveBuffer[client.receivePosition:])
 			client.receivePosition += count
 			if err != nil {
-				if client.connected {
+				if client.connected.Load() {
 					client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket Read Error: (%v)", err)))
 				}
 
@@ -301,7 +300,7 @@ func (client *Client) readRoutine() {
 				count, err := client.connection.Read(client.receiveBuffer[client.receivePosition:])
 				client.receivePosition += count
 				if err != nil {
-					if client.connected {
+					if client.connected.Load() {
 						client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket Read Error: (%v)", err)))
 					}
 
@@ -409,7 +408,7 @@ func (client *Client) onMessage(message *Message) (err error) {
 
 	if len(subIDsBytes) > 0 {
 		start := 0
-		for start <= len(subIDsBytes) {
+		for start < len(subIDsBytes) {
 			end := len(subIDsBytes)
 			if comma := bytes.IndexByte(subIDsBytes[start:], ','); comma >= 0 {
 				end = start + comma
@@ -583,8 +582,8 @@ func (client *Client) onConnectionError(err error) {
 	}
 	client.connection = nil
 
-	client.connected = false
-	client.stopped = true
+	client.connected.Store(false)
+	client.stopped.Store(true)
 	client.logging = false
 	client.notifyConnectionState(ConnectionStateDisconnected)
 	if state := ensureClientState(client); state != nil {
@@ -612,7 +611,7 @@ func (client *Client) onConnectionError(err error) {
 }
 
 func (client *Client) onHeartbeatAbsence() {
-	if (uint(time.Now().Unix()) - client.heartbeatTimestamp) > (client.heartbeatTimeout * 1000) {
+	if (uint(time.Now().Unix()) - client.heartbeatTimestamp) > client.heartbeatTimeout {
 		_ = client.heartbeatTimeoutID.Stop()
 
 		client.heartbeatTimestamp = 0
@@ -736,7 +735,7 @@ func (client *Client) ServerVersion() string { return client.serverVersion }
 
 // Connect opens a transport connection to the provided AMPS URI.
 func (client *Client) Connect(uri string) error {
-	if client.connected {
+	if client.connected.Load() {
 		return NewError(AlreadyConnectedError)
 	}
 
@@ -796,10 +795,10 @@ func (client *Client) Connect(uri string) error {
 		}
 	}
 
-	client.connected = true
+	client.connected.Store(true)
 	client.notifyConnectionState(ConnectionStateConnected)
 
-	client.stopped = false
+	client.stopped.Store(false)
 	go client.readRoutine()
 
 	return nil
@@ -999,7 +998,7 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 	if len(topic) == 0 {
 		return 0, NewError(InvalidTopicError, "A topic must be specified")
 	}
-	if !client.connected {
+	if !client.connected.Load() {
 		return 0, NewError(DisconnectedError, "Client is not connected while trying to publish")
 	}
 
@@ -1194,7 +1193,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	command.SetCommandID(commandID)
 	state := ensureClientState(client)
 
-	if !client.connected {
+	if !client.connected.Load() {
 		if client.shouldRetryCommand(command.header.command) {
 			client.queueRetryCommand(command, messageHandler)
 			return commandID, nil
@@ -1360,7 +1359,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		}
 	}
 
-	if client.connected {
+	if client.connected.Load() {
 		syncAckProcessing := client.getSyncAckProcessing()
 		if syncAckProcessing != nil {
 			client.acksLock.Lock()
@@ -1592,9 +1591,9 @@ func (client *Client) Disconnect() (err error) {
 		state.lock.Unlock()
 	}
 
-	client.connected = false
+	client.connected.Store(false)
 	client.logging = false
-	client.stopped = true
+	client.stopped.Store(true)
 	client.notifyConnectionState(ConnectionStateShutdown)
 
 	client.routes = new(sync.Map)

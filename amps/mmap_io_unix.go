@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"unsafe"
 )
 
 func mmapReadFile(path string) ([]byte, error) {
@@ -82,6 +83,22 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 		mapped[index] = 0
 	}
 	copy(mapped, data)
+
+	// Flush dirty pages to the OS page cache before releasing the mapping.
+	// Without this, a crash after Munmap but before file.Sync could leave
+	// the file on disk in an inconsistent state.
+	if len(mapped) > 0 {
+		if _, _, errno := syscall.Syscall(syscall.SYS_MSYNC,
+			uintptr(unsafe.Pointer(&mapped[0])),
+			uintptr(len(mapped)),
+			uintptr(syscall.MS_SYNC)); errno != 0 {
+			_ = syscall.Munmap(mapped)
+			_ = file.Close()
+			_ = os.Remove(tmpPath)
+			return errno
+		}
+	}
+
 	if err = syscall.Munmap(mapped); err != nil {
 		_ = file.Close()
 		_ = os.Remove(tmpPath)

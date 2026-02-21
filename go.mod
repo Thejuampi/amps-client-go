@@ -1,3 +1,3 @@
 module github.com/Thejuampi/amps-client-go
 
-go 1.21
+go 1.25

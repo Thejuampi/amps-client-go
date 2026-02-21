@@ -8,7 +8,7 @@ func TestDefaultSubscriptionManagerResubscribeQueuesWhenDisconnected(t *testing.
 	manager.Subscribe(nil, command, AckTypeNone)
 
 	client := NewClient("resubscribe-test")
-	client.connected = false
+	client.connected.Store(false)
 	client.SetRetryOnDisconnect(true)
 
 	if err := manager.Resubscribe(client); err != nil {
@@ -30,7 +30,7 @@ func TestDefaultSubscriptionManagerNoResubscribeRoutes(t *testing.T) {
 	manager.Subscribe(nil, command, AckTypeNone)
 
 	client := NewClient("resubscribe-skip-test")
-	client.connected = false
+	client.connected.Store(false)
 	client.SetRetryOnDisconnect(true)
 
 	state := ensureClientState(client)

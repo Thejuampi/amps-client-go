@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish (e.g., v0.1.1)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,9 +17,13 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -24,10 +34,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${RELEASE_TAG#v}"
           VERSION_FILE="$(tr -d '[:space:]' < VERSION)"
           if [[ "$TAG" != "$VERSION_FILE" ]]; then
-            echo "Tag/version mismatch: tag=$TAG VERSION=$VERSION_FILE"
+            echo "Tag/version mismatch: tag=$TAG VERSION=$VERSION_FILE (release tag: ${RELEASE_TAG})"
             exit 1
           fi
 
@@ -58,6 +68,7 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
 
       - name: Warm Go proxy and pkg.go.dev (non-blocking)
@@ -65,8 +76,8 @@ jobs:
         run: |
           set +e
           URLS=(
-            "https://proxy.golang.org/github.com/Thejuampi/amps-client-go/@v/${GITHUB_REF_NAME}.info"
-            "https://pkg.go.dev/github.com/Thejuampi/amps-client-go/amps@${GITHUB_REF_NAME}"
+            "https://proxy.golang.org/github.com/Thejuampi/amps-client-go/@v/${RELEASE_TAG}.info"
+            "https://pkg.go.dev/github.com/Thejuampi/amps-client-go/amps@${RELEASE_TAG}"
           )
           for URL in "${URLS[@]}"; do
             echo "Requesting ${URL}"

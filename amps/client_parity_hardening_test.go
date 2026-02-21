@@ -57,7 +57,7 @@ func TestRetryOnDisconnectToggleBehavior(t *testing.T) {
 func TestTimerCommandPathWritesStartAndStop(t *testing.T) {
 	client := NewClient("timer-command")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 
 	if _, err := client.StartTimer("timer-1", "interval=250ms"); err != nil {
@@ -121,7 +121,7 @@ func TestApplyAckBookkeepingDiscardPublishOnPersistedAck(t *testing.T) {
 func TestExecuteAsyncFailedWriteHandlerOnSendFailure(t *testing.T) {
 	client := NewClient("failed-write")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 	_ = conn.Close()
 
@@ -151,7 +151,7 @@ func TestExecuteAsyncFailedWriteHandlerOnSendFailure(t *testing.T) {
 func TestPostLogonRecoveryReplaysPublishStoreAndResubscribes(t *testing.T) {
 	client := NewClient("recovery")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 
 	store := NewMemoryPublishStore()

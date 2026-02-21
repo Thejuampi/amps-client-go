@@ -606,7 +606,7 @@ func (client *Client) Ack(topic string, bookmark string, subID ...string) error 
 	if bookmark == "" {
 		return NewError(CommandError, "bookmark is required for ack")
 	}
-	if !client.connected {
+	if !client.connected.Load() {
 		return NewError(DisconnectedError, "Client is not connected while trying to ack")
 	}
 

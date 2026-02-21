@@ -65,7 +65,7 @@ func TestClientCppParityHandlersAndPreflight(t *testing.T) {
 func TestClientCppParitySendAndPublishSequence(t *testing.T) {
 	client := NewClient("cpp-send")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 
 	rawMessage := NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)).GetMessage()
@@ -199,7 +199,7 @@ func TestMessageParityHelpers(t *testing.T) {
 func TestMessageAckParityPath(t *testing.T) {
 	client := NewClient("message-ack")
 	conn := newTestConn()
-	client.connected = true
+	client.connected.Store(true)
 	client.connection = conn
 
 	message := &Message{header: new(_Header)}

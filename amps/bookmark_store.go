@@ -441,12 +441,14 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	return nil
 }
 
+// appendWal writes a WAL record for the given bookmark store operation.
+// Callers are responsible for any necessary synchronisation; this function
+// does not acquire store.lock so that callers holding the lock can call it
+// without deadlocking.
 func (store *FileBookmarkStore) appendWal(record bookmarkWalRecord) error {
 	if store == nil || !store.options.UseWAL || store.walPath == "" {
 		return nil
 	}
-	store.lock.Lock()
-	defer store.lock.Unlock()
 	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
 }
 

@@ -241,11 +241,11 @@ func TestHAClientConnectAndLogonOnceWithLogonOptions(t *testing.T) {
 
 func TestHAClientDisconnectedFalseWhenConnected(t *testing.T) {
 	ha := NewHAClient("ha-disconnected-false")
-	ha.client.connected = true
+	ha.client.connected.Store(true)
 	if ha.Disconnected() {
-		t.Fatalf("expected Disconnected() = false when client.connected = true")
+		t.Fatalf("expected Disconnected() = false when client.connected.Store(true)")
 	}
-	ha.client.connected = false
+	ha.client.connected.Store(false)
 }
 
 func TestHAClientLogonOptionsZeroValue(t *testing.T) {
