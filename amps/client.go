@@ -3,6 +3,7 @@ package amps
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 // ClientVersion and related constants define protocol and client behavior values.
@@ -83,6 +85,38 @@ type _Result struct {
 type _Stats struct {
 	Stats *Message
 	Error error
+}
+
+func unsafeStringFromBytes(value []byte) string {
+	if len(value) == 0 {
+		return ""
+	}
+	return unsafe.String(unsafe.SliceData(value), len(value))
+}
+
+func trimASCIISpaces(value []byte) []byte {
+	start := 0
+	for start < len(value) {
+		switch value[start] {
+		case ' ', '\t', '\n', '\r':
+			start++
+		default:
+			goto trimEnd
+		}
+	}
+	return value[:0]
+
+trimEnd:
+	end := len(value)
+	for end > start {
+		switch value[end-1] {
+		case ' ', '\t', '\n', '\r':
+			end--
+		default:
+			return value[start:end]
+		}
+	}
+	return value[:0]
 }
 
 func (client *Client) makeCommandID() string {
@@ -168,6 +202,18 @@ func (client *Client) readRoutine() {
 		}
 
 		for client.receivePosition-client.readPosition < 4 {
+			if client.receivePosition == len(client.receiveBuffer) {
+				if client.readPosition > 0 {
+					copy(client.receiveBuffer, client.receiveBuffer[client.readPosition:client.receivePosition])
+					client.receivePosition -= client.readPosition
+					client.readPosition = 0
+				} else {
+					newBuffer := make([]byte, 2*len(client.receiveBuffer))
+					copy(newBuffer, client.receiveBuffer[:client.receivePosition])
+					client.receiveBuffer = newBuffer
+				}
+			}
+
 			count, err := client.connection.Read(client.receiveBuffer[client.receivePosition:])
 			client.receivePosition += count
 			if err != nil {
@@ -179,30 +225,33 @@ func (client *Client) readRoutine() {
 			}
 		}
 
-		for client.receivePosition-client.readPosition > 4 {
-			messageLength := int(client.receiveBuffer[client.readPosition])<<24 +
-				int(client.receiveBuffer[client.readPosition+1])<<16 +
-				int(client.receiveBuffer[client.readPosition+2])<<8 +
-				int(client.receiveBuffer[client.readPosition+3])
+		for client.receivePosition-client.readPosition >= 4 {
+			messageLength := int(binary.BigEndian.Uint32(client.receiveBuffer[client.readPosition:]))
 
 			endByte := client.readPosition + messageLength + 4
 
 			for endByte > client.receivePosition {
 				if endByte > len(client.receiveBuffer) {
-
-					if messageLength > len(client.receiveBuffer) {
-
-						newBuffer := make([]byte, 2*len(client.receiveBuffer))
-						copy(newBuffer, client.receiveBuffer[client.readPosition:client.receivePosition])
-						client.receiveBuffer = newBuffer
-					} else {
-
+					if client.readPosition > 0 {
 						copy(client.receiveBuffer, client.receiveBuffer[client.readPosition:client.receivePosition])
+						client.receivePosition -= client.readPosition
+						endByte -= client.readPosition
+						client.readPosition = 0
 					}
-
-					client.receivePosition -= client.readPosition
-					endByte -= client.readPosition
-					client.readPosition = 0
+					if endByte > len(client.receiveBuffer) {
+						newSize := len(client.receiveBuffer) * 2
+						for endByte > newSize {
+							newSize *= 2
+						}
+						newBuffer := make([]byte, newSize)
+						copy(newBuffer, client.receiveBuffer[:client.receivePosition])
+						client.receiveBuffer = newBuffer
+					}
+				}
+				if client.receivePosition == len(client.receiveBuffer) {
+					newBuffer := make([]byte, 2*len(client.receiveBuffer))
+					copy(newBuffer, client.receiveBuffer[:client.receivePosition])
+					client.receiveBuffer = newBuffer
 				}
 
 				count, err := client.connection.Read(client.receiveBuffer[client.receivePosition:])
@@ -275,11 +324,11 @@ func (client *Client) onMessage(message *Message) (err error) {
 	message.valid = true
 	message.rawTransmissionTime = time.Now().UTC().Format(time.RFC3339Nano)
 
-	command, _ := message.Command()
-	queryID, hasQueryID := message.QueryID()
-	subIDs, hasSubIDs := message.SubIDs()
-	subID, hasSubID := message.SubID()
-	commandID, hasCommandID := message.CommandID()
+	command := message.header.command
+	queryIDBytes := message.header.queryID
+	subIDsBytes := message.header.subIDs
+	subIDBytes := message.header.subID
+	commandIDBytes := message.header.commandID
 	hasHeartbeat := client.heartbeatInterval > 0
 	client.applyAckBookkeeping(message)
 
@@ -296,26 +345,36 @@ func (client *Client) onMessage(message *Message) (err error) {
 	handled := false
 	var routeID string
 	switch {
-	case hasQueryID:
-		routeID = queryID
-	case hasSubID:
-		routeID = subID
-	case hasCommandID:
-		routeID = commandID
+	case len(queryIDBytes) > 0:
+		routeID = unsafeStringFromBytes(queryIDBytes)
+	case len(subIDBytes) > 0:
+		routeID = unsafeStringFromBytes(subIDBytes)
+	case len(commandIDBytes) > 0:
+		routeID = unsafeStringFromBytes(commandIDBytes)
 	}
 
-	if hasSubIDs {
-		for _, candidateRoute := range strings.Split(subIDs, ",") {
-			candidateRoute = strings.TrimSpace(candidateRoute)
-			if candidateRoute == "" {
-				continue
+	if len(subIDsBytes) > 0 {
+		start := 0
+		for start <= len(subIDsBytes) {
+			end := len(subIDsBytes)
+			if comma := bytes.IndexByte(subIDsBytes[start:], ','); comma >= 0 {
+				end = start + comma
 			}
-			if messageHandler, exists := client.routes.Load(candidateRoute); exists {
-				handled = true
-				if handlerErr := messageHandler.(func(*Message) error)(message); handlerErr != nil && err == nil {
-					err = handlerErr
+
+			candidateRoute := trimASCIISpaces(subIDsBytes[start:end])
+			if len(candidateRoute) > 0 {
+				if messageHandler, exists := client.routes.Load(unsafeStringFromBytes(candidateRoute)); exists {
+					handled = true
+					if handlerErr := messageHandler.(func(*Message) error)(message); handlerErr != nil && err == nil {
+						err = handlerErr
+					}
 				}
 			}
+
+			if end == len(subIDsBytes) {
+				break
+			}
+			start = end + 1
 		}
 	} else if routeID != "" {
 		if messageHandler, exists := client.routes.Load(routeID); exists {

@@ -40,6 +40,18 @@ func (msg *Message) reset() {
 	msg.valid = true
 }
 
+func (msg *Message) resetForParse() {
+	if msg.header != nil {
+		msg.header.reset()
+	}
+	msg.data = nil
+	msg.ignoreAutoAck = false
+	msg.bookmarkSeqNo = 0
+	msg.subscriptionHandle = ""
+	msg.disowned = false
+	msg.valid = true
+}
+
 func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) {
 
 	if msg == nil {
@@ -47,47 +59,46 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 	}
 
 	if resetMessage {
-		msg.reset()
+		msg.resetForParse()
 	}
 
 	state := inHeader
 	var keyStart, keyEnd, valueStart, valueEnd int
-	for i, character := range array {
+	for index := 0; index < len(array); index++ {
+		character := array[index]
 		switch character {
 		case '"':
 			switch state {
 			case inHeader:
 				state = inKey
-				keyStart = i + 1
+				keyStart = index + 1
 			case inKey:
 				state = afterKey
-				keyEnd = i
+				keyEnd = index
 			case inValue:
 				state = inValueString
-				valueStart = i + 1
+				valueStart = index + 1
 			case inValueString:
 				state = inHeader
-				valueEnd = i
+				valueEnd = index
 				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
 			}
 		case ':':
 			if state == afterKey {
 				state = inValue
-				valueStart = i + 1
+				valueStart = index + 1
 			}
 		case ',':
 			if state == inValue {
 				state = inHeader
-				valueEnd = i
+				valueEnd = index
 				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
 			}
 		case '}':
-
-			if array[i-1] != '"' && i-1 > 0 {
-				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:i])
+			if index > 0 && array[index-1] != '"' {
+				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:index])
 			}
-
-			return array[i+1:], nil
+			return array[index+1:], nil
 		}
 	}
 

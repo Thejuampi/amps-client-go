@@ -85,3 +85,35 @@ func TestUnhandledAndLastChanceOrder(t *testing.T) {
 		t.Fatalf("unexpected fallback order: got %+v want %+v", events, expected)
 	}
 }
+
+func TestOnMessageMultiSubIDsWithWhitespace(t *testing.T) {
+	client := NewClient("multi-sids")
+	events := make([]string, 0, 4)
+
+	client.routes.Store("sub-1", func(message *Message) error {
+		events = append(events, "sub-1")
+		return nil
+	})
+	client.routes.Store("sub-2", func(message *Message) error {
+		events = append(events, "sub-2")
+		return nil
+	})
+
+	message := &Message{
+		header: &_Header{
+			command: CommandPublish,
+			subIDs:  []byte(" , sub-1, , sub-2 ,, "),
+			topic:   []byte("orders"),
+		},
+		data: []byte(`{"id":1}`),
+	}
+
+	if err := client.onMessage(message); err != nil {
+		t.Fatalf("unexpected message error: %v", err)
+	}
+
+	expected := []string{"sub-1", "sub-2"}
+	if !reflect.DeepEqual(events, expected) {
+		t.Fatalf("unexpected route dispatch: got %+v want %+v", events, expected)
+	}
+}

@@ -1,14 +1,45 @@
 package bookmark
 
-import "strings"
-
 func NormalizeSubID(subIDs string) string {
-	parts := strings.Split(subIDs, ",")
-	for _, part := range parts {
-		value := strings.TrimSpace(part)
-		if value != "" {
-			return value
+	start := 0
+	for start <= len(subIDs) {
+		end := len(subIDs)
+		for index := start; index < len(subIDs); index++ {
+			if subIDs[index] == ',' {
+				end = index
+				break
+			}
 		}
+
+		tokenStart := start
+		for tokenStart < end {
+			switch subIDs[tokenStart] {
+			case ' ', '\t', '\n', '\r':
+				tokenStart++
+			default:
+				goto trimTokenEnd
+			}
+		}
+		tokenStart = end
+
+	trimTokenEnd:
+		tokenEnd := end
+		for tokenEnd > tokenStart {
+			switch subIDs[tokenEnd-1] {
+			case ' ', '\t', '\n', '\r':
+				tokenEnd--
+			default:
+				if tokenEnd > tokenStart {
+					return subIDs[tokenStart:tokenEnd]
+				}
+				break
+			}
+		}
+
+		if end == len(subIDs) {
+			break
+		}
+		start = end + 1
 	}
 	return ""
 }

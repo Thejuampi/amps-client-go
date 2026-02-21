@@ -2,7 +2,6 @@ package amps
 
 import (
 	"bytes"
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -43,6 +42,20 @@ type _Header struct {
 	password            []byte
 	version             []byte
 	correlationID       []byte
+
+	ackTypeValue             int
+	batchSizeValue           uint
+	expirationValue          uint
+	groupSequenceNumberValue uint
+	messageLengthValue       uint
+	matchesValue             uint
+	recordsDeletedValue      uint
+	recordsInsertedValue     uint
+	recordsReturnedValue     uint
+	recordsUpdatedValue      uint
+	sequenceIDValue          uint64
+	topNValue                uint
+	topicMatchesValue        uint
 }
 
 func (header *_Header) reset() {
@@ -82,21 +95,79 @@ func (header *_Header) reset() {
 	header.correlationID = nil
 }
 
-func parseToUintPointer(value []byte) (*uint, error) {
-	result, err := strconv.ParseUint(string(value), 10, 32)
-	final := uint(result)
-	if err != nil {
-		return nil, err
+func parseUintBytes(value []byte) (uint64, bool) {
+	if len(value) == 0 {
+		return 0, false
 	}
-	return &final, nil
+	var result uint64
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+		if result > (^uint64(0)-uint64(digit-'0'))/10 {
+			return 0, false
+		}
+		result = (result * 10) + uint64(digit-'0')
+	}
+	return result, true
 }
 
-func parseToUint64Pointer(value []byte) (*uint64, error) {
-	result, err := strconv.ParseUint(string(value), 10, 64)
-	if err != nil {
-		return nil, err
+func parseUint32Value(value []byte) (uint, bool) {
+	parsed, ok := parseUintBytes(value)
+	if !ok || parsed > (1<<32)-1 {
+		return 0, false
 	}
-	return &result, nil
+	return uint(parsed), true
+}
+
+func parseUint64Value(value []byte) (uint64, bool) {
+	parsed, ok := parseUintBytes(value)
+	if !ok {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func parseAckBytes(ackType []byte) int {
+	var ack int
+	start := 0
+	for start <= len(ackType) {
+		end := start
+		for end < len(ackType) && ackType[end] != ',' {
+			end++
+		}
+		token := ackType[start:end]
+		switch len(token) {
+		case 5:
+			if bytesEqualString(token, "stats") {
+				ack |= AckTypeStats
+			}
+		case 6:
+			if bytesEqualString(token, "parsed") {
+				ack |= AckTypeParsed
+			}
+		case 8:
+			if bytesEqualString(token, "received") {
+				ack |= AckTypeReceived
+			}
+		case 9:
+			if bytesEqualString(token, "persisted") {
+				ack |= AckTypePersisted
+			}
+			if bytesEqualString(token, "completed") {
+				ack |= AckTypeCompleted
+			}
+			if bytesEqualString(token, "processed") {
+				ack |= AckTypeProcessed
+			}
+		}
+
+		if end == len(ackType) {
+			break
+		}
+		start = end + 1
+	}
+	return ack
 }
 
 func (header *_Header) parseField(key []byte, value []byte) {
@@ -106,14 +177,16 @@ func (header *_Header) parseField(key []byte, value []byte) {
 	case 1:
 		switch key[0] {
 		case 'a':
-			if ack := stringToAck(string(value)); ack >= 0 {
-				header.ackType = &ack
+			if ack := parseAckBytes(value); ack >= 0 {
+				header.ackTypeValue = ack
+				header.ackType = &header.ackTypeValue
 			}
 		case 'c':
-			header.command = commandStringToInt(string(value))
+			header.command = commandBytesToInt(value)
 		case 'e':
-			if expiration, err := parseToUintPointer(value); err == nil {
-				header.expiration = expiration
+			if expiration, ok := parseUint32Value(value); ok {
+				header.expirationValue = expiration
+				header.expiration = &header.expirationValue
 			}
 		case 'f':
 			header.filter = value
@@ -122,12 +195,14 @@ func (header *_Header) parseField(key []byte, value []byte) {
 		case 'k':
 			header.sowKey = value
 		case 'l':
-			if messageLength, err := parseToUintPointer(value); err == nil {
-				header.messageLength = messageLength
+			if messageLength, ok := parseUint32Value(value); ok {
+				header.messageLengthValue = messageLength
+				header.messageLength = &header.messageLengthValue
 			}
 		case 's':
-			if sequenceID, err := parseToUint64Pointer(value); err == nil {
-				header.sequenceID = sequenceID
+			if sequenceID, ok := parseUint64Value(value); ok {
+				header.sequenceIDValue = sequenceID
+				header.sequenceID = &header.sequenceIDValue
 			}
 		case 't':
 			header.topic = value
@@ -141,8 +216,9 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			case 'm':
 				header.bookmark = value
 			case 's':
-				if batchSize, err := parseToUintPointer(value); err == nil {
-					header.batchSize = batchSize
+				if batchSize, ok := parseUint32Value(value); ok {
+					header.batchSizeValue = batchSize
+					header.batchSize = &header.batchSizeValue
 				}
 			}
 		case 'l':
@@ -158,8 +234,9 @@ func (header *_Header) parseField(key []byte, value []byte) {
 	case 4:
 		switch key[0] {
 		case 'g':
-			if groupSequenceNumber, err := parseToUintPointer(value); err == nil {
-				header.groupSequenceNumber = groupSequenceNumber
+			if groupSequenceNumber, ok := parseUint32Value(value); ok {
+				header.groupSequenceNumberValue = groupSequenceNumber
+				header.groupSequenceNumber = &header.groupSequenceNumberValue
 			}
 		case 'o':
 			header.options = value
@@ -167,8 +244,9 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			header.subIDs = value
 		}
 	case 5:
-		if topN, err := parseToUintPointer(value); err == nil {
-			header.topN = topN
+		if topN, ok := parseUint32Value(value); ok {
+			header.topNValue = topN
+			header.topN = &header.topNValue
 		}
 	case 6:
 		switch key[1] {
@@ -182,8 +260,9 @@ func (header *_Header) parseField(key []byte, value []byte) {
 	case 7:
 		switch key[0] {
 		case 'm':
-			if matches, err := parseToUintPointer(value); err == nil {
-				header.matches = matches
+			if matches, ok := parseUint32Value(value); ok {
+				header.matchesValue = matches
+				header.matches = &header.matchesValue
 			}
 		case 'o':
 			header.orderBy = value
@@ -199,23 +278,28 @@ func (header *_Header) parseField(key []byte, value []byte) {
 		case 'q':
 			header.queryID = value
 		case 'r':
-			if records, err := parseToUintPointer(value); err == nil {
+			if records, ok := parseUint32Value(value); ok {
 				switch key[8] {
 				case 'd':
-					header.recordsDeleted = records
+					header.recordsDeletedValue = records
+					header.recordsDeleted = &header.recordsDeletedValue
 				case 'i':
-					header.recordsInserted = records
+					header.recordsInsertedValue = records
+					header.recordsInserted = &header.recordsInsertedValue
 				case 'r':
-					header.recordsReturned = records
+					header.recordsReturnedValue = records
+					header.recordsReturned = &header.recordsReturnedValue
 				case 'u':
-					header.recordsUpdated = records
+					header.recordsUpdatedValue = records
+					header.recordsUpdated = &header.recordsUpdatedValue
 				}
 			}
 		case 's':
 			header.sowKeys = value
 		case 't':
-			if topicMatches, err := parseToUintPointer(value); err == nil {
-				header.topicMatches = topicMatches
+			if topicMatches, ok := parseUint32Value(value); ok {
+				header.topicMatchesValue = topicMatches
+				header.topicMatches = &header.topicMatchesValue
 			}
 		}
 	}
@@ -271,6 +355,13 @@ func stringToAck(ackType string) int {
 	}
 
 	return ack
+}
+
+func writeUintToBuffer(buffer *bytes.Buffer, value uint64) error {
+	var digits [20]byte
+	encoded := strconv.AppendUint(digits[:0], value, 10)
+	_, err := buffer.Write(encoded)
+	return err
 }
 
 func (header *_Header) write(buffer *bytes.Buffer) (err error) {
@@ -330,7 +421,7 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		if err != nil {
 			return
 		}
-		_, err = buffer.WriteString(fmt.Sprint(*header.batchSize))
+		err = writeUintToBuffer(buffer, uint64(*header.batchSize))
 		if err != nil {
 			return
 		}
@@ -375,7 +466,7 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		if err != nil {
 			return
 		}
-		_, err = buffer.WriteString(fmt.Sprint(*header.expiration))
+		err = writeUintToBuffer(buffer, uint64(*header.expiration))
 		if err != nil {
 			return
 		}
@@ -513,7 +604,7 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		if err != nil {
 			return
 		}
-		_, err = buffer.WriteString(fmt.Sprint(*header.sequenceID))
+		err = writeUintToBuffer(buffer, *header.sequenceID)
 		if err != nil {
 			return
 		}
@@ -588,7 +679,7 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		if err != nil {
 			return
 		}
-		_, err = buffer.WriteString(fmt.Sprint(*header.topN))
+		err = writeUintToBuffer(buffer, uint64(*header.topN))
 		if err != nil {
 			return
 		}

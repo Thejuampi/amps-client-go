@@ -85,6 +85,94 @@ func commandStringToInt(command string) int {
 	return result
 }
 
+func commandBytesToInt(command []byte) int {
+	switch len(command) {
+	case 0:
+		return CommandUnknown
+	case 1:
+		if command[0] == 'p' {
+			return CommandPublish
+		}
+	case 3:
+		if bytesEqualString(command, "ack") {
+			return CommandAck
+		}
+		if bytesEqualString(command, "oof") {
+			return CommandOOF
+		}
+		if bytesEqualString(command, "sow") {
+			return CommandSOW
+		}
+	case 5:
+		if bytesEqualString(command, "flush") {
+			return CommandFlush
+		}
+		if bytesEqualString(command, "logon") {
+			return commandLogon
+		}
+	case 7:
+		if bytesEqualString(command, "publish") {
+			return CommandPublish
+		}
+	case 9:
+		if bytesEqualString(command, "heartbeat") {
+			return commandHeartbeat
+		}
+		if bytesEqualString(command, "subscribe") {
+			return CommandSubscribe
+		}
+		if bytesEqualString(command, "group_end") {
+			return CommandGroupEnd
+		}
+	case 10:
+		if bytesEqualString(command, "sow_delete") {
+			return CommandSOWDelete
+		}
+		if bytesEqualString(command, "stop_timer") {
+			return commandStopTimer
+		}
+	case 11:
+		if bytesEqualString(command, "group_begin") {
+			return CommandGroupBegin
+		}
+		if bytesEqualString(command, "start_timer") {
+			return commandStartTimer
+		}
+		if bytesEqualString(command, "unsubscribe") {
+			return CommandUnsubscribe
+		}
+	case 13:
+		if bytesEqualString(command, "delta_publish") {
+			return CommandDeltaPublish
+		}
+	case 15:
+		if bytesEqualString(command, "delta_subscribe") {
+			return CommandDeltaSubscribe
+		}
+	case 17:
+		if bytesEqualString(command, "sow_and_subscribe") {
+			return CommandSOWAndSubscribe
+		}
+	case 23:
+		if bytesEqualString(command, "sow_and_delta_subscribe") {
+			return CommandSOWAndDeltaSubscribe
+		}
+	}
+	return commandStringToInt(string(command))
+}
+
+func bytesEqualString(value []byte, literal string) bool {
+	if len(value) != len(literal) {
+		return false
+	}
+	for index := 0; index < len(literal); index++ {
+		if value[index] != literal[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func commandIntToString(command int) string {
 	var result string
 

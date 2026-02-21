@@ -162,70 +162,51 @@ func (ms *MessageStream) HasNext() bool {
 	if ms.state == messageStreamStateComplete {
 		return false
 	}
-	timer := make(chan bool, 1)
-
-	go func() {
-		time.Sleep(1 * time.Millisecond)
-		timer <- true
-	}()
-
 	ms.timedOut = false
 	if ms.current != nil {
 		return true
 	}
 
-	message, err := ms.queue.pollDequeue()
-	ms.current = message
-
-	if ms.current != nil && err == nil {
-		return true
-	}
-
-	if ms.timeout == 0 {
-		if ((ms.state & messageStreamStateReading) > 0) && ms.current == nil {
-			ms.current, err = ms.queue.pollDequeue()
-
+	reading := (ms.state & messageStreamStateReading) != 0
+	if !reading {
+		if message, ok := ms.queue.tryDequeue(); ok {
+			ms.current = message
+			ms.consumeConflateState()
 		}
-
 		return ms.current != nil
 	}
 
-	currenttime := time.Now().UnixNano() / 1e6
-
-	if ((ms.state & messageStreamStateReading) > 0) && ms.current == nil && !ms.timedOut {
-		select {
-		case <-timer:
-			ms.timedOut = true
-			return true
-		default:
-			message, err = ms.queue.pollDequeue()
+	if ms.timeout == 0 {
+		if message, ok := ms.queue.waitDequeue(); ok {
 			ms.current = message
+			ms.consumeConflateState()
 		}
-
-		if ms.sowKeyMap != nil {
-			ms.lock.Lock()
-			defer ms.lock.Unlock()
-
-			ms.current, err = ms.queue.dequeue()
-
-			if ms.current != nil && err == nil {
-				sowKey, isPresent := ms.current.SowKey()
-
-				if isPresent {
-					delete(ms.sowKeyMap, sowKey)
-				}
-			}
-		} else {
-			ms.current, err = ms.queue.pollDequeue()
-		}
-
-		if ms.current == nil {
-			ms.timedOut = uint64((time.Now().UnixNano()/1e6)-currenttime) > ms.timeout
-		}
-		return (((ms.state & messageStreamStateReading) != 0) && ms.timedOut) || ms.current != nil
+		return ms.current != nil
 	}
 
-	return false
+	if message, ok := ms.queue.waitDequeueTimeout(time.Duration(ms.timeout) * time.Millisecond); ok {
+		ms.current = message
+		ms.consumeConflateState()
+		return true
+	}
+
+	ms.timedOut = true
+	return true
+}
+
+func (ms *MessageStream) consumeConflateState() {
+	if ms == nil || ms.current == nil || ms.sowKeyMap == nil {
+		return
+	}
+
+	sowKey, isPresent := ms.current.SowKey()
+	if !isPresent {
+		return
+	}
+
+	ms.lock.Lock()
+	delete(ms.sowKeyMap, sowKey)
+	ms.lock.Unlock()
 }
 
 // Next executes the exported next operation.
@@ -259,25 +240,28 @@ func (ms *MessageStream) Next() (message *Message) {
 				ms.queryID = ""
 			}
 		}
-	} else if ackType, hasAckType := returnVal.AckType(); ms.state == messageStreamStateStatsOnly && returnVal == nil && (hasAckType && ackType == AckTypeStats) {
-		ms.setState(messageStreamStateComplete)
+	} else if ms.state == messageStreamStateStatsOnly && returnVal != nil {
+		ackType, hasAckType := returnVal.AckType()
+		if hasAckType && ackType == AckTypeStats {
+			ms.setState(messageStreamStateComplete)
 
-		if ms.client == nil {
-			ms.commandID = ""
-			ms.queryID = ""
-		} else {
-			if len(ms.commandID) > 0 {
-				err := ms.client.deleteRoute(ms.commandID)
-				if err != nil {
-					return
-				}
+			if ms.client == nil {
 				ms.commandID = ""
-			} else if len(ms.queryID) > 0 {
-				err := ms.client.deleteRoute(ms.queryID)
-				if err != nil {
-					return
-				}
 				ms.queryID = ""
+			} else {
+				if len(ms.commandID) > 0 {
+					err := ms.client.deleteRoute(ms.commandID)
+					if err != nil {
+						return
+					}
+					ms.commandID = ""
+				} else if len(ms.queryID) > 0 {
+					err := ms.client.deleteRoute(ms.queryID)
+					if err != nil {
+						return
+					}
+					ms.queryID = ""
+				}
 			}
 		}
 	}
@@ -359,15 +343,10 @@ func (ms *MessageStream) setRunning() {
 }
 
 func (ms *MessageStream) messageHandler(message *Message) (err error) {
-	ms.lock.Lock()
-	defer ms.lock.Unlock()
-
-	if ms.depth != 0 {
-		for ms.queue.length() > ms.depth {
-		}
+	if message == nil {
+		return nil
 	}
-
-	ms.queue.enqueue(message.Copy())
+	ms.queue.enqueueWithDepth(message.Copy(), ms.depth)
 	return
 }
 
@@ -388,11 +367,16 @@ type _MessageQueue struct {
 	last     uint64
 	ring     []*Message
 
-	lock sync.Mutex
+	lock     sync.Mutex
+	notEmpty *sync.Cond
+	notFull  *sync.Cond
 }
 
 func newQueue(initialSize uint64) *_MessageQueue {
-	return &_MessageQueue{capacity: initialSize, ring: make([]*Message, initialSize)}
+	queue := &_MessageQueue{capacity: initialSize, ring: make([]*Message, initialSize)}
+	queue.notEmpty = sync.NewCond(&queue.lock)
+	queue.notFull = sync.NewCond(&queue.lock)
+	return queue
 }
 
 func (queue *_MessageQueue) length() uint64 {
@@ -403,22 +387,48 @@ func (queue *_MessageQueue) length() uint64 {
 }
 
 func (queue *_MessageQueue) enqueue(message *Message) {
+	queue.enqueueWithDepth(message, 0)
+}
+
+func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
 
-	if queue._length == 0 {
-		queue.ring[queue.last] = message
-		queue._length++
-		return
+	for depth != 0 && queue._length > depth {
+		queue.notFull.Wait()
 	}
 
 	if queue.capacity == queue._length {
 		queue.resize()
 	}
 
+	if queue._length == 0 {
+		queue.ring[queue.last] = message
+		queue._length++
+		queue.notEmpty.Signal()
+		return
+	}
+
 	queue.last = (queue.last + 1) % queue.capacity
 	queue.ring[queue.last] = message
 	queue._length++
+	queue.notEmpty.Signal()
+}
+
+func (queue *_MessageQueue) dequeueLocked() *Message {
+	message := queue.ring[queue.first]
+	queue.ring[queue.first] = nil
+	queue._length--
+
+	if queue._length > 0 {
+		queue.first = (queue.first + 1) % queue.capacity
+	} else {
+		queue.first = 0
+		queue.last = 0
+	}
+
+	queue.notFull.Signal()
+	return message
 }
 
 func (queue *_MessageQueue) dequeue() (message *Message, err error) {
@@ -430,31 +440,57 @@ func (queue *_MessageQueue) dequeue() (message *Message, err error) {
 		return
 	}
 
-	message = queue.ring[queue.first]
-
-	queue.ring[queue.first] = nil
-	queue._length--
-
-	if queue._length > 0 {
-		queue.first = (queue.first + 1) % queue.capacity
-	} else {
-		queue.first = 0
-		queue.last = 0
-	}
-
-	return
+	return queue.dequeueLocked(), nil
 }
 
-func (queue *_MessageQueue) pollDequeue() (*Message, error) {
-	for {
-		if queue._length > 0 {
-			message, err := queue.dequeue()
-			if err != nil {
-				return nil, err
-			}
-			return message, nil
-		}
+func (queue *_MessageQueue) tryDequeue() (*Message, bool) {
+	queue.lock.Lock()
+	defer queue.lock.Unlock()
+
+	if queue._length == 0 {
+		return nil, false
 	}
+
+	return queue.dequeueLocked(), true
+}
+
+func (queue *_MessageQueue) waitDequeue() (*Message, bool) {
+	queue.lock.Lock()
+	defer queue.lock.Unlock()
+
+	for queue._length == 0 {
+		queue.notEmpty.Wait()
+	}
+
+	return queue.dequeueLocked(), true
+}
+
+func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message, bool) {
+	if timeout <= 0 {
+		return queue.waitDequeue()
+	}
+
+	queue.lock.Lock()
+	defer queue.lock.Unlock()
+
+	timedOut := false
+	timer := time.AfterFunc(timeout, func() {
+		queue.lock.Lock()
+		timedOut = true
+		queue.notEmpty.Broadcast()
+		queue.lock.Unlock()
+	})
+	defer timer.Stop()
+
+	for queue._length == 0 && !timedOut {
+		queue.notEmpty.Wait()
+	}
+
+	if queue._length == 0 {
+		return nil, false
+	}
+
+	return queue.dequeueLocked(), true
 }
 
 func (queue *_MessageQueue) clear() {
@@ -466,6 +502,7 @@ func (queue *_MessageQueue) clear() {
 	queue._length = uint64(0)
 
 	queue.ring = make([]*Message, queue.capacity)
+	queue.notFull.Broadcast()
 }
 
 func (queue *_MessageQueue) resize() {
