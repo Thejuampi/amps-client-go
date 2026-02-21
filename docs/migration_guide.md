@@ -1,7 +1,10 @@
 # AMPS Go Client Implementation Guide
 
-This repository is a completely new Go implementation of an AMPS client.
-The behavior and API parity targets are based on the AMPS C++ client (5.3.5.1) as a reference.
+This repository is a new Go implementation of an AMPS client.
+
+Parity target:
+
+- C++ client behavior target: `5.3.5.1`
 
 ## Import Path
 
@@ -9,45 +12,34 @@ Use:
 
 - `import "github.com/Thejuampi/amps-client-go/amps"`
 
-## API Design Goals
+## Adoption Orientation
 
-- Provide a Go-native AMPS client with broad C++ parity coverage.
-- Keep the public `Client`, `Command`, `Message`, and `MessageStream` APIs stable and practical for Go usage.
-- Expose explicit alias methods where they improve C++ parity discoverability.
+This guide describes how to align existing AMPS usage with this Go API surface.
 
-## Parity Aliases
+## Compatibility Aliases
 
-- `SetClientName` and alias `SetName`
-- `ClientName` and alias `Name`
-- `SetLogonCorrelationID` and alias `SetLogonCorrelationData`
-- `LogonCorrelationID` and alias `LogonCorrelationData`
+- `SetClientName` and `SetName`
+- `ClientName` and `Name`
+- `SetLogonCorrelationID` and `SetLogonCorrelationData`
+- `LogonCorrelationID` and `LogonCorrelationData`
 
-## Core Behavior Hooks
+## Behavior Controls to Validate During Adoption
 
-- Publish persistence and replay:
-  - `SetPublishStore`, `PublishStore`, `PublishFlush`
-- Bookmark tracking and dedupe:
-  - `SetBookmarkStore`, `BookmarkStore`
-- Queue ack batching:
-  - `SetAutoAck`, `SetAckBatchSize`, `SetAckTimeout`, `Ack`, `AckMessage`, `FlushAcks`
-- Reconnect replay controls:
-  - `SetRetryOnDisconnect`, `ExecuteAsyncNoResubscribe`
+- Retry: `SetRetryOnDisconnect`
+- Queue ack policy: `SetAutoAck`, `SetAckBatchSize`, `SetAckTimeout`, `FlushAcks`
+- Replay and dedupe: `SetPublishStore`, `SetBookmarkStore`
+- HA reconnection: `NewHAClient`, chooser and delay strategy controls
 
-## HAClient Notes
+## Recommended Adoption Sequence
 
-- Use `NewHAClient(...)` for managed reconnect behavior.
-- Configure:
-  - `SetServerChooser(...)`
-  - `SetReconnectDelayStrategy(...)` or `SetReconnectDelay(...)`
-  - `SetLogonOptions(...)`
-- `HAClient.SetDisconnectHandler(...)` intentionally returns a usage error because HA manages reconnect handling internally.
+1. Validate connect/logon/publish/subscribe baseline.
+2. Enable and test queue ack policy.
+3. Enable publish/bookmark stores for replay-sensitive workloads.
+4. Validate failover behavior with HA client and server chooser.
+5. Run integration suite against target endpoint.
 
-## Testing
+## Related
 
-- Unit tests cover parity helpers and core behavior adapters.
-- Integration tests are optional and environment-gated via:
-  - `AMPS_TEST_URI`
-  - `AMPS_TEST_FAILOVER_URIS`
-  - `AMPS_TEST_PROTOCOL`
-  - `AMPS_TEST_USER`
-  - `AMPS_TEST_PASSWORD`
+- [Documentation Index](index.md)
+- [Testing and Validation](testing_and_validation.md)
+- [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)

@@ -1,69 +1,47 @@
-# C++ 5.3.5.1 -> Go Parity Matrix (`Client` / `HAClient`)
+# C++ 5.3.5.1 to Go Parity Matrix (`Client` / `HAClient`)
 
 Verification markers:
 
-- `Verified (Unit)` = covered by deterministic unit tests.
-- `Verified (Integration)` = covered by AMPS endpoint integration tests (env-gated).
+- `Verified (Unit)` means deterministic unit-test coverage.
+- `Verified (Integration)` means endpoint-backed integration coverage.
 
 ## Client
 
-| C++ Concept | Go Equivalent | Verification |
-|---|---|---|
-| `SetName` / `Name` | `Client.SetName` / `Client.Name` | Verified (Unit) |
-| `SetLogonCorrelationData` / getter | `Client.SetLogonCorrelationData` / `Client.LogonCorrelationData` | Verified (Unit) |
-| `URI` | `Client.URI` | Verified (Unit) |
-| `GetConnectionInfo` / `GatherConnectionInfo` | `Client.GetConnectionInfo` / `Client.GatherConnectionInfo` | Verified (Unit) |
-| Bookmark subscribe | `Client.BookmarkSubscribe`, `Client.BookmarkSubscribeAsync` | Verified (Integration) |
-| Queue ack APIs | `Client.Ack`, `Client.AckMessage`, `Client.FlushAcks`, `Client.SetAutoAck`, `Client.SetAckBatchSize`, `Client.SetAckTimeout` | Verified (Unit + Integration) |
-| Retry on disconnect | `Client.SetRetryOnDisconnect`, `Client.RetryOnDisconnect` | Verified (Unit) |
-| Default stream depth | `Client.SetDefaultMaxDepth`, `Client.DefaultMaxDepth` | Verified (Unit) |
-| Publish flush | `Client.PublishFlush` | Verified (Unit) |
-| Timer commands | `Client.StartTimer`, `Client.StopTimer` | Verified (Unit + Integration) |
-| Async no-resubscribe | `Client.ExecuteAsyncNoResubscribe` | Verified (Unit) |
-| Bookmark store hooks | `Client.SetBookmarkStore`, `Client.BookmarkStore` | Verified (Unit) |
-| Publish store hooks | `Client.SetPublishStore`, `Client.PublishStore` | Verified (Unit) |
-| Subscription manager hooks | `Client.SetSubscriptionManager`, `Client.SubscriptionManager` | Verified (Unit) |
-| Duplicate handler | `Client.SetDuplicateMessageHandler`, `Client.DuplicateMessageHandler` | Verified (Unit) |
-| Failed write handler | `Client.SetFailedWriteHandler`, `Client.FailedWriteHandler` | Verified (Unit) |
-| Exception listener | `Client.SetExceptionListener`, `Client.ExceptionListener` | Verified (Unit) |
-| Unhandled / last chance handlers | `Client.SetUnhandledMessageHandler`, `Client.SetLastChanceMessageHandler` | Verified (Unit) |
-| Global command handlers | `Client.SetGlobalCommandTypeMessageHandler` | Verified (Unit) |
-| Connection state listeners | `AddConnectionStateListener`, `RemoveConnectionStateListener`, `ClearConnectionStateListeners` | Verified (Unit + Integration) |
-| HTTP preflight headers | `AddHTTPPreflightHeader`, `SetHTTPPreflightHeaders`, `ClearHTTPPreflightHeaders` | Verified (Unit) |
-| Raw connection handle | `Client.RawConnection` | Verified (Unit) |
-| Transport filter | `Client.SetTransportFilter` | Verified (Unit + Integration) |
-| Receive-thread-start callback | `Client.SetReceiveRoutineStartedCallback` | Verified (Unit) |
-| Handler ordering (route -> global -> duplicate -> fallback chain) | `Client.onMessage` routing behavior | Verified (Unit) |
+| C++ Concept | Go Equivalent | Verification | Details |
+|---|---|---|---|
+| Naming and identity | `SetName`, `Name`, `SetClientName`, `ClientName` | Verified (Unit) | [Client Entrypoints](client_entrypoints.md) |
+| Logon correlation | `SetLogonCorrelationData`, `LogonCorrelationData` | Verified (Unit) | [Client Entrypoints](client_entrypoints.md) |
+| URI and connection info | `URI`, `GetConnectionInfo`, `GatherConnectionInfo` | Verified (Unit) | [Client Entrypoints](client_entrypoints.md) |
+| Bookmark subscribe | `BookmarkSubscribe`, `BookmarkSubscribeAsync` | Verified (Integration) | [Bookmarks and Replay](bookmarks_and_replay.md) |
+| Queue ack APIs | `Ack`, `AckMessage`, `FlushAcks`, auto-ack controls | Verified (Unit + Integration) | [Queue Ack Semantics](queue_ack_semantics.md) |
+| Retry on disconnect | `SetRetryOnDisconnect`, `RetryOnDisconnect` | Verified (Unit) | [Bookmarks and Replay](bookmarks_and_replay.md) |
+| Stream depth defaults | `SetDefaultMaxDepth`, `DefaultMaxDepth` | Verified (Unit) | [Pub/Sub and SOW](pub_sub_and_sow.md) |
+| Publish flush | `PublishFlush` | Verified (Unit) | [Stores and Persistence](stores_and_persistence.md) |
+| Timer commands | `StartTimer`, `StopTimer` | Verified (Unit + Integration) | [Transport and Hooks](transport_and_hooks.md) |
+| Async no-resubscribe | `ExecuteAsyncNoResubscribe` | Verified (Unit) | [Bookmarks and Replay](bookmarks_and_replay.md) |
+| Bookmark and publish stores | `SetBookmarkStore`, `SetPublishStore` | Verified (Unit) | [Stores and Persistence](stores_and_persistence.md) |
+| Subscription manager | `SetSubscriptionManager`, `SubscriptionManager` | Verified (Unit) | [HA Failover](ha_failover.md) |
+| Routing hooks | duplicate/unhandled/last-chance/global handlers | Verified (Unit) | [Transport and Hooks](transport_and_hooks.md) |
+| Connection state listeners | add/remove/clear listener APIs | Verified (Unit + Integration) | [Transport and Hooks](transport_and_hooks.md) |
+| Transport-level hooks | raw connection, transport filter, receive callback | Verified (Unit + Integration) | [Transport and Hooks](transport_and_hooks.md) |
 
 ## HAClient
 
-| C++ Concept | Go Equivalent | Verification |
-|---|---|---|
-| Constructor | `NewHAClient` | Verified (Unit) |
-| Connect + logon loop | `HAClient.ConnectAndLogon` | Verified (Integration) |
-| Disconnected state | `HAClient.Disconnected` | Verified (Unit + Integration) |
-| Timeout | `HAClient.SetTimeout`, `HAClient.Timeout` | Verified (Unit) |
-| Reconnect delay | `HAClient.SetReconnectDelay`, `HAClient.ReconnectDelay` | Verified (Unit) |
-| Reconnect strategy | `HAClient.SetReconnectDelayStrategy`, `HAClient.ReconnectDelayStrategy` | Verified (Unit) |
-| Logon options | `HAClient.SetLogonOptions`, `HAClient.LogonOptions` | Verified (Unit) |
-| Server chooser | `HAClient.SetServerChooser`, `HAClient.ServerChooser` | Verified (Unit + Integration) |
-| Connection info | `HAClient.GetConnectionInfo`, `HAClient.GatherConnectionInfo` | Verified (Unit + Integration) |
-| Memory-backed constructor | `CreateMemoryBackedHAClient` | Verified (Unit) |
-| File-backed constructor | `CreateFileBackedHAClient` | Verified (Unit) |
-| Disconnect handler override | `HAClient.SetDisconnectHandler` returns usage error by design | Verified (Unit) |
+| C++ Concept | Go Equivalent | Verification | Details |
+|---|---|---|---|
+| Constructor | `NewHAClient` | Verified (Unit) | [HA Failover](ha_failover.md) |
+| Connect and logon loop | `ConnectAndLogon` | Verified (Integration) | [HA Failover](ha_failover.md) |
+| Disconnected state | `Disconnected` | Verified (Unit + Integration) | [HA Failover](ha_failover.md) |
+| Timeout and reconnect delay | timeout and delay setters/getters | Verified (Unit) | [HA Failover](ha_failover.md) |
+| Delay strategy | `SetReconnectDelayStrategy`, getter | Verified (Unit) | [HA Failover](ha_failover.md) |
+| Logon options | `SetLogonOptions`, getter | Verified (Unit) | [HA Failover](ha_failover.md) |
+| Server chooser | `SetServerChooser`, getter | Verified (Unit + Integration) | [HA Failover](ha_failover.md) |
+| Connection info | `GetConnectionInfo`, `GatherConnectionInfo` | Verified (Unit + Integration) | [HA Failover](ha_failover.md) |
+| Store-backed constructors | `CreateMemoryBackedHAClient`, `CreateFileBackedHAClient` | Verified (Unit) | [Stores and Persistence](stores_and_persistence.md) |
+| Disconnect handler override restriction | `SetDisconnectHandler` usage error by design | Verified (Unit) | [HA Failover](ha_failover.md) |
 
-## Go-Native Replacements for C++ Low-Level Handles
+## Related Reference
 
-- `Client.RawConnection() net.Conn`
-- `Client.SetTransportFilter(...)`
-- `Client.SetReceiveRoutineStartedCallback(...)`
-
-## Integration Coverage (Env-Gated)
-
-- `TestIntegrationConnectLogonPublishSubscribe`
-- `TestIntegrationSOWAndSowAndSubscribeLifecycle`
-- `TestIntegrationQueueAutoAckBatching`
-- `TestIntegrationBookmarkResumeAcrossReconnect`
-- `TestIntegrationHAConnectAndLogonWithFailoverChooser`
-- `TestIntegrationStartStopTimerCommandPath`
-- `TestIntegrationReconnectDuringInFlightOperation`
+- [Reference: Client](reference_client.md)
+- [Reference: HAClient](reference_ha_client.md)
+- [Reference: Types and Handlers](reference_types_and_handlers.md)

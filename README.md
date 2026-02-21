@@ -1,14 +1,8 @@
-## Thejuampi AMPS Go Client (`github.com/Thejuampi/amps-client-go/amps`)
+## AMPS Go Client (`github.com/Thejuampi/amps-client-go/amps`)
 
-This repository is a custom implementation of an AMPS client in Go by Thejuampi.
+Version: `0.1.0`
 
-Current project version: `0.1.0`.
-
-It provides an AMPS Go client with compatibility aliases and behavior parity for key C++ `Client`/`HAClient` workflows (target: 5.3.5.1), while keeping the public import path:
-
-```go
-import "github.com/Thejuampi/amps-client-go/amps"
-```
+This repository provides a Go implementation of an AMPS client API with C++ 5.3.5.1 parity-oriented behavior for `Client` and `HAClient`.
 
 ## Install
 
@@ -16,28 +10,7 @@ import "github.com/Thejuampi/amps-client-go/amps"
 go get github.com/Thejuampi/amps-client-go/amps
 ```
 
-## Build With Make
-
-Install GNU Make on Windows if needed:
-
-```powershell
-winget install --id ezwinports.make -e --accept-source-agreements --accept-package-agreements --silent
-```
-
-After install, restart your terminal so `make` is on `PATH`.
-
-Common targets:
-
-```bash
-make help
-make build
-make test
-make integration-test
-make install
-make release
-```
-
-## Quick Start
+## Minimal Quick Start
 
 ```go
 package main
@@ -50,10 +23,11 @@ import (
 
 func main() {
 	client := amps.NewClient("example-client")
-
 	if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
 		panic(err)
 	}
+	defer client.Close()
+
 	if err := client.Logon(); err != nil {
 		panic(err)
 	}
@@ -72,68 +46,29 @@ func main() {
 }
 ```
 
-## HA Example
+## Documentation
 
-```go
-package main
+Primary portal:
 
-import (
-	"time"
+- [Documentation Index](docs/index.md)
 
-	"github.com/Thejuampi/amps-client-go/amps"
-)
+Common entry points:
 
-func main() {
-	ha := amps.NewHAClient("ha-client")
-	chooser := amps.NewDefaultServerChooser(
-		"tcp://localhost:9000/amps/json",
-		"tcp://localhost:9001/amps/json",
-	)
-	ha.SetServerChooser(chooser)
-	ha.SetReconnectDelayStrategy(amps.NewExponentialDelayStrategy(
-		100*time.Millisecond,
-		5*time.Second,
-		2,
-	))
-	if err := ha.ConnectAndLogon(); err != nil {
-		panic(err)
-	}
-}
-```
+- [Getting Started](docs/getting_started.md)
+- [Client Entrypoints](docs/client_entrypoints.md)
+- [HA Failover](docs/ha_failover.md)
+- [Testing and Validation](docs/testing_and_validation.md)
+- [C++ to Go Parity Matrix](docs/cpp_to_go_parity_matrix.md)
 
-## Integration Test Environment Contract
-
-Optional integration tests use:
-
-- `AMPS_TEST_URI`
-- `AMPS_TEST_FAILOVER_URIS`
-- `AMPS_TEST_PROTOCOL`
-- `AMPS_TEST_USER`
-- `AMPS_TEST_PASSWORD`
-
-Run:
+## Build and Test
 
 ```bash
-go test ./... -run Integration
+make build
+make test
+make integration-test
+make release
 ```
 
-## Parity Coverage Snapshot
+## License
 
-| Coverage Area | Status | Primary Verification |
-|---|---|---|
-| `Client`/`HAClient` API parity surface | Complete in scope | Unit tests (`amps/*_test.go`) |
-| Handler ordering and fallback chain | Verified | Unit tests (`TestOnMessageHandlerOrder`, `TestUnhandledAndLastChanceOrder`) |
-| Auto-ack batching/timeout and explicit ack flow | Verified | Unit + integration (`TestAutoAck*`, `TestIntegrationQueueAutoAckBatching`) |
-| Publish replay/discard behavior | Verified | Unit (`TestMemoryPublishStoreReplayAndDiscard`, `TestApplyAckBookkeepingDiscardPublishOnPersistedAck`) |
-| Bookmark dedupe/resume behavior | Verified | Unit + integration (`TestMemoryBookmarkStoreDuplicateAndMostRecent`, `TestIntegrationBookmarkResumeAcrossReconnect`) |
-| HA chooser/reconnect flow | Verified | Unit + integration (`TestHAReconnectDelayStrategySetters`, `TestIntegrationHAConnectAndLogonWithFailoverChooser`) |
-| Timer command path (`start_timer`/`stop_timer`) | Verified | Unit + integration (`TestTimerCommandPathWritesStartAndStop`, `TestIntegrationStartStopTimerCommandPath`) |
-
-## Legal Note
-
-This repository is an independent custom implementation maintained by Thejuampi and is licensed under MIT (`LICENSE`).
-
-## Additional Docs
-
-- `docs/migration_guide.md`
-- `docs/cpp_to_go_parity_matrix.md`
+MIT. See [LICENSE](LICENSE).
