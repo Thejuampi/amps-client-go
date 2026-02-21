@@ -244,18 +244,22 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			header.subIDs = value
 		}
 	case 5:
-		if topN, ok := parseUint32Value(value); ok {
-			header.topNValue = topN
-			header.topN = &header.topNValue
+		if bytesEqualString(key, "top_n") {
+			if topN, ok := parseUint32Value(value); ok {
+				header.topNValue = topN
+				header.topN = &header.topNValue
+			}
 		}
 	case 6:
-		switch key[1] {
-		case 'e':
+		switch {
+		case bytesEqualString(key, "reason"):
 			header.reason = value
-		case 'u':
+		case bytesEqualString(key, "sub_id"):
 			header.subID = value
-		case 't':
+		case bytesEqualString(key, "status"):
 			header.status = value
+		case bytesEqualString(key, "filter"):
+			header.filter = value
 		}
 	case 7:
 		switch key[0] {
@@ -274,32 +278,40 @@ func (header *_Header) parseField(key []byte, value []byte) {
 	default:
 		switch key[0] {
 		case 'c':
-			header.clientName = value
+			if bytesEqualString(key, "client_name") {
+				header.clientName = value
+			}
 		case 'q':
-			header.queryID = value
+			if bytesEqualString(key, "query_id") {
+				header.queryID = value
+			}
 		case 'r':
 			if records, ok := parseUint32Value(value); ok {
-				switch key[8] {
-				case 'd':
+				switch {
+				case bytesEqualString(key, "records_deleted"):
 					header.recordsDeletedValue = records
 					header.recordsDeleted = &header.recordsDeletedValue
-				case 'i':
+				case bytesEqualString(key, "records_inserted"):
 					header.recordsInsertedValue = records
 					header.recordsInserted = &header.recordsInsertedValue
-				case 'r':
+				case bytesEqualString(key, "records_returned"):
 					header.recordsReturnedValue = records
 					header.recordsReturned = &header.recordsReturnedValue
-				case 'u':
+				case bytesEqualString(key, "records_updated"):
 					header.recordsUpdatedValue = records
 					header.recordsUpdated = &header.recordsUpdatedValue
 				}
 			}
 		case 's':
-			header.sowKeys = value
+			if bytesEqualString(key, "sow_keys") {
+				header.sowKeys = value
+			}
 		case 't':
-			if topicMatches, ok := parseUint32Value(value); ok {
-				header.topicMatchesValue = topicMatches
-				header.topicMatches = &header.topicMatchesValue
+			if bytesEqualString(key, "topic_matches") {
+				if topicMatches, ok := parseUint32Value(value); ok {
+					header.topicMatchesValue = topicMatches
+					header.topicMatches = &header.topicMatchesValue
+				}
 			}
 		}
 	}

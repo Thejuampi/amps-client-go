@@ -2,6 +2,7 @@ package amps
 
 import (
 	"bytes"
+	"math"
 	"sync"
 	"testing"
 )
@@ -15,8 +16,11 @@ func TestCompositeMessageBuilderAndParserCoverage(t *testing.T) {
 	if err := builder.Append("alpha"); err != nil {
 		t.Fatalf("append failed: %v", err)
 	}
-	if err := builder.AppendBytes([]byte("xyz"), 1, 3); err != nil {
+	if err := builder.AppendBytes([]byte("xyz"), 1, 2); err != nil {
 		t.Fatalf("append bytes failed: %v", err)
+	}
+	if err := builder.AppendBytes([]byte("xyz"), 1, 3); err == nil {
+		t.Fatalf("expected append bytes range validation error")
 	}
 	if err := builder.AppendBytes([]byte("ignore"), 0, 0); err != nil {
 		t.Fatalf("append zero length failed: %v", err)
@@ -44,7 +48,7 @@ func TestCompositeMessageBuilderAndParserCoverage(t *testing.T) {
 		t.Fatalf("unexpected part0: %q err=%v", string(part0), err)
 	}
 	part1, err := parser.Part(1)
-	if err != nil || len(part1) != 3 || part1[0] != 'y' || part1[1] != 'z' {
+	if err != nil || len(part1) != 2 || part1[0] != 'y' || part1[1] != 'z' {
 		t.Fatalf("unexpected part1 payload: %v err=%v", part1, err)
 	}
 	if _, err := parser.Part(-1); err == nil {
@@ -65,10 +69,48 @@ func TestCompositeMessageBuilderAndParserCoverage(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected invalid part length error")
 	}
+	// High-bit set length should be rejected by unsigned bounds check.
+	_, err = parser.Parse([]byte{0x80, 0x00, 0x00, 0x00})
+	if err == nil {
+		t.Fatalf("expected high-bit length validation error")
+	}
 
 	builder.Clear()
 	if len(builder.GetBytes()) != 0 {
 		t.Fatalf("expected clear to reset builder")
+	}
+}
+
+func TestCompositeMessageBuilderAndParserErrorCoverage(t *testing.T) {
+	builder := NewCompositeMessageBuilder()
+	if err := builder.AppendBytes([]byte("abc"), 0, -1); err == nil {
+		t.Fatalf("expected negative length error")
+	}
+	if err := builder.AppendBytes([]byte("abc"), -1, 1); err == nil {
+		t.Fatalf("expected negative offset error")
+	}
+	if err := builder.AppendBytes(nil, 0, 1); err == nil {
+		t.Fatalf("expected nil data error")
+	}
+	if err := builder.AppendBytes([]byte("abc"), 4, 1); err == nil {
+		t.Fatalf("expected out-of-range offset error")
+	}
+	if err := builder.AppendBytes([]byte("abc"), 2, 2); err == nil {
+		t.Fatalf("expected out-of-range end error")
+	}
+	if err := builder.AppendBytes([]byte("abc"), 1, math.MaxInt); err == nil {
+		t.Fatalf("expected overflow-safe range error")
+	}
+
+	parser := NewCompositeMessageParser()
+	if parsed, err := parser.Parse(nil); err != nil || parsed != 0 {
+		t.Fatalf("expected empty parse success, got parsed=%d err=%v", parsed, err)
+	}
+	if _, err := parser.Parse([]byte{0, 0, 0}); err == nil {
+		t.Fatalf("expected truncated header error")
+	}
+	if _, err := parser.ParseMessage(nil); err == nil {
+		t.Fatalf("expected nil message parse error")
 	}
 }
 
@@ -159,6 +201,96 @@ func TestFixAndNVFixBuildersCoverage(t *testing.T) {
 	customNVMap := customNVShredder.ToMap(customNVBuilder.Bytes())
 	if customNVMap["k"] != "v" {
 		t.Fatalf("unexpected custom NVFIX map: %+v", customNVMap)
+	}
+}
+
+func TestFixAndNVFixBuildersRangeErrorsCoverage(t *testing.T) {
+	fixBuilder := NewFIXBuilder()
+	if err := fixBuilder.AppendBytes(35, []byte("A"), -1, 1); err == nil {
+		t.Fatalf("expected negative offset range error")
+	}
+	if err := fixBuilder.AppendBytes(35, []byte("A"), 0, -1); err == nil {
+		t.Fatalf("expected negative length range error")
+	}
+	if err := fixBuilder.AppendBytes(35, []byte("A"), 2, 1); err == nil {
+		t.Fatalf("expected offset out-of-range error")
+	}
+	if err := fixBuilder.AppendBytes(35, []byte("A"), 0, 2); err == nil {
+		t.Fatalf("expected offset+length out-of-range error")
+	}
+
+	nvBuilder := NewNVFIXBuilder()
+	if err := nvBuilder.AppendBytes([]byte("k"), []byte("v"), -1, 1); err == nil {
+		t.Fatalf("expected negative value offset error")
+	}
+	if err := nvBuilder.AppendBytes([]byte("k"), []byte("v"), 0, -1); err == nil {
+		t.Fatalf("expected negative value length error")
+	}
+	if err := nvBuilder.AppendBytes([]byte("k"), []byte("v"), 2, 1); err == nil {
+		t.Fatalf("expected value offset out-of-range error")
+	}
+	if err := nvBuilder.AppendBytes([]byte("k"), []byte("v"), 0, 2); err == nil {
+		t.Fatalf("expected value offset+length out-of-range error")
+	}
+}
+
+func TestNVFIXBuilderGrowthPreservesExistingBytes(t *testing.T) {
+	builder := NewNVFIXBuilder()
+	if builder == nil {
+		t.Fatalf("expected NVFIX builder")
+	}
+
+	// Force a tiny capacity so the second append must trigger reallocation.
+	builder.capacity = 8
+	if err := builder.AppendStrings("a", "1"); err != nil {
+		t.Fatalf("first append failed: %v", err)
+	}
+	before := append([]byte(nil), builder.Bytes()...)
+
+	large := make([]byte, 64)
+	for idx := range large {
+		large[idx] = 'x'
+	}
+	if err := builder.AppendBytes([]byte("b"), large, 0, len(large)); err != nil {
+		t.Fatalf("second append failed: %v", err)
+	}
+
+	after := builder.Bytes()
+	if len(after) <= len(before) {
+		t.Fatalf("expected grown payload, before=%d after=%d", len(before), len(after))
+	}
+	if string(after[:len(before)]) != string(before) {
+		t.Fatalf("expected existing payload bytes preserved across growth")
+	}
+}
+
+func TestFIXBuilderGrowthPreservesExistingBytes(t *testing.T) {
+	builder := NewFIXBuilder()
+	if builder == nil {
+		t.Fatalf("expected FIX builder")
+	}
+
+	// Force a tiny capacity so the second append must trigger reallocation.
+	builder.capacity = 8
+	if err := builder.Append(8, "FIX.4.4"); err != nil {
+		t.Fatalf("first append failed: %v", err)
+	}
+	before := append([]byte(nil), builder.Bytes()...)
+
+	large := make([]byte, 64)
+	for idx := range large {
+		large[idx] = 'y'
+	}
+	if err := builder.AppendBytes(35, large, 0, len(large)); err != nil {
+		t.Fatalf("second append failed: %v", err)
+	}
+
+	after := builder.Bytes()
+	if len(after) <= len(before) {
+		t.Fatalf("expected grown payload, before=%d after=%d", len(before), len(after))
+	}
+	if string(after[:len(before)]) != string(before) {
+		t.Fatalf("expected existing payload bytes preserved across growth")
 	}
 }
 

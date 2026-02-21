@@ -3,6 +3,7 @@ package amps
 import (
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -196,6 +197,46 @@ func TestPostLogonRecoveryReplaysPublishStoreAndResubscribes(t *testing.T) {
 	}
 	if !foundPublishReplayed || !foundResubscribed {
 		t.Fatalf("expected publish replay and resubscribe states, got %+v", states)
+	}
+}
+
+func TestPostLogonRecoveryCoalescesConcurrentRequests(t *testing.T) {
+	client := NewClient("recovery-coalesce")
+
+	firstStarted := make(chan struct{})
+	firstRelease := make(chan struct{})
+	firstDone := make(chan struct{})
+	secondRan := atomic.Bool{}
+
+	client.DeferredExecution(func(callbackClient *Client, userData any) {
+		_ = callbackClient
+		_ = userData
+		close(firstStarted)
+		<-firstRelease
+		close(firstDone)
+	}, "first")
+
+	recoveryDone := make(chan struct{})
+	go func() {
+		client.postLogonRecovery()
+		close(recoveryDone)
+	}()
+
+	<-firstStarted
+	client.DeferredExecution(func(callbackClient *Client, userData any) {
+		_ = callbackClient
+		_ = userData
+		secondRan.Store(true)
+	}, "second")
+
+	// Concurrent recovery request while one is active.
+	client.postLogonRecovery()
+	close(firstRelease)
+
+	<-firstDone
+	<-recoveryDone
+	if !secondRan.Load() {
+		t.Fatalf("expected concurrent recovery request to trigger coalesced rerun")
 	}
 }
 

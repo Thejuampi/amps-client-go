@@ -21,8 +21,10 @@ Path B: Production hardening
 Path C: C++ parity lookup
 
 1. [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)
-2. [Reference: Client](reference_client.md)
-3. [Reference: HAClient](reference_ha_client.md)
+2. [Gap Register](gap_register.md)
+3. [Parity Acceptance](parity_acceptance.md)
+4. [Reference: Client](reference_client.md)
+5. [Reference: HAClient](reference_ha_client.md)
 
 ## Workflow Documents
 
@@ -36,6 +38,8 @@ Path C: C++ parity lookup
 - [Stores and Persistence](stores_and_persistence.md)
 - [Operational Playbook](operational_playbook.md)
 - [Testing and Validation](testing_and_validation.md) (coverage policy and validation commands)
+- [Parity Acceptance](parity_acceptance.md)
+- [Gap Register](gap_register.md)
 - [Supported Scope and Constraints](supported_scope.md)
 
 ## Reference Documents
@@ -51,4 +55,6 @@ Path C: C++ parity lookup
 
 - [Migration Guide](migration_guide.md)
 - [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)
+- [Gap Register](gap_register.md)
+- [Parity Acceptance](parity_acceptance.md)
 - [Supported Scope and Constraints](supported_scope.md)

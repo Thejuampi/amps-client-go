@@ -1,6 +1,8 @@
 package wal
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,3 +44,105 @@ func TestReadWriteCoverage(t *testing.T) {
 	}
 }
 
+func TestWALAppendReplayAndTruncateCoverage(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "ops.wal")
+	checkpointPath := filepath.Join(tempDir, "checkpoint.json")
+
+	if err := Append("", []byte("x"), false); err == nil {
+		t.Fatalf("expected append path error")
+	}
+	if err := Truncate(""); err == nil {
+		t.Fatalf("expected truncate path error")
+	}
+	if err := WriteAtomic("", []byte("x"), 0o600); err == nil {
+		t.Fatalf("expected writeatomic path error")
+	}
+	if err := Replay("", func([]byte) error { return nil }); err == nil {
+		t.Fatalf("expected replay path error")
+	}
+	if err := Replay(logPath, nil); err != nil {
+		t.Fatalf("expected nil replayer noop: %v", err)
+	}
+	if err := ReplayNoCopy(logPath, nil); err != nil {
+		t.Fatalf("expected nil no-copy replayer noop: %v", err)
+	}
+	if err := Replay(filepath.Join(tempDir, "missing.wal"), func([]byte) error { return nil }); err != nil {
+		t.Fatalf("expected missing wal replay to noop: %v", err)
+	}
+	if err := ReplayNoCopy(filepath.Join(tempDir, "missing-nocopy.wal"), func([]byte) error { return nil }); err != nil {
+		t.Fatalf("expected missing wal no-copy replay to noop: %v", err)
+	}
+	if err := Append(logPath, nil, false); err != nil {
+		t.Fatalf("expected empty append to noop: %v", err)
+	}
+
+	if err := Append(logPath, []byte("first\n"), true); err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	type op struct {
+		Type string `json:"type"`
+		ID   int    `json:"id"`
+	}
+	if err := AppendJSON(logPath, op{Type: "second", ID: 2}, true); err != nil {
+		t.Fatalf("append json failed: %v", err)
+	}
+
+	collected := make([]string, 0, 2)
+	if err := Replay(logPath, func(line []byte) error {
+		collected = append(collected, string(line))
+		return nil
+	}); err != nil {
+		t.Fatalf("replay failed: %v", err)
+	}
+	if len(collected) != 2 {
+		t.Fatalf("expected two replay lines, got %d", len(collected))
+	}
+
+	decoded := op{}
+	if err := json.Unmarshal([]byte(collected[1]), &decoded); err != nil {
+		t.Fatalf("unmarshal replayed json failed: %v", err)
+	}
+	if decoded.Type != "second" || decoded.ID != 2 {
+		t.Fatalf("unexpected replayed record: %+v", decoded)
+	}
+	if err := Replay(logPath, func([]byte) error { return errors.New("stop") }); err == nil {
+		t.Fatalf("expected replay apply error")
+	}
+	if err := ReplayNoCopy(logPath, func([]byte) error { return errors.New("stop") }); err == nil {
+		t.Fatalf("expected no-copy replay apply error")
+	}
+	if err := AppendJSON(logPath, map[string]any{"bad": make(chan int)}, false); err == nil {
+		t.Fatalf("expected append json marshal error")
+	}
+
+	if err := WriteAtomic(checkpointPath, []byte("checkpoint"), 0o600); err != nil {
+		t.Fatalf("writeatomic checkpoint failed: %v", err)
+	}
+	if data, err := os.ReadFile(checkpointPath); err != nil || string(data) != "checkpoint" {
+		t.Fatalf("unexpected checkpoint write: %q err=%v", string(data), err)
+	}
+
+	if err := Truncate(logPath); err != nil {
+		t.Fatalf("truncate failed: %v", err)
+	}
+	emptyCount := 0
+	if err := Replay(logPath, func([]byte) error {
+		emptyCount++
+		return nil
+	}); err != nil {
+		t.Fatalf("replay after truncate failed: %v", err)
+	}
+	if emptyCount != 0 {
+		t.Fatalf("expected no replay lines after truncate")
+	}
+	if err := Append(tempDir, []byte("x"), false); err == nil {
+		t.Fatalf("expected append error when path is a directory")
+	}
+	if err := Truncate(tempDir); err == nil {
+		t.Fatalf("expected truncate error when path is a directory")
+	}
+	if err := ReplayNoCopy("", func([]byte) error { return nil }); err == nil {
+		t.Fatalf("expected no-copy replay path error")
+	}
+}

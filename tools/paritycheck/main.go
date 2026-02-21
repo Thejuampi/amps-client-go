@@ -20,6 +20,19 @@ type manifestFile struct {
 	Entries       []manifestEntry `json:"entries"`
 }
 
+type behaviorGap struct {
+	ID           string `json:"id"`
+	Domain       string `json:"domain"`
+	Description  string `json:"description"`
+	PassCriteria string `json:"pass_criteria"`
+	Status       string `json:"status"`
+}
+
+type behaviorManifest struct {
+	Version string        `json:"version"`
+	Gaps    []behaviorGap `json:"gaps"`
+}
+
 type goTarget struct {
 	pkg    string
 	kind   string
@@ -121,6 +134,7 @@ func headerContainsSymbol(headerRoot string, headers []string, symbol string) bo
 
 func main() {
 	manifestPath := flag.String("manifest", filepath.Join("tools", "parity_manifest.json"), "path to parity manifest")
+	behaviorManifestPath := flag.String("behavior-manifest", filepath.Join("tools", "parity_behavior_manifest.json"), "path to behavior parity manifest")
 	headerRoot := flag.String("headers", filepath.Join("..", "amps-c++-client-5.3.5.1-Windows"), "path to C++ client root")
 	flag.Parse()
 
@@ -177,7 +191,37 @@ func main() {
 		fmt.Printf("GO_MISSING %s\n", item)
 	}
 
-	if len(missingHeader) > 0 || len(missingGo) > 0 {
+	behaviorData, err := os.ReadFile(*behaviorManifestPath)
+	if err != nil {
+		fmt.Printf("behavior manifest read failed: %v\n", err)
+		os.Exit(1)
+	}
+	behavior := behaviorManifest{}
+	if err = json.Unmarshal(behaviorData, &behavior); err != nil {
+		fmt.Printf("behavior manifest parse failed: %v\n", err)
+		os.Exit(1)
+	}
+	openGaps := []behaviorGap{}
+	for _, gap := range behavior.Gaps {
+		status := strings.ToLower(strings.TrimSpace(gap.Status))
+		if status != "closed" {
+			openGaps = append(openGaps, gap)
+		}
+	}
+	fmt.Printf("BEHAVIOR_ENTRIES=%d\n", len(behavior.Gaps))
+	fmt.Printf("OPEN_GAPS=%d\n", len(openGaps))
+	for _, gap := range openGaps {
+		id := strings.TrimSpace(gap.ID)
+		if id == "" {
+			id = strings.TrimSpace(gap.Domain)
+		}
+		if id == "" {
+			id = "unknown-gap"
+		}
+		fmt.Printf("OPEN_GAP %s\n", id)
+	}
+
+	if len(missingHeader) > 0 || len(missingGo) > 0 || len(openGaps) > 0 {
 		os.Exit(1)
 	}
 }

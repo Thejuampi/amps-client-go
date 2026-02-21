@@ -226,10 +226,13 @@ func TestThreadCountersDetachOnRemoteClose(t *testing.T) {
 	}) {
 		t.Fatalf("expected create counter to increment")
 	}
+	if !waitForReceiveActive(handle, 2*time.Second) {
+		t.Fatalf("expected receive routine to become active before remote close")
+	}
 
 	server.closeConn()
 
-	if !waitForCondition(2*time.Second, func() bool {
+	if !waitForCondition(5*time.Second, func() bool {
 		return GetThreadDetachCount() >= detachBefore+1
 	}) {
 		t.Fatalf("expected detach counter to increment on remote close")

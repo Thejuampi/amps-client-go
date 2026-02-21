@@ -442,57 +442,77 @@ func (client *Client) postLogonRecovery() {
 		return
 	}
 
-	state.lock.Lock()
-	state.manualDisconnect = false
-	store := state.publishStore
-	subscriptionManager := state.subscriptionManager
-	pendingRetry := append([]retryCommand(nil), state.pendingRetry...)
-	deferredExecutions := append([]deferredExecutionCall(nil), state.deferredExecutions...)
-	state.deferredExecutions = nil
-	state.pendingRetry = nil
-	state.lock.Unlock()
+	for {
+		state.lock.Lock()
+		if state.recoveryInProgress {
+			// Concurrent recovery requests are coalesced into one additional pass.
+			// The active recovery loop will observe this flag and rerun before it exits.
+			state.recoveryRequested = true
+			state.lock.Unlock()
+			return
+		}
+		state.recoveryInProgress = true
+		state.recoveryRequested = false
+		state.manualDisconnect = false
+		store := state.publishStore
+		subscriptionManager := state.subscriptionManager
+		pendingRetry := append([]retryCommand(nil), state.pendingRetry...)
+		deferredExecutions := append([]deferredExecutionCall(nil), state.deferredExecutions...)
+		state.deferredExecutions = nil
+		state.pendingRetry = nil
+		state.lock.Unlock()
 
-	if store != nil {
-		replayErr := store.Replay(func(command *Command) error {
-			client.lock.Lock()
-			defer client.lock.Unlock()
-			return client.send(command)
-		})
-		if replayErr != nil {
-			client.reportException(replayErr)
+		if store != nil {
+			replayErr := store.Replay(func(command *Command) error {
+				client.lock.Lock()
+				defer client.lock.Unlock()
+				return client.send(command)
+			})
+			if replayErr != nil {
+				client.reportException(replayErr)
+			}
+			client.notifyConnectionState(ConnectionStatePublishReplayed)
 		}
-		client.notifyConnectionState(ConnectionStatePublishReplayed)
-	}
 
-	if subscriptionManager != nil {
-		if resubscribeErr := subscriptionManager.Resubscribe(client); resubscribeErr != nil {
-			client.reportException(resubscribeErr)
-		} else {
-			client.notifyConnectionState(ConnectionStateResubscribed)
+		if subscriptionManager != nil {
+			if resubscribeErr := subscriptionManager.Resubscribe(client); resubscribeErr != nil {
+				client.reportException(resubscribeErr)
+			} else {
+				client.notifyConnectionState(ConnectionStateResubscribed)
+			}
 		}
-	}
 
-	for _, pending := range pendingRetry {
-		if pending.command == nil {
-			continue
+		for _, pending := range pendingRetry {
+			if pending.command == nil {
+				continue
+			}
+			if _, retryErr := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); retryErr != nil {
+				client.reportException(retryErr)
+			}
 		}
-		if _, retryErr := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); retryErr != nil {
-			client.reportException(retryErr)
-		}
-	}
 
-	for _, entry := range deferredExecutions {
-		if entry.callback == nil {
-			continue
+		for _, entry := range deferredExecutions {
+			if entry.callback == nil {
+				continue
+			}
+			func(entry deferredExecutionCall) {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						client.reportException(fmt.Errorf("deferred execution panic: %v", recovered))
+					}
+				}()
+				entry.callback(client, entry.userData)
+			}(entry)
 		}
-		func(entry deferredExecutionCall) {
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					client.reportException(fmt.Errorf("deferred execution panic: %v", recovered))
-				}
-			}()
-			entry.callback(client, entry.userData)
-		}(entry)
+
+		state.lock.Lock()
+		rerun := state.recoveryRequested
+		state.recoveryInProgress = false
+		state.recoveryRequested = false
+		state.lock.Unlock()
+		if !rerun {
+			return
+		}
 	}
 }
 

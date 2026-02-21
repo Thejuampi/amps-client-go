@@ -7,6 +7,25 @@ type Authenticator interface {
 	Completed(username string, password string, reason string)
 }
 
+// AuthenticatorCapabilities describes optional runtime capabilities of an authenticator implementation.
+type AuthenticatorCapabilities struct {
+	Mechanism   string
+	Platform    string
+	SupportsOS  bool
+	Limitations []string
+}
+
+// CapabilityAuthenticator exposes optional capability metadata.
+type CapabilityAuthenticator interface {
+	Capabilities() AuthenticatorCapabilities
+}
+
+// ChallengeAuthenticator exposes optional multi-step challenge-response operations.
+type ChallengeAuthenticator interface {
+	Begin(username string, password string) (token string, err error)
+	Continue(username string, challenge string) (token string, err error)
+}
+
 type _DefaultAuthenticator struct{}
 
 // Authenticate executes the exported authenticate operation.

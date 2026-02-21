@@ -65,8 +65,14 @@ Subscription compatibility:
 
 ## Validation
 
-Run symbol-level parity check:
+Run parity gates:
 
 ```bash
-go run ./tools/paritycheck -manifest tools/parity_manifest.json
+go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 ```
+
+Required gate output includes:
+
+- `MISSING_HEADER_SYMBOLS=0`
+- `MISSING_GO_SYMBOLS=0`
+- `OPEN_GAPS=0`

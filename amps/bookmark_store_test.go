@@ -3,6 +3,7 @@ package amps
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func bookmarkMessage(subID string, bookmark string) *Message {
@@ -141,5 +142,115 @@ func TestFileBookmarkStoreWrapperCoverage(t *testing.T) {
 	mmapStore := NewMMapBookmarkStore(path)
 	if mmapStore == nil || mmapStore.FileBookmarkStore == nil {
 		t.Fatalf("expected mmap bookmark store wrapper")
+	}
+}
+
+func TestFileBookmarkStoreWithOptionsWALReplayCoverage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmark_store_options.json")
+	options := FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        true,
+		CheckpointInterval: 100,
+		MMap: MMapOptions{
+			Enabled:     true,
+			InitialSize: 2048,
+		},
+	}
+
+	store := NewFileBookmarkStoreWithOptions(path, options)
+	first := bookmarkMessage("sub-opt", "40|1|")
+	second := bookmarkMessage("sub-opt", "40|2|")
+
+	firstSeq := store.Log(first)
+	secondSeq := store.Log(second)
+	if firstSeq == 0 || secondSeq == 0 || secondSeq <= firstSeq {
+		t.Fatalf("expected increasing sequence IDs, got %d and %d", firstSeq, secondSeq)
+	}
+
+	store.Discard("sub-opt", firstSeq)
+	store.Persisted("sub-opt", "40|2|")
+	store.SetServerVersion("6.1.0.0")
+
+	reloaded := NewFileBookmarkStoreWithOptions(path, options)
+	if mostRecent := reloaded.GetMostRecent("sub-opt"); mostRecent != "40|2|" {
+		t.Fatalf("expected persisted most recent bookmark, got %q", mostRecent)
+	}
+	if !reloaded.IsDiscarded(first) {
+		t.Fatalf("expected first bookmark to remain discarded after reload")
+	}
+	if !reloaded.IsDiscarded(second) {
+		t.Fatalf("expected persisted bookmark to be marked discarded after reload")
+	}
+	if reloaded.serverVersion != "6.1.0.0" {
+		t.Fatalf("expected persisted server version, got %q", reloaded.serverVersion)
+	}
+}
+
+func TestFileBookmarkStoreAppendWalSerializesWithStoreLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmark_store_locking.json")
+	store := NewFileBookmarkStoreWithOptions(path, FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        true,
+		CheckpointInterval: 100,
+	})
+
+	done := make(chan error, 1)
+	store.lock.Lock()
+	go func() {
+		done <- store.appendWal(bookmarkWalRecord{
+			Type:     "upsert",
+			SubID:    "sub-1",
+			Bookmark: "10|1|",
+			Record:   &bookmarkRecord{SeqNo: 1, Count: 1},
+		})
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("expected appendWal to block on store lock, err=%v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	store.lock.Unlock()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected appendWal to succeed after unlocking store, err=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for appendWal after unlocking store")
+	}
+}
+
+func TestFileBookmarkStoreSaveCheckpointErrorPreservesMutationCounter(t *testing.T) {
+	path := t.TempDir()
+	store := &FileBookmarkStore{
+		MemoryBookmarkStore: NewMemoryBookmarkStore(),
+		path:                path,
+		walPath:             filepath.Join(path, "bookmark_store.json.wal"),
+		options: FileStoreOptions{
+			UseWAL:             false,
+			SyncOnWrite:        false,
+			CheckpointInterval: 1,
+		},
+		opsSinceCheckpoint: 9,
+	}
+
+	store.records["sub-1"] = map[string]*bookmarkRecord{
+		"10|1|": {
+			SeqNo:     1,
+			Count:     1,
+			Discarded: false,
+		},
+	}
+	store.mostRecent["sub-1"] = "10|1|"
+	store.nextSeqNo = 2
+
+	if err := store.saveCheckpoint(); err == nil {
+		t.Fatalf("expected saveCheckpoint write failure when path is a directory")
+	}
+	if store.opsSinceCheckpoint != 9 {
+		t.Fatalf("expected mutation counter to remain unchanged on save failure, got %d", store.opsSinceCheckpoint)
 	}
 }

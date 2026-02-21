@@ -654,6 +654,26 @@ func TestClientLogonAckPathsCoverage(t *testing.T) {
 	}
 }
 
+func TestClientLogonTimeoutCoverage(t *testing.T) {
+	timeoutClient := NewClient("logon-timeout")
+	timeoutClient.connected = true
+	timeoutClient.connection = newTestConn()
+	timeoutClient.url, _ = url.Parse("tcp://localhost:9007/amps/json")
+	timeoutClient.SetErrorHandler(func(error) {})
+
+	start := time.Now()
+	err := timeoutClient.Logon(LogonParams{Timeout: 10})
+	if err == nil {
+		t.Fatalf("expected logon timeout error")
+	}
+	if elapsed := time.Since(start); elapsed < 5*time.Millisecond {
+		t.Fatalf("expected timeout wait, elapsed=%s", elapsed)
+	}
+	if !strings.Contains(err.Error(), "TimedOutError") {
+		t.Fatalf("expected timeout error classification, got %v", err)
+	}
+}
+
 func TestClientUtilityHelpersCoverage(t *testing.T) {
 	if unsafeStringFromBytes(nil) != "" {
 		t.Fatalf("expected empty unsafe string from nil bytes")

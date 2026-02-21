@@ -394,6 +394,15 @@ func TestSSLAndZlibEdgeCoverage(t *testing.T) {
 	if missing := SSLNew(context); missing != 0 {
 		t.Fatalf("expected missing-context ssl handle 0")
 	}
+	if result := SSLWrite(handle, []byte("abc")); result != -1 {
+		t.Fatalf("expected disconnected SSLWrite -1, got %d", result)
+	}
+	if code := SSLGetErrorCode(handle, -1); code == 0 {
+		t.Fatalf("expected SSL error code for disconnected write")
+	}
+	if errText := SSLGetError(); errText == "" {
+		t.Fatalf("expected SSL error text for disconnected write")
+	}
 
 	if result := SSLSetFD(handle, -1); result != -1 {
 		t.Fatalf("expected SSLSetFD invalid fd -1, got %d", result)
@@ -425,17 +434,36 @@ func TestSSLAndZlibEdgeCoverage(t *testing.T) {
 	if result := SSLWrite(handle, []byte("abc")); result != 3 {
 		t.Fatalf("expected SSLWrite length 3, got %d", result)
 	}
+	if pending := SSLPending(handle); pending != 3 {
+		t.Fatalf("expected SSLPending to reflect buffered bytes, got %d", pending)
+	}
+	readBuffer := make([]byte, 8)
+	if read := SSLRead(handle, readBuffer); read != 3 || string(readBuffer[:read]) != "abc" {
+		t.Fatalf("expected SSLRead loopback payload, read=%d data=%q", read, string(readBuffer[:read]))
+	}
+	if pending := SSLPending(handle); pending != 0 {
+		t.Fatalf("expected SSLPending to be drained after SSLRead, got %d", pending)
+	}
 	if result := SSLShutdown(0); result != -1 {
 		t.Fatalf("expected SSLShutdown invalid -1, got %d", result)
 	}
 	if result := SSLShutdown(handle); result != 1 {
 		t.Fatalf("expected SSLShutdown success, got %d", result)
 	}
+	if result := SSLWrite(handle, []byte("abc")); result != -1 {
+		t.Fatalf("expected shutdown SSLWrite -1, got %d", result)
+	}
+	if code := SSLGetErrorCode(handle, -1); code == 0 {
+		t.Fatalf("expected SSL error code for shutdown write")
+	}
+	if errText := SSLGetError(); errText == "" {
+		t.Fatalf("expected SSL error text for shutdown write")
+	}
 	if pending := SSLPending(0); pending != 0 {
 		t.Fatalf("expected SSLPending zero for invalid handle")
 	}
 	if pending := SSLPending(handle); pending != 0 {
-		t.Fatalf("expected SSLPending zero for compatibility layer")
+		t.Fatalf("expected SSLPending zero after drain, got %d", pending)
 	}
 	if code := SSLGetErrorCode(handle, -1); code == 0 {
 		t.Fatalf("expected SSL error code on negative result")

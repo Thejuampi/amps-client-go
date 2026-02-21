@@ -89,6 +89,14 @@ OpenSSL-style compatibility family:
 - `SSLConnect`, `SSLRead`, `SSLCtrl`, `SSLWrite`, `SSLShutdown`, `SSLPending`
 - `SSLFreeHandle`
 
+SSL emulation model:
+
+- Stateful context/handle lifecycle checks across create/bind/connect/read/write/shutdown/free calls.
+- FD binding semantics are validated before connect/read/write.
+- Pending/read/write behavior is emulated over Go transport semantics.
+- Error codes and error strings are normalized across SSL entrypoints.
+- The layer is behavioral compatibility, not OpenSSL ABI compatibility.
+
 ## Zlib Compatibility API
 
 Initialization and status:
@@ -125,12 +133,20 @@ Inflate family:
   - `GetThreadDetachCount`: receive-routine stops not consumed by a join wait.
 - `ClientDisconnect` performs a bounded wait for receive-loop termination when active.
 - Socket and thread identifier semantics follow Go runtime/transport behavior, not POSIX thread identity guarantees.
+- SSL entrypoints enforce ordered handle-state transitions and return deterministic compatibility errors for invalid lifecycle sequences.
+- `SSLWrite` uses a compatibility loopback into the same handle's read buffer so `SSLRead`/`SSLPending` can be deterministic in tests and emulation flows; this is not production SSL socket behavior.
 - SSL and zlib entrypoints provide compatibility contracts for AMPS client extension wiring; they are not a drop-in OpenSSL C ABI layer.
 
 ## Validation
 
-Run symbol-level parity check:
+Run parity gates:
 
 ```bash
-go run ./tools/paritycheck -manifest tools/parity_manifest.json
+go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 ```
+
+Required gate output includes:
+
+- `MISSING_HEADER_SYMBOLS=0`
+- `MISSING_GO_SYMBOLS=0`
+- `OPEN_GAPS=0`

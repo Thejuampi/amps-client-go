@@ -7,6 +7,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/amps/internal/wal"
 )
 
 type publishStoreRecord struct {
@@ -19,6 +21,13 @@ type publishStoreFileState struct {
 	NextSequence  uint64               `json:"next_sequence"`
 	ErrorOnGap    bool                 `json:"error_on_gap"`
 	Records       []publishStoreRecord `json:"records"`
+}
+
+type publishStoreWalRecord struct {
+	Type       string          `json:"type"`
+	Sequence   uint64          `json:"sequence,omitempty"`
+	Command    commandSnapshot `json:"command,omitempty"`
+	ErrorOnGap *bool           `json:"error_on_gap,omitempty"`
 }
 
 // MemoryPublishStore stores replay or bookmark state for recovery-oriented workflows.
@@ -235,53 +244,63 @@ func (store *MemoryPublishStore) ErrorOnPublishGap() bool {
 // FilePublishStore stores replay or bookmark state for recovery-oriented workflows.
 type FilePublishStore struct {
 	*MemoryPublishStore
-	path string
+	path               string
+	walPath            string
+	options            FileStoreOptions
+	opsSinceCheckpoint uint64
 }
 
 // NewFilePublishStore returns a new FilePublishStore.
 func NewFilePublishStore(path string) *FilePublishStore {
+	return NewFilePublishStoreWithOptions(path, defaultFileStoreOptions())
+}
+
+// NewFilePublishStoreWithOptions returns a new FilePublishStore with explicit options.
+func NewFilePublishStoreWithOptions(path string, options FileStoreOptions) *FilePublishStore {
 	fileStore := &FilePublishStore{
 		MemoryPublishStore: NewMemoryPublishStore(),
 		path:               path,
+		walPath:            path + ".wal",
+		options:            normalizeFileStoreOptions(options),
 	}
 	_ = fileStore.load()
 	return fileStore
 }
 
-// Store returns the configured store instance used by the receiver.
-func (store *FilePublishStore) Store(command *Command) (uint64, error) {
-	sequence, err := store.MemoryPublishStore.Store(command)
-	if err != nil {
-		return 0, err
+func (store *FilePublishStore) appendWal(record publishStoreWalRecord) error {
+	if store == nil || store.walPath == "" || !store.options.UseWAL {
+		return nil
 	}
-	if err := store.save(); err != nil {
-		return sequence, err
-	}
-	return sequence, nil
+	store.lock.Lock()
+	defer store.lock.Unlock()
+	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
 }
 
-// DiscardUpTo executes the exported discardupto operation.
-func (store *FilePublishStore) DiscardUpTo(sequence uint64) error {
-	if err := store.MemoryPublishStore.DiscardUpTo(sequence); err != nil {
-		return err
+func (store *FilePublishStore) bumpMutationAndMaybeCheckpoint() error {
+	if store == nil {
+		return nil
 	}
-	return store.save()
+
+	store.lock.Lock()
+	store.opsSinceCheckpoint++
+	ops := store.opsSinceCheckpoint
+	checkpointInterval := store.options.CheckpointInterval
+	useWAL := store.options.UseWAL
+	store.lock.Unlock()
+
+	if !useWAL || ops >= checkpointInterval {
+		return store.saveCheckpoint()
+	}
+	return nil
 }
 
-// SetErrorOnPublishGap sets error on publish gap on the receiver.
-func (store *FilePublishStore) SetErrorOnPublishGap(enabled bool) {
-	store.MemoryPublishStore.SetErrorOnPublishGap(enabled)
-	_ = store.save()
-}
-
-func (store *FilePublishStore) save() error {
+func (store *FilePublishStore) saveCheckpoint() error {
 	if store == nil || store.path == "" {
 		return nil
 	}
 
 	store.lock.Lock()
 	defer store.lock.Unlock()
-
 	sequences := make([]uint64, 0, len(store.entries))
 	for sequence := range store.entries {
 		sequences = append(sequences, sequence)
@@ -307,39 +326,176 @@ func (store *FilePublishStore) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(store.path, data, 0600)
+	if store.options.MMap.Enabled {
+		if err = mmapWriteFile(store.path, data, 0600, store.options.MMap.InitialSize); err != nil {
+			return err
+		}
+	} else {
+		if err = wal.WriteAtomic(store.path, data, 0600); err != nil {
+			return err
+		}
+	}
+	if store.options.UseWAL {
+		if err = wal.Truncate(store.walPath); err != nil {
+			return err
+		}
+	}
+	store.opsSinceCheckpoint = 0
+	return nil
 }
 
-func (store *FilePublishStore) load() error {
+func (store *FilePublishStore) loadCheckpoint() error {
 	if store == nil || store.path == "" {
 		return nil
 	}
 
-	data, err := os.ReadFile(store.path)
+	var (
+		data []byte
+		err  error
+	)
+	if store.options.MMap.Enabled {
+		data, err = mmapReadFile(store.path)
+	} else {
+		data, err = os.ReadFile(store.path)
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		return err
 	}
+	if len(data) == 0 {
+		return nil
+	}
 
 	state := publishStoreFileState{}
-	if err := json.Unmarshal(data, &state); err != nil {
+	if err = json.Unmarshal(data, &state); err != nil {
 		return err
 	}
-
-	store.lock.Lock()
-	defer store.lock.Unlock()
-
-	store.entries = make(map[uint64]*Command)
-	for _, record := range state.Records {
-		store.entries[record.Sequence] = commandFromSnapshot(record.Command)
-	}
-	store.lastPersisted = state.LastPersisted
 	if state.NextSequence == 0 {
 		state.NextSequence = 1
 	}
+
+	store.lock.Lock()
+	store.entries = make(map[uint64]*Command)
+	for _, record := range state.Records {
+		command := commandFromSnapshot(record.Command)
+		command.SetSequenceID(record.Sequence)
+		store.entries[record.Sequence] = command
+	}
+	store.lastPersisted = state.LastPersisted
 	store.nextSequence = state.NextSequence
 	store.errorOnPublishGap = state.ErrorOnGap
+	store.lock.Unlock()
 	return nil
+}
+
+func (store *FilePublishStore) applyWalRecord(record publishStoreWalRecord) {
+	store.lock.Lock()
+	defer store.lock.Unlock()
+
+	switch record.Type {
+	case "store":
+		sequence := record.Sequence
+		if sequence == 0 && record.Command.SequenceID != nil {
+			sequence = *record.Command.SequenceID
+		}
+		if sequence == 0 {
+			return
+		}
+		command := commandFromSnapshot(record.Command)
+		command.SetSequenceID(sequence)
+		store.entries[sequence] = command
+		if sequence >= store.nextSequence {
+			store.nextSequence = sequence + 1
+		}
+	case "discard":
+		if store.errorOnPublishGap && record.Sequence < store.lastPersisted {
+			return
+		}
+		for key := range store.entries {
+			if key <= record.Sequence {
+				delete(store.entries, key)
+			}
+		}
+		if record.Sequence > store.lastPersisted {
+			store.lastPersisted = record.Sequence
+		}
+	case "error_on_gap":
+		if record.ErrorOnGap != nil {
+			store.errorOnPublishGap = *record.ErrorOnGap
+		}
+	}
+}
+
+func (store *FilePublishStore) replayWal() error {
+	if store == nil || store.walPath == "" || !store.options.UseWAL {
+		return nil
+	}
+	return wal.ReplayNoCopy(store.walPath, func(line []byte) error {
+		record := publishStoreWalRecord{}
+		if err := json.Unmarshal(line, &record); err != nil {
+			return err
+		}
+		store.applyWalRecord(record)
+		return nil
+	})
+}
+
+func (store *FilePublishStore) load() error {
+	if store == nil {
+		return nil
+	}
+	if err := store.loadCheckpoint(); err != nil {
+		return err
+	}
+	return store.replayWal()
+}
+
+// Store returns the configured store instance used by the receiver.
+func (store *FilePublishStore) Store(command *Command) (uint64, error) {
+	sequence, err := store.MemoryPublishStore.Store(command)
+	if err != nil {
+		return 0, err
+	}
+
+	snapshot := snapshotFromCommand(command)
+	snapshot.SequenceID = &sequence
+	if err = store.appendWal(publishStoreWalRecord{
+		Type:     "store",
+		Sequence: sequence,
+		Command:  snapshot,
+	}); err != nil {
+		return sequence, err
+	}
+	if err = store.bumpMutationAndMaybeCheckpoint(); err != nil {
+		return sequence, err
+	}
+	return sequence, nil
+}
+
+// DiscardUpTo executes the exported discardupto operation.
+func (store *FilePublishStore) DiscardUpTo(sequence uint64) error {
+	if err := store.MemoryPublishStore.DiscardUpTo(sequence); err != nil {
+		return err
+	}
+	if err := store.appendWal(publishStoreWalRecord{
+		Type:     "discard",
+		Sequence: sequence,
+	}); err != nil {
+		return err
+	}
+	return store.bumpMutationAndMaybeCheckpoint()
+}
+
+// SetErrorOnPublishGap sets error on publish gap on the receiver.
+func (store *FilePublishStore) SetErrorOnPublishGap(enabled bool) {
+	store.MemoryPublishStore.SetErrorOnPublishGap(enabled)
+	if err := store.appendWal(publishStoreWalRecord{
+		Type:       "error_on_gap",
+		ErrorOnGap: &enabled,
+	}); err != nil {
+		return
+	}
+	_ = store.bumpMutationAndMaybeCheckpoint()
 }

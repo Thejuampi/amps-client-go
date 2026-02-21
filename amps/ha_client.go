@@ -2,12 +2,14 @@ package amps
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // HAClient wraps Client with reconnect, replay, and failover behavior.
 type HAClient struct {
 	lock                   sync.Mutex
+	connectAndLogonLock    sync.Mutex
 	client                 *Client
 	timeout                time.Duration
 	reconnectDelay         time.Duration
@@ -15,8 +17,8 @@ type HAClient struct {
 	logonOptions           LogonParams
 	hasLogonOptions        bool
 	serverChooser          ServerChooser
-	reconnecting           bool
-	stopped                bool
+	reconnecting           atomic.Bool
+	stopped                atomic.Bool
 }
 
 // NewHAClient returns a new HAClient.
@@ -40,27 +42,21 @@ func (ha *HAClient) handleDisconnect(err error) {
 	if ha == nil {
 		return
 	}
-
-	ha.lock.Lock()
-	if ha.stopped || ha.reconnecting {
-		ha.lock.Unlock()
+	if ha.stopped.Load() {
 		return
 	}
-	ha.reconnecting = true
-	ha.lock.Unlock()
+	if !ha.reconnecting.CompareAndSwap(false, true) {
+		return
+	}
 
 	go func() {
-		defer func() {
-			ha.lock.Lock()
-			ha.reconnecting = false
-			ha.lock.Unlock()
-		}()
+		defer ha.reconnecting.Store(false)
 		_ = ha.ConnectAndLogon()
 		_ = err
 	}()
 }
 
-func (ha *HAClient) connectAndLogonOnce(uri string, authenticator Authenticator) error {
+func (ha *HAClient) connectAndLogonOnce(uri string, authenticator Authenticator, options LogonParams, hasLogonOptions bool) error {
 	if ha == nil || ha.client == nil {
 		return NewError(CommandError, "nil HAClient")
 	}
@@ -72,11 +68,6 @@ func (ha *HAClient) connectAndLogonOnce(uri string, authenticator Authenticator)
 	if err := ha.client.Connect(uri); err != nil {
 		return err
 	}
-
-	ha.lock.Lock()
-	options := ha.logonOptions
-	hasLogonOptions := ha.hasLogonOptions
-	ha.lock.Unlock()
 	if authenticator != nil {
 		options.Authenticator = authenticator
 	}
@@ -93,16 +84,7 @@ func (ha *HAClient) connectAndLogonOnce(uri string, authenticator Authenticator)
 	return err
 }
 
-func (ha *HAClient) reconnectWait(uri string) (time.Duration, error) {
-	if ha == nil {
-		return 0, nil
-	}
-
-	ha.lock.Lock()
-	strategy := ha.reconnectDelayStrategy
-	delay := ha.reconnectDelay
-	ha.lock.Unlock()
-
+func (ha *HAClient) reconnectWait(strategy ReconnectDelayStrategy, delay time.Duration, uri string) (time.Duration, error) {
 	if strategy != nil {
 		return strategy.GetConnectWaitDuration(uri)
 	}
@@ -114,11 +96,17 @@ func (ha *HAClient) ConnectAndLogon() error {
 	if ha == nil || ha.client == nil {
 		return NewError(CommandError, "nil HAClient")
 	}
-
 	ha.lock.Lock()
 	chooser := ha.serverChooser
 	timeout := ha.timeout
+	strategy := ha.reconnectDelayStrategy
+	delay := ha.reconnectDelay
+	options := ha.logonOptions
+	hasLogonOptions := ha.hasLogonOptions
 	ha.lock.Unlock()
+
+	ha.connectAndLogonLock.Lock()
+	defer ha.connectAndLogonLock.Unlock()
 
 	deadline := time.Time{}
 	if timeout > 0 {
@@ -127,10 +115,7 @@ func (ha *HAClient) ConnectAndLogon() error {
 
 	var lastErr error
 	for {
-		ha.lock.Lock()
-		stopped := ha.stopped
-		ha.lock.Unlock()
-		if stopped {
+		if ha.stopped.Load() {
 			return NewError(DisconnectedError, "HAClient is stopped")
 		}
 
@@ -147,14 +132,10 @@ func (ha *HAClient) ConnectAndLogon() error {
 			return NewError(ConnectionError, "server chooser does not contain any URIs")
 		}
 
-		if err := ha.connectAndLogonOnce(uri, authenticator); err == nil {
+		if err := ha.connectAndLogonOnce(uri, authenticator, options, hasLogonOptions); err == nil {
 			if chooser != nil {
 				chooser.ReportSuccess(ha.client.GetConnectionInfo())
 			}
-
-			ha.lock.Lock()
-			strategy := ha.reconnectDelayStrategy
-			ha.lock.Unlock()
 			if strategy != nil {
 				strategy.Reset()
 			}
@@ -170,7 +151,7 @@ func (ha *HAClient) ConnectAndLogon() error {
 			return lastErr
 		}
 
-		wait, delayErr := ha.reconnectWait(uri)
+		wait, delayErr := ha.reconnectWait(strategy, delay, uri)
 		if delayErr != nil {
 			return delayErr
 		}
@@ -339,9 +320,7 @@ func (ha *HAClient) Disconnect() error {
 	if ha == nil || ha.client == nil {
 		return nil
 	}
-	ha.lock.Lock()
-	ha.stopped = true
-	ha.lock.Unlock()
+	ha.stopped.Store(true)
 	return ha.client.Disconnect()
 }
 

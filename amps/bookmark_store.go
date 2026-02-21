@@ -6,12 +6,25 @@ import (
 	"os"
 	"sort"
 	"sync"
+
+	"github.com/Thejuampi/amps-client-go/amps/internal/wal"
 )
 
 type bookmarkRecord struct {
 	SeqNo     uint64 `json:"seq_no"`
 	Count     uint64 `json:"count"`
 	Discarded bool   `json:"discarded"`
+}
+
+type bookmarkWalRecord struct {
+	Type          string          `json:"type"`
+	SubID         string          `json:"sub_id,omitempty"`
+	Bookmark      string          `json:"bookmark,omitempty"`
+	Record        *bookmarkRecord `json:"record,omitempty"`
+	DiscardedUpTo uint64          `json:"discarded_up_to,omitempty"`
+	SubIDs        []string        `json:"sub_ids,omitempty"`
+	ServerVersion string          `json:"server_version,omitempty"`
+	NextSeqNo     uint64          `json:"next_seq_no,omitempty"`
 }
 
 // MemoryBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
@@ -280,27 +293,95 @@ type bookmarkFileState struct {
 // FileBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
 type FileBookmarkStore struct {
 	*MemoryBookmarkStore
-	path string
+	path               string
+	walPath            string
+	options            FileStoreOptions
+	opsSinceCheckpoint uint64
 }
 
 // NewFileBookmarkStore returns a new FileBookmarkStore.
 func NewFileBookmarkStore(path string) *FileBookmarkStore {
+	return NewFileBookmarkStoreWithOptions(path, defaultFileStoreOptions())
+}
+
+// NewFileBookmarkStoreWithOptions returns a new FileBookmarkStore with explicit options.
+func NewFileBookmarkStoreWithOptions(path string, options FileStoreOptions) *FileBookmarkStore {
 	store := &FileBookmarkStore{
 		MemoryBookmarkStore: NewMemoryBookmarkStore(),
 		path:                path,
+		walPath:             path + ".wal",
+		options:             normalizeFileStoreOptions(options),
 	}
 	_ = store.load()
 	return store
 }
 
-func (store *FileBookmarkStore) save() error {
+func (store *FileBookmarkStore) loadCheckpoint() error {
+	if store == nil || store.path == "" {
+		return nil
+	}
+
+	var (
+		data []byte
+		err  error
+	)
+	if store.options.MMap.Enabled {
+		data, err = mmapReadFile(store.path)
+	} else {
+		data, err = os.ReadFile(store.path)
+	}
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+
+	state := bookmarkFileState{}
+	if err = json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+
+	store.lock.Lock()
+	defer store.lock.Unlock()
+
+	if state.NextSeqNo == 0 {
+		state.NextSeqNo = 1
+	}
+
+	store.nextSeqNo = state.NextSeqNo
+	store.records = make(map[string]map[string]*bookmarkRecord)
+	for _, entry := range state.Entries {
+		records := store.records[entry.SubID]
+		if records == nil {
+			records = make(map[string]*bookmarkRecord)
+			store.records[entry.SubID] = records
+		}
+		record := entry.Record
+		records[entry.Bookmark] = &record
+	}
+	store.mostRecent = make(map[string]string)
+	for key, value := range state.MostRecent {
+		store.mostRecent[key] = value
+	}
+	store.discardedUpTo = make(map[string]uint64)
+	for key, value := range state.DiscardedUpTo {
+		store.discardedUpTo[key] = value
+	}
+	store.serverVersion = state.ServerVersion
+	return nil
+}
+
+func (store *FileBookmarkStore) saveCheckpoint() error {
 	if store == nil || store.path == "" {
 		return nil
 	}
 
 	store.lock.Lock()
 	defer store.lock.Unlock()
-
 	subIDs := make([]string, 0, len(store.records))
 	for subID := range store.records {
 		subIDs = append(subIDs, subID)
@@ -342,95 +423,206 @@ func (store *FileBookmarkStore) save() error {
 	if err != nil {
 		return err
 	}
-
-	return os.WriteFile(store.path, data, 0600)
+	if store.options.MMap.Enabled {
+		if err = mmapWriteFile(store.path, data, 0600, store.options.MMap.InitialSize); err != nil {
+			return err
+		}
+	} else {
+		if err = wal.WriteAtomic(store.path, data, 0600); err != nil {
+			return err
+		}
+	}
+	if store.options.UseWAL {
+		if err = wal.Truncate(store.walPath); err != nil {
+			return err
+		}
+	}
+	store.opsSinceCheckpoint = 0
+	return nil
 }
 
-func (store *FileBookmarkStore) load() error {
-	if store == nil || store.path == "" {
+func (store *FileBookmarkStore) appendWal(record bookmarkWalRecord) error {
+	if store == nil || !store.options.UseWAL || store.walPath == "" {
+		return nil
+	}
+	store.lock.Lock()
+	defer store.lock.Unlock()
+	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
+}
+
+func (store *FileBookmarkStore) bumpMutationAndMaybeCheckpoint() error {
+	if store == nil {
 		return nil
 	}
 
-	data, err := os.ReadFile(store.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
+	store.lock.Lock()
+	store.opsSinceCheckpoint++
+	ops := store.opsSinceCheckpoint
+	checkpointInterval := store.options.CheckpointInterval
+	useWAL := store.options.UseWAL
+	store.lock.Unlock()
 
-	state := bookmarkFileState{}
-	if err := json.Unmarshal(data, &state); err != nil {
-		return err
+	if !useWAL || ops >= checkpointInterval {
+		return store.saveCheckpoint()
 	}
+	return nil
+}
 
+func (store *FileBookmarkStore) applyWalRecord(record bookmarkWalRecord) {
 	store.lock.Lock()
 	defer store.lock.Unlock()
 
-	if state.NextSeqNo == 0 {
-		state.NextSeqNo = 1
-	}
-
-	store.nextSeqNo = state.NextSeqNo
-	store.records = make(map[string]map[string]*bookmarkRecord)
-	for _, entry := range state.Entries {
-		records := store.records[entry.SubID]
-		if records == nil {
-			records = make(map[string]*bookmarkRecord)
-			store.records[entry.SubID] = records
+	switch record.Type {
+	case "upsert":
+		if record.SubID == "" || record.Bookmark == "" || record.Record == nil {
+			return
 		}
-		record := entry.Record
-		records[entry.Bookmark] = &record
+		records := store.ensureSubID(record.SubID)
+		copied := *record.Record
+		records[record.Bookmark] = &copied
+		store.mostRecent[record.SubID] = record.Bookmark
+		if copied.SeqNo > store.discardedUpTo[record.SubID] && copied.Discarded {
+			store.discardedUpTo[record.SubID] = copied.SeqNo
+		}
+		if copied.SeqNo >= store.nextSeqNo {
+			store.nextSeqNo = copied.SeqNo + 1
+		}
+	case "discard_upto":
+		if record.SubID == "" {
+			return
+		}
+		if record.DiscardedUpTo > store.discardedUpTo[record.SubID] {
+			store.discardedUpTo[record.SubID] = record.DiscardedUpTo
+		}
+	case "purge":
+		if len(record.SubIDs) == 0 {
+			store.records = make(map[string]map[string]*bookmarkRecord)
+			store.mostRecent = make(map[string]string)
+			store.discardedUpTo = make(map[string]uint64)
+			store.nextSeqNo = 1
+			return
+		}
+		for _, subID := range record.SubIDs {
+			delete(store.records, subID)
+			delete(store.mostRecent, subID)
+			delete(store.discardedUpTo, subID)
+		}
+	case "server_version":
+		store.serverVersion = record.ServerVersion
+	case "next_seq":
+		if record.NextSeqNo > store.nextSeqNo {
+			store.nextSeqNo = record.NextSeqNo
+		}
 	}
-	store.mostRecent = make(map[string]string)
-	for key, value := range state.MostRecent {
-		store.mostRecent[key] = value
-	}
-	store.discardedUpTo = make(map[string]uint64)
-	for key, value := range state.DiscardedUpTo {
-		store.discardedUpTo[key] = value
-	}
-	store.serverVersion = state.ServerVersion
+}
 
-	return nil
+func (store *FileBookmarkStore) replayWal() error {
+	if store == nil || !store.options.UseWAL || store.walPath == "" {
+		return nil
+	}
+	return wal.ReplayNoCopy(store.walPath, func(line []byte) error {
+		record := bookmarkWalRecord{}
+		if err := json.Unmarshal(line, &record); err != nil {
+			return err
+		}
+		store.applyWalRecord(record)
+		return nil
+	})
+}
+
+func (store *FileBookmarkStore) load() error {
+	if store == nil {
+		return nil
+	}
+	if err := store.loadCheckpoint(); err != nil {
+		return err
+	}
+	return store.replayWal()
+}
+
+func (store *FileBookmarkStore) appendUpsertFor(subID string, bookmark string) error {
+	if store == nil || subID == "" || bookmark == "" {
+		return nil
+	}
+	store.lock.Lock()
+	var recordCopy *bookmarkRecord
+	if records := store.records[subID]; records != nil && records[bookmark] != nil {
+		value := *records[bookmark]
+		recordCopy = &value
+	}
+	store.lock.Unlock()
+	if recordCopy == nil {
+		return nil
+	}
+	return store.appendWal(bookmarkWalRecord{
+		Type:     "upsert",
+		SubID:    subID,
+		Bookmark: bookmark,
+		Record:   recordCopy,
+	})
 }
 
 // Log executes the exported log operation.
 func (store *FileBookmarkStore) Log(message *Message) uint64 {
 	seqNo := store.MemoryBookmarkStore.Log(message)
-	_ = store.save()
+	subID, bookmark, ok := bookmarkStoreKey(message)
+	if ok {
+		_ = store.appendUpsertFor(subID, bookmark)
+	}
+	_ = store.bumpMutationAndMaybeCheckpoint()
 	return seqNo
 }
 
 // Discard executes the exported discard operation.
 func (store *FileBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	store.MemoryBookmarkStore.Discard(subID, bookmarkSeqNo)
-	_ = store.save()
+	_ = store.appendWal(bookmarkWalRecord{
+		Type:          "discard_upto",
+		SubID:         subID,
+		DiscardedUpTo: bookmarkSeqNo,
+	})
+	_ = store.bumpMutationAndMaybeCheckpoint()
 }
 
 // DiscardMessage executes the exported discardmessage operation.
 func (store *FileBookmarkStore) DiscardMessage(message *Message) {
 	store.MemoryBookmarkStore.DiscardMessage(message)
-	_ = store.save()
+	subID, bookmark, ok := bookmarkStoreKey(message)
+	if ok {
+		_ = store.appendUpsertFor(subID, bookmark)
+	}
+	_ = store.bumpMutationAndMaybeCheckpoint()
 }
 
 // Purge executes the exported purge operation.
 func (store *FileBookmarkStore) Purge(subID ...string) {
 	store.MemoryBookmarkStore.Purge(subID...)
-	_ = store.save()
+	copied := append([]string(nil), subID...)
+	_ = store.appendWal(bookmarkWalRecord{
+		Type:   "purge",
+		SubIDs: copied,
+	})
+	_ = store.bumpMutationAndMaybeCheckpoint()
 }
 
 // Persisted executes the exported persisted operation.
 func (store *FileBookmarkStore) Persisted(subID string, bookmark string) string {
 	value := store.MemoryBookmarkStore.Persisted(subID, bookmark)
-	_ = store.save()
+	if value != "" {
+		_ = store.appendUpsertFor(subID, value)
+	}
+	_ = store.bumpMutationAndMaybeCheckpoint()
 	return value
 }
 
 // SetServerVersion sets server version on the receiver.
 func (store *FileBookmarkStore) SetServerVersion(version string) {
 	store.MemoryBookmarkStore.SetServerVersion(version)
-	_ = store.save()
+	_ = store.appendWal(bookmarkWalRecord{
+		Type:          "server_version",
+		ServerVersion: version,
+	})
+	_ = store.bumpMutationAndMaybeCheckpoint()
 }
 
 // MMapBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
@@ -440,7 +632,9 @@ type MMapBookmarkStore struct {
 
 // NewMMapBookmarkStore returns a new MMapBookmarkStore.
 func NewMMapBookmarkStore(path string) *MMapBookmarkStore {
-	return &MMapBookmarkStore{FileBookmarkStore: NewFileBookmarkStore(path)}
+	options := defaultFileStoreOptions()
+	options.MMap.Enabled = true
+	return &MMapBookmarkStore{FileBookmarkStore: NewFileBookmarkStoreWithOptions(path, options)}
 }
 
 // RingBookmarkStore stores replay or bookmark state for recovery-oriented workflows.

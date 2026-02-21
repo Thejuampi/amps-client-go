@@ -806,7 +806,17 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		client.command.header.correlationID = []byte(client.logonCorrelationID)
 	}
 
-	doneLoggingIn := make(chan error)
+	doneLoggingIn := make(chan error, 1)
+	signalLogonResult := func(logonErr error) {
+		select {
+		case doneLoggingIn <- logonErr:
+		default:
+		}
+	}
+	logonTimeout := time.Duration(0)
+	if hasParams && optionalParams[0].Timeout > 0 {
+		logonTimeout = time.Duration(optionalParams[0].Timeout) * time.Millisecond
+	}
 
 	client.logging = true
 	logonRetries := 3
@@ -829,7 +839,7 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 					} else {
 						client.nameHashValue = unsafeStringHash(client.nameHash)
 					}
-					doneLoggingIn <- nil
+					signalLogonResult(nil)
 
 				case "failure":
 					if hasReason {
@@ -837,13 +847,13 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 					} else {
 						loggingError = NewError(AuthenticationError)
 					}
-					doneLoggingIn <- loggingError
+					signalLogonResult(loggingError)
 
 				default:
 					logonRetries--
 					if logonRetries == 0 {
 						loggingError = NewError(RetryOperationError, "Exceeded the maximum of logon retry attempts (3)")
-						doneLoggingIn <- loggingError
+						signalLogonResult(loggingError)
 						return
 					}
 
@@ -869,7 +879,16 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		return NewError(ConnectionError, err)
 	}
 
-	logonFailed := <-doneLoggingIn
+	var logonFailed error
+	if logonTimeout > 0 {
+		select {
+		case logonFailed = <-doneLoggingIn:
+		case <-time.After(logonTimeout):
+			logonFailed = NewError(TimedOutError, "logon timed out waiting for processed ack")
+		}
+	} else {
+		logonFailed = <-doneLoggingIn
+	}
 	client.logging = false
 
 	client.routes.Delete(commandID)

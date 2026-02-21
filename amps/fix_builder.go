@@ -30,8 +30,9 @@ func (fmb *FixMessageBuilder) checkCapacity(bytesNeeded int) {
 		for fmb.capacity-fmb.size < bytesNeeded {
 			fmb.capacity *= 2
 		}
+		// Preserve existing payload bytes while growing backing capacity.
 		newBuff := make([]byte, 0, fmb.capacity)
-		copy(newBuff, fmb.message)
+		newBuff = append(newBuff, fmb.message...)
 		fmb.message = newBuff
 	}
 }
@@ -61,6 +62,9 @@ func (fmb *FixMessageBuilder) Data() string {
 func (fmb *FixMessageBuilder) AppendBytes(tag int, value []byte, offset int, length int) error {
 	if tag < 0 {
 		return errors.New("Illegal argument: negative tag value used in FIX builder")
+	}
+	if offset < 0 || length < 0 || offset > len(value) || offset+length > len(value) {
+		return errors.New("Illegal argument: invalid FIX value range")
 	}
 
 	tagValue := []byte(strconv.Itoa(tag))

@@ -64,45 +64,86 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 
 	state := inHeader
 	var keyStart, keyEnd, valueStart, valueEnd int
+	escaped := false
 	for index := 0; index < len(array); index++ {
 		character := array[index]
-		switch character {
-		case '"':
-			switch state {
-			case inHeader:
+
+		switch state {
+		case inHeader:
+			switch character {
+			case '"':
 				state = inKey
 				keyStart = index + 1
-			case inKey:
+				escaped = false
+			case '{':
+				// start of header object
+			case '}':
+				return array[index+1:], nil
+			default:
+				if !isJSONWhitespace(character) && character != ',' {
+					return array, errors.New("Malformed AMPS header")
+				}
+			}
+
+		case inKey:
+			if escaped {
+				escaped = false
+				continue
+			}
+			if character == '\\' {
+				escaped = true
+				continue
+			}
+			if character == '"' {
 				state = afterKey
 				keyEnd = index
-			case inValue:
-				state = inValueString
-				valueStart = index + 1
-			case inValueString:
-				state = inHeader
-				valueEnd = index
-				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
 			}
-		case ':':
-			if state == afterKey {
+
+		case afterKey:
+			if character == ':' {
 				state = inValue
 				valueStart = index + 1
+			} else if !isJSONWhitespace(character) {
+				return array, errors.New("Malformed AMPS header")
 			}
-		case ',':
-			if state == inValue {
+
+		case inValue:
+			switch character {
+			case '"':
+				state = inValueString
+				valueStart = index + 1
+				escaped = false
+			case ',':
+				state = inHeader
+				valueEnd = index
+				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
+			case '}':
+				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:index])
+				return array[index+1:], nil
+			}
+
+		case inValueString:
+			if escaped {
+				escaped = false
+				continue
+			}
+			if character == '\\' {
+				escaped = true
+				continue
+			}
+			if character == '"' {
 				state = inHeader
 				valueEnd = index
 				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
 			}
-		case '}':
-			if index > 0 && array[index-1] != '"' {
-				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:index])
-			}
-			return array[index+1:], nil
 		}
 	}
 
 	return array, errors.New("Unexpected end of AMPS header")
+}
+
+func isJSONWhitespace(character byte) bool {
+	return character == ' ' || character == '\n' || character == '\r' || character == '\t'
 }
 
 // Copy executes the exported copy operation.

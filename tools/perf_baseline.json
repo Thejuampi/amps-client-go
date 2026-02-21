@@ -1,0 +1,32 @@
+{
+  "benchmarks": {
+    "BenchmarkHeaderHotWrite": {
+      "ns_op": 291.6,
+      "allocs_op": 3.0
+    },
+    "BenchmarkHeaderHotParse": {
+      "ns_op": 166.6,
+      "allocs_op": 0.0
+    },
+    "BenchmarkRouteHotSingle": {
+      "ns_op": 132.6,
+      "allocs_op": 3.0
+    },
+    "BenchmarkRouteHotMultiSIDs": {
+      "ns_op": 175.3,
+      "allocs_op": 2.0
+    },
+    "BenchmarkReadHotFrameDecodeDispatch": {
+      "ns_op": 214.1,
+      "allocs_op": 3.0
+    },
+    "BenchmarkStreamHotDequeue": {
+      "ns_op": 26.71,
+      "allocs_op": 0.0
+    },
+    "BenchmarkStreamHotTimeout": {
+      "ns_op": 0.9949,
+      "allocs_op": 0.0
+    }
+  }
+}

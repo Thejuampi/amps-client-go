@@ -192,6 +192,8 @@ type clientParityState struct {
 	noResubscribeRoutes    map[string]struct{}
 	internalDisconnect     func(error)
 	manualDisconnect       bool
+	recoveryInProgress     bool
+	recoveryRequested      bool
 	lock                   sync.Mutex
 }
 

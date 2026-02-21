@@ -2,7 +2,7 @@
 
 ## Scope
 
-Covers bookmark and publish storage abstractions and concrete implementations.
+Covers publish/bookmark store abstractions, durability behavior, and restart recovery semantics.
 
 ## Publish Store
 
@@ -19,11 +19,13 @@ Key behaviors:
 - `DiscardUpTo(sequence)` removes persisted commands.
 - `Replay(replayer)` emits unpersisted commands in sequence order.
 - `Flush(timeout)` waits until unpersisted set is empty.
+- File-backed mode persists mutations through append-only WAL records and periodic atomic checkpoints.
 
 Failure behavior:
 
 - Store/write errors are returned to caller.
 - Replay callback errors halt replay with propagated error.
+- WAL replay errors prevent full restart recovery and are surfaced from store construction/load paths.
 
 ## Bookmark Store
 
@@ -33,7 +35,7 @@ Implementations:
 
 - `MemoryBookmarkStore`
 - `FileBookmarkStore`
-- `MMapBookmarkStore` (compatibility wrapper)
+- `MMapBookmarkStore` (file-backed store with mmap-enabled checkpoint I/O)
 - `RingBookmarkStore` (compatibility wrapper)
 
 Key behaviors:
@@ -42,26 +44,54 @@ Key behaviors:
 - `IsDiscarded(message)` duplicate/discard detection.
 - `GetMostRecent(subID)` resume point lookup.
 - `Persisted(subID, bookmark)` mark persisted checkpoint.
+- File-backed mode records upsert/discard/purge/version mutations in WAL and replays on restart.
 
 Failure behavior:
 
 - Invalid bookmark/message state may no-op or return default values based on implementation.
 - File-backed persistence failures can affect restart continuity.
 
-## File-Backed Format
+## File-Backed Durability Model
 
-File stores are Go-native persisted formats. Binary compatibility with non-Go client stores is not required.
+- Behavior target is crash-safe recovery and deterministic replay order.
+- Store files are Go-native checkpoint + WAL artifacts.
+- Binary compatibility with C++/non-Go on-disk store formats is not required.
+
+## File Store Options
+
+Additive constructors:
+
+- `NewFilePublishStoreWithOptions(path string, opts FileStoreOptions)`
+- `NewFileBookmarkStoreWithOptions(path string, opts FileStoreOptions)`
+
+Options:
+
+- `UseWAL`: enable append-only mutation log for restart continuity.
+- `SyncOnWrite`: request fsync-style durability on WAL append.
+- `CheckpointInterval`: number of mutations between checkpoint rewrites.
+- `MMap.Enabled`: enable mmap-style checkpoint read/write path.
+- `MMap.InitialSize`: initial mapped length hint for checkpoint files.
 
 ## Selection Guidance
 
 - Memory stores: simplest runtime setup, non-durable.
-- File stores: durable replay/resume across process restarts.
+- File stores: durable replay/resume across process restarts with WAL + checkpoint recovery.
+- `MMapBookmarkStore`: same behavior as file store with mmap-enabled checkpoint path.
 
 ## Example: Configure Durable Stores
 
 ```go
-client.SetPublishStore(amps.NewFilePublishStore("state/publish.json"))
-client.SetBookmarkStore(amps.NewFileBookmarkStore("state/bookmarks.json"))
+opts := amps.FileStoreOptions{
+	UseWAL:             true,
+	SyncOnWrite:        true,
+	CheckpointInterval: 10,
+	MMap: amps.MMapOptions{
+		Enabled:     true,
+		InitialSize: 64 * 1024,
+	},
+}
+client.SetPublishStore(amps.NewFilePublishStoreWithOptions("state/publish.json", opts))
+client.SetBookmarkStore(amps.NewFileBookmarkStoreWithOptions("state/bookmarks.json", opts))
 
 if err := client.Publish("orders", `{"id":42}`); err != nil {
 	panic(err)

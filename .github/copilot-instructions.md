@@ -37,7 +37,7 @@ make release          # vet + test + build (release gate)
 
 ## Coding Conventions
 
-- **`var` for all local variables** — never `:=` short declarations (per project preference).
+- **Local variable declarations** — prefer `var` for clarity, but `:=` short declarations are allowed where concise and improve readability.
 - **No FQN** — always use named imports; never `amps.NewClient` inside the package.
 - **1 assert per test** — use soft assertions only when 2+ checks are strictly necessary.
 - **Tests are whitebox** — all test files use `package amps` (not `package amps_test`).

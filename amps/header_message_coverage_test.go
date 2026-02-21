@@ -151,6 +151,21 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	if _, err := parseHeader(message, true, []byte(`{"c":"p"`)); err == nil {
 		t.Fatalf("expected unexpected-end parse error")
 	}
+
+	escaped := &Message{header: new(_Header)}
+	leftover, err := parseHeader(escaped, true, []byte(`{"c":"p","sub_id":"sub\\\"id","filter":"a\\\\b","topic":"orders"}tail`))
+	if err != nil {
+		t.Fatalf("escaped header parse failed: %v", err)
+	}
+	if string(leftover) != "tail" {
+		t.Fatalf("unexpected escaped parse leftover: %q", string(leftover))
+	}
+	if subID, ok := escaped.SubID(); !ok || subID != `sub\\\"id` {
+		t.Fatalf("unexpected escaped sub_id value: %q (ok=%v)", subID, ok)
+	}
+	if filter, ok := escaped.Filter(); !ok || filter != `a\\\\b` {
+		t.Fatalf("unexpected escaped filter value: %q (ok=%v)", filter, ok)
+	}
 }
 
 func TestMessageUnsetGetterCoverage(t *testing.T) {
@@ -178,6 +193,35 @@ func TestMessageUnsetGetterCoverage(t *testing.T) {
 	}
 	if value, ok := message.TopicMatches(); ok || value != 0 {
 		t.Fatalf("expected empty TopicMatches")
+	}
+}
+
+func TestParseHeaderMalformedAndStateCoverage(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	// resetMessage=false path.
+	if _, err := parseHeader(message, false, []byte(`{"c":"p"}`)); err != nil {
+		t.Fatalf("expected parse without reset to succeed: %v", err)
+	}
+
+	// inHeader malformed token path.
+	if _, err := parseHeader(message, true, []byte(`x`)); err == nil {
+		t.Fatalf("expected malformed in-header token error")
+	}
+
+	// afterKey malformed token path (non-whitespace, non-colon).
+	if _, err := parseHeader(message, true, []byte(`{"c"?"p"}`)); err == nil {
+		t.Fatalf("expected malformed after-key token error")
+	}
+
+	// inValue branch with numeric value and comma termination.
+	if _, err := parseHeader(message, true, []byte(`{"bs":2,"c":"p"}`)); err != nil {
+		t.Fatalf("expected numeric value parse to succeed: %v", err)
+	}
+
+	// inKey/inValueString escaped character handling.
+	if _, err := parseHeader(message, true, []byte("{\"c\":\"p\",\"f\\\"ilter\":\"v\\\\x\"}")); err != nil {
+		t.Fatalf("expected escaped key/value parse to succeed: %v", err)
 	}
 }
 

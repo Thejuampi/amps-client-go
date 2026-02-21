@@ -1,10 +1,14 @@
 package amps
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/amps/internal/wal"
 )
 
 func TestMemoryPublishStoreReplayAndDiscard(t *testing.T) {
@@ -150,5 +154,299 @@ func TestFilePublishStoreAdditionalCoverage(t *testing.T) {
 	reloaded := NewFilePublishStore(path)
 	if !reloaded.ErrorOnPublishGap() {
 		t.Fatalf("expected persisted error-on-gap setting")
+	}
+}
+
+func TestFilePublishStoreWithOptionsCoverage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_options.json")
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        true,
+		CheckpointInterval: 2,
+		MMap: MMapOptions{
+			Enabled:     true,
+			InitialSize: 1024,
+		},
+	})
+
+	firstSeq, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	if err != nil || firstSeq == 0 {
+		t.Fatalf("first store failed: seq=%d err=%v", firstSeq, err)
+	}
+	secondSeq, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":2}`)))
+	if err != nil || secondSeq == 0 || secondSeq <= firstSeq {
+		t.Fatalf("second store failed: seq=%d err=%v", secondSeq, err)
+	}
+
+	reloaded := NewFilePublishStoreWithOptions(path, FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        true,
+		CheckpointInterval: 2,
+		MMap: MMapOptions{
+			Enabled:     true,
+			InitialSize: 1024,
+		},
+	})
+	if reloaded.UnpersistedCount() != 2 {
+		t.Fatalf("expected two recovered entries with options, got %d", reloaded.UnpersistedCount())
+	}
+}
+
+func TestPublishStoreNilAndErrorCoverage(t *testing.T) {
+	var nilMemory *MemoryPublishStore
+	if _, err := nilMemory.Store(nil); err == nil {
+		t.Fatalf("expected nil memory store error")
+	}
+	if err := nilMemory.DiscardUpTo(1); err == nil {
+		t.Fatalf("expected nil memory discard error")
+	}
+	if err := nilMemory.Replay(nil); err == nil {
+		t.Fatalf("expected nil memory replay error")
+	}
+	if _, err := nilMemory.ReplaySingle(nil, 1); err == nil {
+		t.Fatalf("expected nil memory replay single error")
+	}
+	if err := nilMemory.Flush(time.Millisecond); err == nil {
+		t.Fatalf("expected nil memory flush error")
+	}
+	if nilMemory.UnpersistedCount() != 0 || nilMemory.GetLowestUnpersisted() != 0 || nilMemory.GetLastPersisted() != 0 || nilMemory.ErrorOnPublishGap() {
+		t.Fatalf("unexpected nil memory helper values")
+	}
+	nilMemory.SetErrorOnPublishGap(true)
+
+	store := NewMemoryPublishStore()
+	if _, err := store.Store(nil); err == nil {
+		t.Fatalf("expected nil command store error")
+	}
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	if err != nil || sequence == 0 {
+		t.Fatalf("expected seeded command for replay error coverage: seq=%d err=%v", sequence, err)
+	}
+	if err := store.Replay(func(*Command) error { return errors.New("stop") }); err == nil {
+		t.Fatalf("expected replay callback error")
+	}
+	if _, err := store.ReplaySingle(func(*Command) error { return errors.New("stop") }, sequence); err == nil {
+		t.Fatalf("expected replay single callback error")
+	}
+	if found, err := store.ReplaySingle(nil, sequence); err != nil || found {
+		t.Fatalf("expected nil replay single callback noop, found=%v err=%v", found, err)
+	}
+}
+
+func TestFilePublishStoreWALReplayAndApplyCoverage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_wal.json")
+	options := FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        true,
+		CheckpointInterval: 100,
+		MMap: MMapOptions{
+			Enabled:     false,
+			InitialSize: 1024,
+		},
+	}
+	store := NewFilePublishStoreWithOptions(path, options)
+
+	seq1, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	if err != nil || seq1 == 0 {
+		t.Fatalf("first wal store failed: seq=%d err=%v", seq1, err)
+	}
+	seq2, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":2}`)))
+	if err != nil || seq2 == 0 || seq2 <= seq1 {
+		t.Fatalf("second wal store failed: seq=%d err=%v", seq2, err)
+	}
+	if err := store.DiscardUpTo(seq1); err != nil {
+		t.Fatalf("wal discard failed: %v", err)
+	}
+	store.SetErrorOnPublishGap(true)
+
+	reloaded := NewFilePublishStoreWithOptions(path, options)
+	if !reloaded.ErrorOnPublishGap() {
+		t.Fatalf("expected reloaded error-on-gap flag")
+	}
+	if reloaded.GetLastPersisted() != seq1 {
+		t.Fatalf("expected reloaded last persisted %d, got %d", seq1, reloaded.GetLastPersisted())
+	}
+	if reloaded.UnpersistedCount() != 1 {
+		t.Fatalf("expected one unpersisted entry after replay, got %d", reloaded.UnpersistedCount())
+	}
+
+	var replayed []uint64
+	if err := reloaded.Replay(func(command *Command) error {
+		sequence, ok := command.SequenceID()
+		if !ok {
+			t.Fatalf("expected replayed command sequence")
+		}
+		replayed = append(replayed, sequence)
+		return nil
+	}); err != nil {
+		t.Fatalf("reloaded replay failed: %v", err)
+	}
+	if len(replayed) != 1 || replayed[0] != seq2 {
+		t.Fatalf("unexpected replayed sequences: %+v", replayed)
+	}
+
+	manual := &FilePublishStore{
+		MemoryPublishStore: NewMemoryPublishStore(),
+		options:            defaultFileStoreOptions(),
+	}
+	manual.applyWalRecord(publishStoreWalRecord{
+		Type: "store",
+		Command: func() commandSnapshot {
+			cmd := NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":3}`))
+			seq := uint64(3)
+			cmd.SetSequenceID(seq)
+			snapshot := snapshotFromCommand(cmd)
+			return snapshot
+		}(),
+	})
+	if manual.UnpersistedCount() != 1 {
+		t.Fatalf("expected manual wal store apply to create entry")
+	}
+
+	manual.lastPersisted = 10
+	manual.errorOnPublishGap = true
+	manual.applyWalRecord(publishStoreWalRecord{Type: "discard", Sequence: 5})
+	if manual.GetLastPersisted() != 10 {
+		t.Fatalf("expected discard gap to be ignored when error-on-gap enabled")
+	}
+
+	manual.errorOnPublishGap = false
+	manual.applyWalRecord(publishStoreWalRecord{Type: "discard", Sequence: 20})
+	if manual.GetLastPersisted() != 20 {
+		t.Fatalf("expected discard apply to update last persisted")
+	}
+
+	manual.applyWalRecord(publishStoreWalRecord{Type: "store"})
+	if manual.UnpersistedCount() != 0 {
+		t.Fatalf("expected zero-sequence store wal record to no-op")
+	}
+
+	flag := true
+	manual.applyWalRecord(publishStoreWalRecord{Type: "error_on_gap", ErrorOnGap: &flag})
+	if !manual.ErrorOnPublishGap() {
+		t.Fatalf("expected wal error_on_gap apply true")
+	}
+	manual.applyWalRecord(publishStoreWalRecord{Type: "error_on_gap"})
+	if !manual.ErrorOnPublishGap() {
+		t.Fatalf("expected nil error_on_gap pointer to no-op")
+	}
+}
+
+func TestFilePublishStoreLoadAndReplayErrorCoverage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_load_error.json")
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        true,
+		CheckpointInterval: 10,
+	})
+
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write malformed checkpoint failed: %v", err)
+	}
+	if err := store.loadCheckpoint(); err == nil {
+		t.Fatalf("expected malformed checkpoint parse error")
+	}
+
+	if err := wal.WriteAtomic(path, []byte(`{"next_sequence":0,"records":[]}`), 0o600); err != nil {
+		t.Fatalf("write valid checkpoint failed: %v", err)
+	}
+	if err := store.loadCheckpoint(); err != nil {
+		t.Fatalf("expected checkpoint load success: %v", err)
+	}
+	if store.nextSequence != 1 {
+		t.Fatalf("expected next sequence normalization to 1, got %d", store.nextSequence)
+	}
+
+	if err := os.WriteFile(store.walPath, []byte("not-json\n"), 0o600); err != nil {
+		t.Fatalf("write malformed wal failed: %v", err)
+	}
+	if err := store.replayWal(); err == nil {
+		t.Fatalf("expected malformed wal replay error")
+	}
+
+	validRecord := publishStoreWalRecord{Type: "discard", Sequence: 1}
+	recordBytes, err := json.Marshal(validRecord)
+	if err != nil {
+		t.Fatalf("marshal wal record failed: %v", err)
+	}
+	if err = os.WriteFile(store.walPath, append(recordBytes, '\n'), 0o600); err != nil {
+		t.Fatalf("write valid wal failed: %v", err)
+	}
+	if err = store.replayWal(); err != nil {
+		t.Fatalf("expected valid wal replay success: %v", err)
+	}
+
+	noWal := NewFilePublishStoreWithOptions(path, FileStoreOptions{
+		UseWAL:             false,
+		SyncOnWrite:        false,
+		CheckpointInterval: 1,
+	})
+	if err := noWal.replayWal(); err != nil {
+		t.Fatalf("expected replayWal noop when WAL disabled: %v", err)
+	}
+	if err := noWal.appendWal(publishStoreWalRecord{Type: "store"}); err != nil {
+		t.Fatalf("expected appendWal noop when WAL disabled: %v", err)
+	}
+	if err := noWal.bumpMutationAndMaybeCheckpoint(); err != nil {
+		t.Fatalf("expected checkpoint path when WAL disabled: %v", err)
+	}
+}
+
+func TestFilePublishStoreAppendWalSerializesWithStoreLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_locking.json")
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        true,
+		CheckpointInterval: 100,
+	})
+
+	done := make(chan error, 1)
+	store.lock.Lock()
+	go func() {
+		done <- store.appendWal(publishStoreWalRecord{Type: "discard", Sequence: 1})
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("expected appendWal to block on store lock, err=%v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	store.lock.Unlock()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("expected appendWal to succeed after unlocking store, err=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for appendWal after unlocking store")
+	}
+}
+
+func TestFilePublishStoreSaveCheckpointErrorPreservesMutationCounter(t *testing.T) {
+	path := t.TempDir()
+	store := &FilePublishStore{
+		MemoryPublishStore: NewMemoryPublishStore(),
+		path:               path,
+		walPath:            filepath.Join(path, "publish_store.json.wal"),
+		options: FileStoreOptions{
+			UseWAL:             false,
+			SyncOnWrite:        false,
+			CheckpointInterval: 1,
+		},
+		opsSinceCheckpoint: 7,
+	}
+
+	command := NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`))
+	command.SetSequenceID(1)
+	store.entries[1] = command
+	store.nextSequence = 2
+
+	if err := store.saveCheckpoint(); err == nil {
+		t.Fatalf("expected saveCheckpoint write failure when path is a directory")
+	}
+	if store.opsSinceCheckpoint != 7 {
+		t.Fatalf("expected mutation counter to remain unchanged on save failure, got %d", store.opsSinceCheckpoint)
 	}
 }

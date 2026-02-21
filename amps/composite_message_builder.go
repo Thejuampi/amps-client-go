@@ -1,5 +1,7 @@
 package amps
 
+import "errors"
+
 // CompositeMessageBuilder builds protocol payload data for publish and helper APIs.
 type CompositeMessageBuilder struct {
 	message []byte
@@ -22,11 +24,25 @@ func (cmb *CompositeMessageBuilder) buildHeader(length int) {
 
 // AppendBytes executes the exported appendbytes operation.
 func (cmb *CompositeMessageBuilder) AppendBytes(data []byte, offset int, length int) error {
-	if length > 0 {
-		cmb.buildHeader(length)
-		cmb.message = append(cmb.message, data[offset:length]...)
+	if length < 0 {
+		return errors.New("invalid composite part length")
+	}
+	if offset < 0 {
+		return errors.New("invalid composite part offset")
+	}
+	if length == 0 {
+		return nil
+	}
+	if data == nil {
+		return errors.New("composite part data is required")
+	}
+	if offset > len(data) || length > len(data)-offset {
+		return errors.New("composite part range out of bounds")
 	}
 
+	end := offset + length
+	cmb.buildHeader(length)
+	cmb.message = append(cmb.message, data[offset:end]...)
 	return nil
 }
 

@@ -1,6 +1,9 @@
 package amps
 
-import "errors"
+import (
+	"encoding/binary"
+	"errors"
+)
 
 // CompositeMessageParser parses protocol payload data into structured parts.
 type CompositeMessageParser struct {
@@ -19,17 +22,16 @@ func (cmp *CompositeMessageParser) Parse(data []byte) (int, error) {
 	start := 0
 	length := len(data)
 	for start < length {
-		partLength := int(data[start])<<24 +
-			int(data[start+1])<<16 +
-			int(data[start+2])<<8 +
-			int(data[start+3])
-
-		if start+partLength > length {
+		if length-start < 4 {
+			return cmp.Size(), errors.New("Truncated composite part header")
+		}
+		partLength := binary.BigEndian.Uint32(data[start : start+4])
+		start += 4
+		remaining := uint32(length - start)
+		if partLength > remaining {
 			return cmp.Size(), errors.New("Invalid message part length")
 		}
-
-		start += 4
-		end := start + partLength
+		end := start + int(partLength)
 		cmp.parts = append(cmp.parts, data[start:end])
 		start = end
 	}
@@ -39,6 +41,9 @@ func (cmp *CompositeMessageParser) Parse(data []byte) (int, error) {
 
 // ParseMessage executes the exported parsemessage operation.
 func (cmp *CompositeMessageParser) ParseMessage(message *Message) (int, error) {
+	if message == nil {
+		return 0, errors.New("nil message")
+	}
 	return cmp.Parse(message.Data())
 }
 

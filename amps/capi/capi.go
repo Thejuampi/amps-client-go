@@ -128,19 +128,42 @@ type messageObject struct {
 	data   []byte
 }
 
+type sslContextObject struct {
+	method    SSLMethod
+	verify    int
+	caFile    string
+	caPath    string
+	certFile  string
+	certType  int
+	keyFile   string
+	keyType   int
+	createdAt time.Time
+}
+
+type sslHandleObject struct {
+	context     SSLContext
+	fd          int
+	connected   bool
+	shutdown    bool
+	readBuffer  bytes.Buffer
+	writeBuffer bytes.Buffer
+	lastError   int
+}
+
 var (
-	nextHandle atomic.Uint64
-	objects    sync.Map
-	threadID   atomic.Uint64
-	threadMade atomic.Uint64
-	threadJoin atomic.Uint64
-	threadDrop atomic.Uint64
-	sslError   string
-	sslCode    atomic.Uint64
-	sslNext    atomic.Uint64
-	sslObjects sync.Map
-	zlibError  string
-	zlibLoaded atomic.Bool
+	nextHandle  atomic.Uint64
+	objects     sync.Map
+	threadID    atomic.Uint64
+	threadMade  atomic.Uint64
+	threadJoin  atomic.Uint64
+	threadDrop  atomic.Uint64
+	sslError    string
+	sslCode     atomic.Uint64
+	sslNext     atomic.Uint64
+	sslContexts sync.Map
+	sslHandles  sync.Map
+	zlibError   string
+	zlibLoaded  atomic.Bool
 )
 
 func newHandle(value any) Handle {
@@ -848,6 +871,8 @@ func SSLInit(dllPath string) int {
 	_ = dllPath
 	sslError = ""
 	sslCode.Store(0)
+	sslContexts = sync.Map{}
+	sslHandles = sync.Map{}
 	return 0
 }
 
@@ -895,7 +920,8 @@ func SSLUsePrivateKeyFile(fileName string, fileType int) int {
 func SSLFree() {
 	sslError = ""
 	sslCode.Store(0)
-	sslObjects = sync.Map{}
+	sslContexts = sync.Map{}
+	sslHandles = sync.Map{}
 }
 
 // SSLGetError returns last SSL error string.
@@ -950,13 +976,16 @@ func SSLCTXNew(method SSLMethod) SSLContext {
 		return 0
 	}
 	handle := SSLContext(sslNext.Add(1))
-	sslObjects.Store(handle, struct{}{})
+	sslContexts.Store(handle, &sslContextObject{
+		method:    method,
+		createdAt: time.Now().UTC(),
+	})
 	return handle
 }
 
 // SSLCTXFree releases an SSL context handle.
 func SSLCTXFree(context SSLContext) {
-	sslObjects.Delete(context)
+	sslContexts.Delete(context)
 }
 
 // SSLNew allocates an SSL handle from context.
@@ -966,13 +995,13 @@ func SSLNew(context SSLContext) SSLHandle {
 		sslError = "invalid ssl context"
 		return 0
 	}
-	if _, ok := sslObjects.Load(context); !ok {
+	if _, ok := sslContexts.Load(context); !ok {
 		sslCode.Store(1)
 		sslError = "ssl context not found"
 		return 0
 	}
 	handle := SSLHandle(sslNext.Add(1))
-	sslObjects.Store(handle, struct{}{})
+	sslHandles.Store(handle, &sslHandleObject{context: context, fd: -1, connected: false, shutdown: false})
 	return handle
 }
 
@@ -983,20 +1012,29 @@ func SSLSetFD(ssl SSLHandle, fd int) int {
 		sslError = "invalid ssl handle or file descriptor"
 		return -1
 	}
-	if _, ok := sslObjects.Load(ssl); !ok {
+	value, ok := sslHandles.Load(ssl)
+	if !ok {
 		sslCode.Store(1)
 		sslError = "ssl handle not found"
 		return -1
 	}
+	handle := value.(*sslHandleObject)
+	handle.fd = fd
+	handle.shutdown = false
+	handle.lastError = 0
 	sslCode.Store(0)
 	return 1
 }
 
 // SSLGetErrorCode returns the SSL error code for an operation result.
 func SSLGetErrorCode(ssl SSLHandle, result int) int {
-	_ = ssl
 	if result >= 0 {
 		return 0
+	}
+	if value, ok := sslHandles.Load(ssl); ok {
+		if code := value.(*sslHandleObject).lastError; code > 0 {
+			return code
+		}
 	}
 	return int(sslCode.Load())
 }
@@ -1008,11 +1046,23 @@ func SSLConnect(ssl SSLHandle) int {
 		sslError = "invalid ssl handle"
 		return -1
 	}
-	if _, ok := sslObjects.Load(ssl); !ok {
+	value, ok := sslHandles.Load(ssl)
+	if !ok {
 		sslCode.Store(1)
 		sslError = "ssl handle not found"
 		return -1
 	}
+	handle := value.(*sslHandleObject)
+	if handle.fd < 0 {
+		sslCode.Store(1)
+		handle.lastError = 1
+		sslError = "ssl file descriptor is not set"
+		return -1
+	}
+	handle.connected = true
+	handle.shutdown = false
+	handle.lastError = 0
+	sslCode.Store(0)
 	return 1
 }
 
@@ -1023,10 +1073,21 @@ func SSLRead(ssl SSLHandle, buffer []byte) int {
 		sslError = "invalid ssl handle"
 		return -1
 	}
+	value, ok := sslHandles.Load(ssl)
+	if !ok {
+		sslCode.Store(1)
+		sslError = "ssl handle not found"
+		return -1
+	}
+	handle := value.(*sslHandleObject)
 	if len(buffer) == 0 {
 		return 0
 	}
-	return 0
+	if !handle.connected || handle.shutdown {
+		return 0
+	}
+	readCount, _ := handle.readBuffer.Read(buffer)
+	return readCount
 }
 
 // SSLCtrl invokes a compatibility SSL control command.
@@ -1039,16 +1100,54 @@ func SSLCtrl(ssl SSLHandle, command int, larg int64, pointer uintptr) int {
 		sslError = "invalid ssl handle"
 		return -1
 	}
+	if _, ok := sslHandles.Load(ssl); !ok {
+		sslCode.Store(1)
+		sslError = "ssl handle not found"
+		return -1
+	}
 	return 1
 }
 
 // SSLWrite writes data to the SSL handle.
+// In compatibility mode, written bytes are also mirrored into the same handle's read buffer
+// to make SSLRead/SSLPending deterministic for tests and API-level emulation.
 func SSLWrite(ssl SSLHandle, buffer []byte) int {
 	if ssl == 0 {
 		sslCode.Store(1)
 		sslError = "invalid ssl handle"
 		return -1
 	}
+	value, ok := sslHandles.Load(ssl)
+	if !ok {
+		sslCode.Store(1)
+		sslError = "ssl handle not found"
+		return -1
+	}
+	handle := value.(*sslHandleObject)
+	if handle.shutdown {
+		sslCode.Store(1)
+		handle.lastError = 1
+		sslError = "ssl handle is shutdown"
+		return -1
+	}
+	if !handle.connected {
+		sslCode.Store(1)
+		handle.lastError = 1
+		sslError = "ssl handle is not connected"
+		return -1
+	}
+	if len(buffer) == 0 {
+		handle.lastError = 0
+		sslCode.Store(0)
+		sslError = ""
+		return 0
+	}
+	_, _ = handle.writeBuffer.Write(buffer)
+	// Test/compatibility-only loopback. This intentionally does not model real network SSL socket semantics.
+	_, _ = handle.readBuffer.Write(buffer)
+	handle.lastError = 0
+	sslCode.Store(0)
+	sslError = ""
 	return len(buffer)
 }
 
@@ -1059,6 +1158,15 @@ func SSLShutdown(ssl SSLHandle) int {
 		sslError = "invalid ssl handle"
 		return -1
 	}
+	value, ok := sslHandles.Load(ssl)
+	if !ok {
+		sslCode.Store(1)
+		sslError = "ssl handle not found"
+		return -1
+	}
+	handle := value.(*sslHandleObject)
+	handle.connected = false
+	handle.shutdown = true
 	return 1
 }
 
@@ -1067,12 +1175,16 @@ func SSLPending(ssl SSLHandle) int {
 	if ssl == 0 {
 		return 0
 	}
-	return 0
+	value, ok := sslHandles.Load(ssl)
+	if !ok {
+		return 0
+	}
+	return value.(*sslHandleObject).readBuffer.Len()
 }
 
 // SSLFreeHandle releases a compatibility SSL handle.
 func SSLFreeHandle(ssl SSLHandle) {
-	sslObjects.Delete(ssl)
+	sslHandles.Delete(ssl)
 }
 
 // ZlibInit initializes zlib extension.

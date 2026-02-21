@@ -16,8 +16,9 @@ func (nmb *NvfixMessageBuilder) checkCapacity(bytesNeeded int) {
 		for nmb.capacity-nmb.size < bytesNeeded {
 			nmb.capacity *= 2
 		}
+		// Preserve existing payload bytes while growing backing capacity.
 		newBuff := make([]byte, 0, nmb.capacity)
-		copy(newBuff, nmb.message)
+		newBuff = append(newBuff, nmb.message...)
 		nmb.message = newBuff
 	}
 }
@@ -47,6 +48,9 @@ func (nmb *NvfixMessageBuilder) Data() string {
 func (nmb *NvfixMessageBuilder) AppendBytes(tag []byte, value []byte, valOffset int, valLength int) error {
 	if len(tag) == 0 {
 		return errors.New("Illegal argument: no tag value provided to NVFIX builder")
+	}
+	if valOffset < 0 || valLength < 0 || valOffset > len(value) || valOffset+valLength > len(value) {
+		return errors.New("Illegal argument: invalid NVFIX value range")
 	}
 
 	sizeNeeded := len(tag) + 1 + valLength + 2

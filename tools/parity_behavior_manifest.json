@@ -1,0 +1,68 @@
+{
+  "version": "1",
+  "gaps": [
+    {
+      "id": "contract-parity-gating",
+      "domain": "parity-contract",
+      "description": "Behavior parity is defined in-repo and machine-checked by paritycheck output including OPEN_GAPS=0.",
+      "pass_criteria": "go run ./tools/paritycheck -manifest tools/parity_manifest.json reports OPEN_GAPS=0.",
+      "status": "closed"
+    },
+    {
+      "id": "correctness-parser-builder-hardening",
+      "domain": "correctness",
+      "description": "Composite/FIX/NVFIX and header/message parsing paths handle invalid ranges and malformed wire data without panics.",
+      "pass_criteria": "go test -count=1 ./amps/... passes parser/builder coverage tests.",
+      "status": "closed"
+    },
+    {
+      "id": "logon-timeout-enforcement",
+      "domain": "session",
+      "description": "LogonParams.Timeout is enforced during logon ack wait.",
+      "pass_criteria": "go test -count=1 ./amps/... includes logon-timeout coverage and passes.",
+      "status": "closed"
+    },
+    {
+      "id": "wal-checkpoint-durability",
+      "domain": "durability",
+      "description": "File-backed stores use append/checkpoint persistence with crash-safe recovery semantics.",
+      "pass_criteria": "go test -count=1 ./amps/... passes publish/bookmark store persistence tests.",
+      "status": "closed"
+    },
+    {
+      "id": "ha-recovery-ordering",
+      "domain": "high-availability",
+      "description": "Recovery ordering is deterministic: publish replay, resubscribe, retry/deferred callbacks.",
+      "pass_criteria": "go test -count=1 ./amps/... passes HA and post-logon recovery behavior tests.",
+      "status": "closed"
+    },
+    {
+      "id": "kerberos-pluggable-authenticator",
+      "domain": "auth",
+      "description": "Pure-Go Kerberos compatibility authenticator is available through a dedicated package and existing Authenticator contract.",
+      "pass_criteria": "go test -count=1 ./amps/... passes kerberos package tests.",
+      "status": "closed"
+    },
+    {
+      "id": "capi-ssl-stateful-emulation",
+      "domain": "capi-ssl",
+      "description": "CAPI SSL compatibility has stateful handle/context validation and deterministic error behavior.",
+      "pass_criteria": "go test -count=1 ./amps/capi passes SSL compatibility tests.",
+      "status": "closed"
+    },
+    {
+      "id": "perf-regression-gate",
+      "domain": "performance",
+      "description": "Benchmark baseline and regression gate are available for hot-path operations.",
+      "pass_criteria": "go run ./tools/perfgate validates benchmark deltas within threshold.",
+      "status": "closed"
+    },
+    {
+      "id": "documentation-alignment",
+      "domain": "documentation",
+      "description": "Parity acceptance and scope docs align with implemented behavior and gate commands.",
+      "pass_criteria": "docs include gap register and parity acceptance workflow referencing machine gates.",
+      "status": "closed"
+    }
+  ]
+}

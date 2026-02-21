@@ -134,50 +134,38 @@ func TestHAConnectAndLogonFailurePaths(t *testing.T) {
 		t.Fatalf("expected ConnectAndLogon failure with refused endpoint")
 	}
 
-	ha.lock.Lock()
-	ha.stopped = true
-	ha.lock.Unlock()
+	ha.stopped.Store(true)
 	if err := ha.ConnectAndLogon(); err == nil {
 		t.Fatalf("expected stopped HA client error")
 	}
 
-	ha.lock.Lock()
-	ha.stopped = false
-	ha.lock.Unlock()
+	ha.stopped.Store(false)
 	ha.SetReconnectDelayStrategy(errorReconnectStrategy{})
 	if err := ha.ConnectAndLogon(); err == nil {
 		t.Fatalf("expected reconnect strategy error")
 	}
 
-	if err := ha.connectAndLogonOnce("", nil); err == nil {
+	if err := ha.connectAndLogonOnce("", nil, LogonParams{}, false); err == nil {
 		t.Fatalf("expected connectAndLogonOnce empty uri error")
 	}
 }
 
 func TestHAHandleDisconnectGuards(t *testing.T) {
 	ha := NewHAClient("ha-handle-disconnect")
-	ha.lock.Lock()
-	ha.stopped = true
-	ha.lock.Unlock()
+	ha.stopped.Store(true)
 	ha.handleDisconnect(NewError(ConnectionError, "stopped"))
 
-	ha.lock.Lock()
-	ha.stopped = false
-	ha.reconnecting = true
-	ha.lock.Unlock()
+	ha.stopped.Store(false)
+	ha.reconnecting.Store(true)
 	ha.handleDisconnect(NewError(ConnectionError, "already reconnecting"))
 
-	ha.lock.Lock()
-	ha.reconnecting = false
-	ha.lock.Unlock()
+	ha.reconnecting.Store(false)
 	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:1/amps/json"})
 	ha.SetReconnectDelay(0)
 	ha.SetTimeout(10 * time.Millisecond)
 	ha.handleDisconnect(NewError(ConnectionError, "trigger reconnect"))
 	time.Sleep(30 * time.Millisecond)
-	ha.lock.Lock()
-	reconnecting := ha.reconnecting
-	ha.lock.Unlock()
+	reconnecting := ha.reconnecting.Load()
 	if reconnecting {
 		t.Fatalf("expected reconnecting flag to clear after reconnect attempt")
 	}
