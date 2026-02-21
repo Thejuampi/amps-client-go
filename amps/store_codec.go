@@ -21,6 +21,7 @@ type commandSnapshot struct {
 	SubIDs        string  `json:"sub_ids,omitempty"`
 	Topic         string  `json:"topic,omitempty"`
 	TopN          *uint   `json:"top_n,omitempty"`
+	Timeout       int     `json:"timeout,omitempty"`
 	Data          []byte  `json:"data,omitempty"`
 }
 
@@ -94,6 +95,7 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 		snapshot.Data = make([]byte, len(command.data))
 		copy(snapshot.Data, command.data)
 	}
+	snapshot.Timeout = command.timeout
 
 	return snapshot
 }
@@ -164,6 +166,7 @@ func commandFromSnapshot(snapshot commandSnapshot) *Command {
 		command.data = make([]byte, len(snapshot.Data))
 		copy(command.data, snapshot.Data)
 	}
+	command.timeout = snapshot.Timeout
 
 	return command
 }

@@ -3,7 +3,7 @@ PKG ?= ./...
 GOFLAGS ?=
 VERSION ?= $(strip $(file < VERSION))
 
-.PHONY: help build test test-race integration-test install fmt vet tidy clean release
+.PHONY: help build test test-race integration-test install fmt vet tidy clean parity-check release
 
 help:
 	@echo Available targets:
@@ -16,6 +16,7 @@ help:
 	@echo   make vet              Run go vet
 	@echo   make tidy             Run go mod tidy
 	@echo   make clean            Clean Go build/test caches
+	@echo   make parity-check     Validate C++->Go parity manifest mappings
 	@echo   make release          Run release verification pipeline
 
 build:
@@ -46,5 +47,8 @@ clean:
 	$(GO) clean -cache -testcache
 	$(GO) clean $(PKG)
 
-release: vet test build
+parity-check:
+	$(GO) run ./tools/paritycheck -manifest tools/parity_manifest.json
+
+release: vet test build parity-check
 	@echo Release checks passed for $(VERSION).

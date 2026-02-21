@@ -36,6 +36,100 @@ type MessageStream struct {
 	lock sync.Mutex
 }
 
+// MessageStreamIterator iterates over messages in a stream.
+type MessageStreamIterator struct {
+	stream *MessageStream
+}
+
+// Next returns the next message and whether iteration should continue.
+func (iterator *MessageStreamIterator) Next() (*Message, bool) {
+	if iterator == nil || iterator.stream == nil {
+		return nil, false
+	}
+	if !iterator.stream.HasNext() {
+		return nil, false
+	}
+	message := iterator.stream.Next()
+	if message == nil && !iterator.stream.HasNext() {
+		return nil, false
+	}
+	return message, true
+}
+
+// IsValid reports whether the stream handle is usable.
+func (ms *MessageStream) IsValid() bool {
+	return ms != nil && ms.state != messageStreamStateUnset
+}
+
+// Begin returns an iterator for this stream.
+func (ms *MessageStream) Begin() *MessageStreamIterator {
+	return &MessageStreamIterator{stream: ms}
+}
+
+// End returns a terminal iterator marker.
+func (ms *MessageStream) End() *MessageStreamIterator {
+	return &MessageStreamIterator{stream: nil}
+}
+
+// FromExistingHandler binds an existing handler to this stream.
+func (ms *MessageStream) FromExistingHandler(handler func(*Message) error) *MessageStream {
+	if ms == nil || ms.client == nil || handler == nil || ms.commandID == "" {
+		return ms
+	}
+	ms.client.routes.Store(ms.commandID, handler)
+	return ms
+}
+
+// SetAcksOnly configures the stream to consume ack-only responses.
+func (ms *MessageStream) SetAcksOnly(commandID string) *MessageStream {
+	if ms == nil {
+		return nil
+	}
+	ms.commandID = commandID
+	ms.setState(messageStreamStateReading)
+	return ms
+}
+
+// SetSOWOnly configures the stream for SOW-only responses.
+func (ms *MessageStream) SetSOWOnly(commandID string, queryID string) *MessageStream {
+	if ms == nil {
+		return nil
+	}
+	ms.commandID = commandID
+	ms.queryID = queryID
+	ms.setSowOnly()
+	return ms
+}
+
+// SetStatsOnly configures the stream for stats-only responses.
+func (ms *MessageStream) SetStatsOnly(commandID string, queryID ...string) *MessageStream {
+	if ms == nil {
+		return nil
+	}
+	ms.commandID = commandID
+	if len(queryID) > 0 {
+		ms.queryID = queryID[0]
+	}
+	ms.setStatsOnly()
+	return ms
+}
+
+// SetSubscription configures the stream for subscription responses.
+func (ms *MessageStream) SetSubscription(commandID string, subID string, queryID ...string) *MessageStream {
+	if ms == nil {
+		return nil
+	}
+	ms.commandID = commandID
+	if subID != "" {
+		ms.commandID = subID
+	}
+	if len(queryID) > 0 {
+		ms.queryID = queryID[0]
+	}
+	ms.setState(messageStreamStateSubscribed)
+	return ms
+}
+
 // Timeout executes the exported timeout operation.
 func (ms *MessageStream) Timeout() uint64 {
 	return ms.timeout

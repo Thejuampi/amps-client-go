@@ -44,6 +44,8 @@ Path C: C++ parity lookup
 - [Reference: HAClient](reference_ha_client.md)
 - [Reference: Command and MessageStream](reference_command_message_stream.md)
 - [Reference: Types and Handlers](reference_types_and_handlers.md)
+- [Reference: C API Compatibility](capi_reference.md)
+- [Reference: C++ Compatibility](cppcompat_reference.md)
 
 ## Compatibility Documents
 

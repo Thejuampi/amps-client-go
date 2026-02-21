@@ -34,6 +34,8 @@ const (
 // Client manages a single AMPS connection, command execution, and message routing.
 type Client struct {
 	clientName         string
+	nameHash           string
+	nameHashValue      uint64
 	serverVersion      string
 	logonCorrelationID string
 	nextID             uint64
@@ -268,6 +270,9 @@ func (client *Client) onMessage(message *Message) (err error) {
 	if message == nil {
 		return nil
 	}
+	message.client = client
+	message.valid = true
+	message.rawTransmissionTime = time.Now().UTC().Format(time.RFC3339Nano)
 
 	command, _ := message.Command()
 	queryID, hasQueryID := message.QueryID()
@@ -754,6 +759,16 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 				switch status, _ := message.Status(); status {
 				case "success":
 					client.serverVersion = string(message.header.version)
+					if len(message.header.clientName) > 0 {
+						client.nameHash = string(message.header.clientName)
+					} else {
+						client.nameHash = fmt.Sprintf("%x", unsafeStringHash(client.clientName))
+					}
+					if parsedHash, parseErr := strconv.ParseUint(client.nameHash, 10, 64); parseErr == nil {
+						client.nameHashValue = parsedHash
+					} else {
+						client.nameHashValue = unsafeStringHash(client.nameHash)
+					}
 					doneLoggingIn <- nil
 
 				case "failure":
@@ -850,31 +865,48 @@ func (client *Client) Publish(topic string, data string, expiration ...uint) err
 
 // PublishBytes sends a binary publish command for the specified topic.
 func (client *Client) PublishBytes(topic string, data []byte, expiration ...uint) error {
+	_, err := client.publishBytesWithCommand(CommandPublish, topic, data, expiration...)
+	return err
+}
+
+func (client *Client) publishBytesWithCommand(commandType int, topic string, data []byte, expiration ...uint) (uint64, error) {
 	if len(topic) == 0 {
-		return NewError(InvalidTopicError, "A topic must be specified")
+		return 0, NewError(InvalidTopicError, "A topic must be specified")
 	}
 	if !client.connected {
-		return NewError(DisconnectedError, "Client is not connected while trying to publish")
+		return 0, NewError(DisconnectedError, "Client is not connected while trying to publish")
 	}
 
 	client.lock.Lock()
 	defer client.lock.Unlock()
 
 	client.command.reset()
-	client.command.header.command = CommandPublish
+	client.command.header.command = commandType
 	client.command.header.topic = []byte(topic)
 	client.command.data = data
 
 	if len(expiration) > 0 {
 		client.command.header.expiration = &(expiration[0])
 	}
+	commandID := client.makeCommandID()
+	client.command.header.commandID = []byte(commandID)
+	client.registerPendingPublishCommand(commandID, client.command)
+
+	sequence := uint64(0)
+	if storeErr := client.storePublishCommand(client.command); storeErr != nil {
+		return 0, storeErr
+	}
+	if storedSequence, hasSequence := client.command.SequenceID(); hasSequence {
+		sequence = storedSequence
+	}
 
 	err := client.send(client.command)
 	if err != nil {
-		return NewError(ConnectionError, err)
+		client.handleSendFailure(client.command, err)
+		return sequence, NewError(ConnectionError, err)
 	}
 
-	return nil
+	return sequence, nil
 }
 
 // DeltaPublish executes the exported deltapublish operation.
@@ -884,31 +916,8 @@ func (client *Client) DeltaPublish(topic string, data string, expiration ...uint
 
 // DeltaPublishBytes executes the exported deltapublishbytes operation.
 func (client *Client) DeltaPublishBytes(topic string, data []byte, expiration ...uint) error {
-	if len(topic) == 0 {
-		return NewError(InvalidTopicError, "A topic must be specified")
-	}
-	if !client.connected {
-		return NewError(DisconnectedError, "Client is not connected while trying to publish")
-	}
-
-	client.lock.Lock()
-	defer client.lock.Unlock()
-
-	client.command.reset()
-	client.command.header.command = CommandDeltaPublish
-	client.command.header.topic = []byte(topic)
-	client.command.data = data
-
-	if len(expiration) > 0 {
-		client.command.header.expiration = &(expiration[0])
-	}
-
-	err := client.send(client.command)
-	if err != nil {
-		return NewError(ConnectionError, err)
-	}
-
-	return nil
+	_, err := client.publishBytesWithCommand(CommandDeltaPublish, topic, data, expiration...)
+	return err
 }
 
 // Execute sends a command and returns a MessageStream for synchronous consumption.
@@ -1506,6 +1515,7 @@ func NewClient(clientName ...string) *Client {
 
 	client := &Client{
 		clientName:     clientNameInternal,
+		nameHash:       fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
 		sendBuffer:     bytes.NewBuffer(nil),
 		command:        &Command{header: new(_Header)},
 		hbCommand:      &Command{header: new(_Header)},
@@ -1513,6 +1523,7 @@ func NewClient(clientName ...string) *Client {
 		routes:         new(sync.Map),
 		messageStreams: new(sync.Map),
 	}
+	client.nameHashValue = unsafeStringHash(client.nameHash)
 
 	state := ensureClientState(client)
 	if state != nil {

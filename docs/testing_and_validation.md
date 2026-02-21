@@ -15,6 +15,7 @@ Integration tests:
 ```bash
 make test
 make integration-test
+make parity-check
 make release
 ```
 

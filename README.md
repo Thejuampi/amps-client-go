@@ -58,6 +58,8 @@ Where to start:
 - Production hardening: [Queue Ack Semantics](docs/queue_ack_semantics.md), [Bookmarks and Replay](docs/bookmarks_and_replay.md), [HA Failover](docs/ha_failover.md), [Operational Playbook](docs/operational_playbook.md)
 - Scope and constraints: [Supported Scope and Constraints](docs/supported_scope.md)
 - API lookup: [Reference: Client](docs/reference_client.md), [Reference: HAClient](docs/reference_ha_client.md), [Reference: Types and Handlers](docs/reference_types_and_handlers.md)
+- C compatibility: [C API Compatibility Reference](docs/capi_reference.md)
+- C++ utility compatibility: [C++ Compatibility Reference](docs/cppcompat_reference.md)
 - C++ parity mapping: [C++ to Go Parity Matrix](docs/cpp_to_go_parity_matrix.md)
 
 ## Build and Test
@@ -66,7 +68,9 @@ Where to start:
 make build
 make test
 make integration-test
+make parity-check
 make release
+go run ./tools/paritycheck -manifest tools/parity_manifest.json
 ```
 
 ## License

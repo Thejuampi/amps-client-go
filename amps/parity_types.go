@@ -149,6 +149,11 @@ type pendingAckBatch struct {
 	bookmarks []string
 }
 
+type deferredExecutionCall struct {
+	callback func(*Client, any)
+	userData any
+}
+
 type trackedSubscription struct {
 	messageHandler    func(*Message) error
 	command           *Command
@@ -178,6 +183,9 @@ type clientParityState struct {
 	httpPreflightHeaders   []string
 	transportFilter        TransportFilter
 	receiveRoutineCallback func()
+	publishBatchSizeBytes  uint64
+	publishBatchTimeout    time.Duration
+	deferredExecutions     []deferredExecutionCall
 	pendingRetry           []retryCommand
 	pendingPublishByCmdID  map[string]*Command
 	noResubscribeRoutes    map[string]struct{}

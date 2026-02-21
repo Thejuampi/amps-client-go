@@ -2,12 +2,20 @@ package amps
 
 import (
 	"errors"
+	"time"
 )
 
 // Message stores exported state used by AMPS client APIs.
 type Message struct {
-	header *_Header
-	data   []byte
+	header              *_Header
+	data                []byte
+	client              *Client
+	valid               bool
+	ignoreAutoAck       bool
+	bookmarkSeqNo       uint64
+	subscriptionHandle  string
+	rawTransmissionTime string
+	disowned            bool
 }
 
 // Constants in this block define protocol and client behavior values.
@@ -24,6 +32,12 @@ func (msg *Message) reset() {
 		msg.header.reset()
 	}
 	msg.data = nil
+	msg.ignoreAutoAck = false
+	msg.bookmarkSeqNo = 0
+	msg.subscriptionHandle = ""
+	msg.rawTransmissionTime = time.Now().UTC().Format(time.RFC3339Nano)
+	msg.disowned = false
+	msg.valid = true
 }
 
 func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) {
@@ -83,6 +97,13 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 // Copy executes the exported copy operation.
 func (msg *Message) Copy() *Message {
 	message := &Message{header: new(_Header)}
+	message.client = msg.client
+	message.valid = msg.valid
+	message.ignoreAutoAck = msg.ignoreAutoAck
+	message.bookmarkSeqNo = msg.bookmarkSeqNo
+	message.subscriptionHandle = msg.subscriptionHandle
+	message.rawTransmissionTime = msg.rawTransmissionTime
+	message.disowned = msg.disowned
 
 	message.header.command = msg.header.command
 	if msg.data != nil {
@@ -222,6 +243,21 @@ func (msg *Message) AckType() (int, bool) {
 	return AckTypeNone, false
 }
 
+// GetAckTypeEnum returns ack type bitset.
+func (msg *Message) GetAckTypeEnum() int {
+	value, _ := msg.AckType()
+	return value
+}
+
+// SetAckTypeEnum sets ack type bitset.
+func (msg *Message) SetAckTypeEnum(ackType int) *Message {
+	if msg == nil {
+		return nil
+	}
+	msg.header.ackType = &ackType
+	return msg
+}
+
 // BatchSize executes the exported batchsize operation.
 func (msg *Message) BatchSize() (uint, bool) {
 	if msg.header.batchSize != nil {
@@ -238,6 +274,23 @@ func (msg *Message) Bookmark() (string, bool) {
 // Command executes the exported command operation.
 func (msg *Message) Command() (int, bool) { return msg.header.command, true }
 
+// GetCommandEnum returns command enum.
+func (msg *Message) GetCommandEnum() int {
+	if msg == nil {
+		return CommandUnknown
+	}
+	return msg.header.command
+}
+
+// SetCommandEnum sets command enum.
+func (msg *Message) SetCommandEnum(command int) *Message {
+	if msg == nil {
+		return nil
+	}
+	msg.header.command = command
+	return msg
+}
+
 // CommandID executes the exported commandid operation.
 func (msg *Message) CommandID() (string, bool) {
 	return string(msg.header.commandID), msg.header.commandID != nil
@@ -250,6 +303,15 @@ func (msg *Message) CorrelationID() (string, bool) {
 
 // Data executes the exported data operation.
 func (msg *Message) Data() []byte { return msg.data }
+
+// SetData sets payload bytes.
+func (msg *Message) SetData(data []byte) *Message {
+	if msg == nil {
+		return nil
+	}
+	msg.data = append(msg.data[:0], data...)
+	return msg
+}
 
 // Expiration executes the exported expiration operation.
 func (msg *Message) Expiration() (uint, bool) {
@@ -403,4 +465,183 @@ func (msg *Message) TopicMatches() (uint, bool) {
 // UserID executes the exported userid operation.
 func (msg *Message) UserID() (string, bool) {
 	return string(msg.header.userID), msg.header.userID != nil
+}
+
+// Ack acknowledges the message using topic and bookmark fields.
+func (msg *Message) Ack(options ...string) error {
+	if msg == nil || msg.client == nil {
+		return NewError(CommandError, "message is not bound to a client")
+	}
+	topic, hasTopic := msg.Topic()
+	bookmark, hasBookmark := msg.Bookmark()
+	if !hasTopic || !hasBookmark {
+		return NewError(CommandError, "message does not contain topic and bookmark")
+	}
+	if len(options) > 0 && options[0] != "" {
+		return msg.client.Ack(topic, bookmark, options[0])
+	}
+	return msg.client.Ack(topic, bookmark)
+}
+
+// AssignData assigns a payload copy into the message.
+func (msg *Message) AssignData(data []byte) {
+	if msg == nil {
+		return
+	}
+	msg.data = append(msg.data[:0], data...)
+}
+
+// DeepCopy returns a full copy of the message.
+func (msg *Message) DeepCopy() *Message {
+	if msg == nil {
+		return nil
+	}
+	return msg.Copy()
+}
+
+// Disown marks the message payload as externally owned.
+func (msg *Message) Disown() {
+	if msg == nil {
+		return
+	}
+	msg.disowned = true
+}
+
+// GetBookmarkSeqNo returns the tracked bookmark sequence number.
+func (msg *Message) GetBookmarkSeqNo() uint64 {
+	if msg == nil {
+		return 0
+	}
+	return msg.bookmarkSeqNo
+}
+
+// SetBookmarkSeqNo sets the tracked bookmark sequence number.
+func (msg *Message) SetBookmarkSeqNo(sequence uint64) *Message {
+	if msg == nil {
+		return nil
+	}
+	msg.bookmarkSeqNo = sequence
+	return msg
+}
+
+// GetIgnoreAutoAck reports whether auto-ack is ignored for this message.
+func (msg *Message) GetIgnoreAutoAck() bool {
+	if msg == nil {
+		return false
+	}
+	return msg.ignoreAutoAck
+}
+
+// SetIgnoreAutoAck configures whether auto-ack should ignore this message.
+func (msg *Message) SetIgnoreAutoAck(ignore bool) *Message {
+	if msg == nil {
+		return nil
+	}
+	msg.ignoreAutoAck = ignore
+	return msg
+}
+
+// GetMessage returns the message handle itself.
+func (msg *Message) GetMessage() *Message {
+	return msg
+}
+
+// GetRawData returns the payload bytes.
+func (msg *Message) GetRawData() []byte {
+	if msg == nil {
+		return nil
+	}
+	return msg.data
+}
+
+// GetRawTransmissionTime returns the receive timestamp in RFC3339 format.
+func (msg *Message) GetRawTransmissionTime() string {
+	if msg == nil {
+		return ""
+	}
+	return msg.rawTransmissionTime
+}
+
+// GetSubscriptionHandle returns the associated subscription handle.
+func (msg *Message) GetSubscriptionHandle() string {
+	if msg == nil {
+		return ""
+	}
+	return msg.subscriptionHandle
+}
+
+// SetSubscriptionHandle sets the associated subscription handle.
+func (msg *Message) SetSubscriptionHandle(handle string) *Message {
+	if msg == nil {
+		return nil
+	}
+	msg.subscriptionHandle = handle
+	return msg
+}
+
+// Invalidate marks the message as invalid.
+func (msg *Message) Invalidate() {
+	if msg == nil {
+		return
+	}
+	msg.valid = false
+}
+
+// IsValid reports whether the message is valid.
+func (msg *Message) IsValid() bool {
+	if msg == nil {
+		return false
+	}
+	return msg.valid
+}
+
+// Replace replaces message contents with another message.
+func (msg *Message) Replace(other *Message) *Message {
+	if msg == nil || other == nil {
+		return msg
+	}
+	copyMessage := other.Copy()
+	msg.header = copyMessage.header
+	msg.data = copyMessage.data
+	msg.client = copyMessage.client
+	msg.valid = copyMessage.valid
+	msg.ignoreAutoAck = copyMessage.ignoreAutoAck
+	msg.bookmarkSeqNo = copyMessage.bookmarkSeqNo
+	msg.subscriptionHandle = copyMessage.subscriptionHandle
+	msg.rawTransmissionTime = copyMessage.rawTransmissionTime
+	msg.disowned = copyMessage.disowned
+	return msg
+}
+
+// Reset clears message fields.
+func (msg *Message) Reset() {
+	if msg == nil {
+		return
+	}
+	msg.reset()
+}
+
+// SetClientImpl binds a client context used by helper methods.
+func (msg *Message) SetClientImpl(client *Client) *Message {
+	if msg == nil {
+		return nil
+	}
+	msg.client = client
+	return msg
+}
+
+// ThrowFor converts an ack failure reason into an error.
+func (msg *Message) ThrowFor() error {
+	if msg == nil {
+		return NewError(UnknownError, "nil message")
+	}
+	status, hasStatus := msg.Status()
+	if !hasStatus || status == "success" {
+		return nil
+	}
+	reason, hasReason := msg.Reason()
+	if hasReason {
+		return reasonToError(reason)
+	}
+	return NewError(UnknownError, "message failure without reason")
 }

@@ -7,7 +7,13 @@ This document defines the supported behavior scope for `github.com/Thejuampi/amp
 Parity target:
 
 - C++ AMPS client behavior baseline: `5.3.5.1`
-- Scope focus: `Client` and `HAClient` APIs and required supporting types
+- Scope focus: full public C++ client families, including compatibility layers in `amps/capi` and `amps/cppcompat`
+
+Symbol gate baseline:
+
+- manifest file: `tools/parity_manifest.json`
+- current mapped symbols: `253`
+- required gate: `MISSING_HEADER_SYMBOLS=0` and `MISSING_GO_SYMBOLS=0`
 
 ## Supported Workflows
 
@@ -22,12 +28,15 @@ Parity target:
 | Publish replay and persistence tracking | Supported | `PublishStore` implementations, `PublishFlush` |
 | Retry and reconnect recovery | Supported | `SetRetryOnDisconnect`, `HAClient.ConnectAndLogon`, chooser/strategy controls |
 | Transport and routing hooks | Supported | transport filter, receive-start callback, global handlers, listener APIs |
+| C compatibility layer | Supported | `amps/capi` client/message handle APIs, TLS/zlib compatibility entrypoints |
+| C++ utility compatibility | Supported | `amps/cppcompat` utility/store/recovery/FIX families |
 
 ## Compatibility Guarantees
 
 - Existing public method signatures in package `amps` remain available.
 - C++-style alias methods are retained where implemented (`SetName`/`Name`, correlation aliases, store and hook aliases).
 - Protocol-facing command and topic semantics are preserved.
+- C and C++ compatibility entrypoints are additive and do not break existing Go-first API usage.
 
 ## Constraints and Operational Assumptions
 
@@ -40,11 +49,13 @@ Parity target:
 ## Known Unsupported or Intentional Differences
 
 - `HAClient.SetDisconnectHandler(...)` intentionally returns a usage error; HA reconnect logic owns disconnect handling.
-- C++ low-level handle semantics are replaced by Go-native hooks (`RawConnection`, `SetTransportFilter`, `SetReceiveRoutineStartedCallback`).
-- This repository does not guarantee compatibility with unrelated legacy helper APIs outside scoped `Client`/`HAClient` parity surface.
+- Persistence is behaviorally compatible but not binary-file compatible with C++ store file formats.
+- C-compatible thread/socket reporting reflects Go runtime and transport capabilities.
 
 ## Validation References
 
 - [Testing and Validation](testing_and_validation.md)
 - [Operational Playbook](operational_playbook.md)
 - [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)
+- [C API Compatibility Reference](capi_reference.md)
+- [C++ Compatibility Reference](cppcompat_reference.md)

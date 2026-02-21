@@ -361,6 +361,11 @@ func CreateMemoryBackedHAClient(clientName ...string) *HAClient {
 	return ha
 }
 
+// CreateMemoryBacked creates a configured memory-backed HA client.
+func CreateMemoryBacked(clientName ...string) *HAClient {
+	return CreateMemoryBackedHAClient(clientName...)
+}
+
 // CreateFileBackedHAClient creates a configured FileBackedHAClient.
 func CreateFileBackedHAClient(args ...string) *HAClient {
 	publishStorePath := "amps_publish_store.json"
@@ -383,4 +388,9 @@ func CreateFileBackedHAClient(args ...string) *HAClient {
 		ha.client.SetBookmarkStore(NewFileBookmarkStore(bookmarkStorePath))
 	}
 	return ha
+}
+
+// CreateFileBacked creates a configured file-backed HA client.
+func CreateFileBacked(args ...string) *HAClient {
+	return CreateFileBackedHAClient(args...)
 }

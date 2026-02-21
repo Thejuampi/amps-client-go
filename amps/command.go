@@ -25,8 +25,9 @@ const (
 
 // Command stores exported state used by AMPS client APIs.
 type Command struct {
-	header *_Header
-	data   []byte
+	header  *_Header
+	data    []byte
+	timeout int
 }
 
 func (com *Command) reset() {
@@ -34,6 +35,7 @@ func (com *Command) reset() {
 		com.header.reset()
 	}
 	com.data = nil
+	com.timeout = 0
 }
 
 func commandStringToInt(command string) int {
@@ -138,6 +140,17 @@ func (com *Command) AckType() (int, bool) {
 	return AckTypeNone, false
 }
 
+// GetAckType returns the configured ack type bitset.
+func (com *Command) GetAckType() int {
+	value, _ := com.AckType()
+	return value
+}
+
+// GetAckTypeEnum returns the configured ack type bitset.
+func (com *Command) GetAckTypeEnum() int {
+	return com.GetAckType()
+}
+
 // BatchSize executes the exported batchsize operation.
 func (com *Command) BatchSize() (uint, bool) {
 	if com.header.batchSize != nil {
@@ -154,6 +167,14 @@ func (com *Command) Bookmark() (string, bool) {
 // Command executes the exported command operation.
 func (com *Command) Command() (string, bool) {
 	return commandIntToString(com.header.command), com.header.command >= 0 && com.header.command < CommandUnknown
+}
+
+// GetCommandEnum returns the command enum value.
+func (com *Command) GetCommandEnum() int {
+	if com == nil || com.header == nil {
+		return CommandUnknown
+	}
+	return com.header.command
 }
 
 // CommandID executes the exported commandid operation.
@@ -234,6 +255,98 @@ func (com *Command) TopN() (uint, bool) {
 // Topic executes the exported topic operation.
 func (com *Command) Topic() (string, bool) { return string(com.header.topic), com.header.topic != nil }
 
+// GetMessage returns a message representation of this command.
+func (com *Command) GetMessage() *Message {
+	return commandToMessage(com)
+}
+
+// GetSequence returns the publish sequence id for this command.
+func (com *Command) GetSequence() uint64 {
+	sequence, _ := com.SequenceID()
+	return sequence
+}
+
+// SetSequence sets the publish sequence id for this command.
+func (com *Command) SetSequence(sequence uint64) *Command {
+	return com.SetSequenceID(sequence)
+}
+
+// GetTimeout returns the command timeout value in milliseconds.
+func (com *Command) GetTimeout() int {
+	return com.timeout
+}
+
+// SetTimeout sets the command timeout in milliseconds.
+func (com *Command) SetTimeout(timeout int) *Command {
+	if timeout < 0 {
+		timeout = 0
+	}
+	com.timeout = timeout
+	return com
+}
+
+// HasProcessedAck reports whether processed ack is requested.
+func (com *Command) HasProcessedAck() bool {
+	ackType, hasAckType := com.AckType()
+	return hasAckType && (ackType&AckTypeProcessed) != 0
+}
+
+// HasStatsAck reports whether stats ack is requested.
+func (com *Command) HasStatsAck() bool {
+	ackType, hasAckType := com.AckType()
+	return hasAckType && (ackType&AckTypeStats) != 0
+}
+
+// IsSow reports whether command is a SOW family command.
+func (com *Command) IsSow() bool {
+	switch com.header.command {
+	case CommandSOW, CommandSOWAndSubscribe, CommandSOWAndDeltaSubscribe:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsSubscribe reports whether command is a subscribe family command.
+func (com *Command) IsSubscribe() bool {
+	switch com.header.command {
+	case CommandSubscribe, CommandDeltaSubscribe, CommandSOWAndSubscribe, CommandSOWAndDeltaSubscribe:
+		return true
+	default:
+		return false
+	}
+}
+
+// NeedsSequenceNumber reports whether command participates in publish sequence tracking.
+func (com *Command) NeedsSequenceNumber() bool {
+	switch com.header.command {
+	case CommandPublish, CommandDeltaPublish, CommandSOWDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+// Init reinitializes this command with the provided command name.
+func (com *Command) Init(commandName string) *Command {
+	com.reset()
+	return com.SetCommand(commandName)
+}
+
+// Reset clears command header and payload state.
+func (com *Command) Reset() *Command {
+	com.reset()
+	return com
+}
+
+// SetIds updates command, query, and subscription identifiers.
+func (com *Command) SetIds(commandID string, queryID string, subID string) *Command {
+	com.SetCommandID(commandID)
+	com.SetQueryID(queryID)
+	com.SetSubID(subID)
+	return com
+}
+
 // SetAckType sets ack type on the receiver.
 func (com *Command) SetAckType(ackType int) *Command {
 	if ackType < AckTypeNone ||
@@ -286,6 +399,15 @@ func (com *Command) SetCommand(command string) *Command {
 		com.header.command = commandStringToInt(command)
 	}
 
+	return com
+}
+
+// SetCommandEnum sets command enum on the receiver.
+func (com *Command) SetCommandEnum(command int) *Command {
+	if com == nil || com.header == nil {
+		return com
+	}
+	com.header.command = command
 	return com
 }
 

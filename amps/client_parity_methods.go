@@ -334,6 +334,9 @@ func (client *Client) maybeAutoAck(message *Message) {
 	if state == nil || message == nil {
 		return
 	}
+	if message.GetIgnoreAutoAck() {
+		return
+	}
 
 	topic, hasTopic := message.Topic()
 	bookmark, hasBookmark := message.Bookmark()
@@ -444,6 +447,8 @@ func (client *Client) postLogonRecovery() {
 	store := state.publishStore
 	subscriptionManager := state.subscriptionManager
 	pendingRetry := append([]retryCommand(nil), state.pendingRetry...)
+	deferredExecutions := append([]deferredExecutionCall(nil), state.deferredExecutions...)
+	state.deferredExecutions = nil
 	state.pendingRetry = nil
 	state.lock.Unlock()
 
@@ -474,6 +479,20 @@ func (client *Client) postLogonRecovery() {
 		if _, retryErr := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); retryErr != nil {
 			client.reportException(retryErr)
 		}
+	}
+
+	for _, entry := range deferredExecutions {
+		if entry.callback == nil {
+			continue
+		}
+		func(entry deferredExecutionCall) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					client.reportException(fmt.Errorf("deferred execution panic: %v", recovered))
+				}
+			}()
+			entry.callback(client, entry.userData)
+		}(entry)
 	}
 }
 
