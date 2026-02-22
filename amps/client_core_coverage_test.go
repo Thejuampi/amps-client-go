@@ -634,6 +634,63 @@ func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	}
 }
 
+func TestClientFlushAckPathsCoverage(t *testing.T) {
+	ackCompleted := AckTypeCompleted
+	ackProcessed := AckTypeProcessed
+
+	runFlush := func(response *Message) error {
+		client := NewClient("flush-ack-paths")
+		client.connected.Store(true)
+		client.connection = newTestConn()
+
+		result := make(chan error, 1)
+		go func() {
+			result <- client.Flush()
+		}()
+
+		_, handler := waitForAnyRouteHandler(t, client)
+		_ = handler(&Message{header: &_Header{
+			command: CommandAck,
+			ackType: &ackProcessed,
+			status:  []byte("success"),
+		}})
+		_ = handler(response)
+
+		select {
+		case err := <-result:
+			return err
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("timed out waiting for Flush result")
+		}
+		return nil
+	}
+
+	if err := runFlush(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ackCompleted,
+		status:  []byte("success"),
+	}}); err != nil {
+		t.Fatalf("expected Flush success ack, got %v", err)
+	}
+
+	if err := runFlush(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ackCompleted,
+		status:  []byte("failure"),
+		reason:  []byte("flush failed by test"),
+	}}); err == nil || !strings.Contains(err.Error(), "flush failed by test") {
+		t.Fatalf("expected Flush reason failure, got %v", err)
+	}
+
+	if err := runFlush(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ackCompleted,
+		status:  []byte("failure"),
+	}}); err == nil || !strings.Contains(err.Error(), "flush failed") {
+		t.Fatalf("expected generic Flush failure, got %v", err)
+	}
+}
+
 func TestClientSowDeleteWaitAbortsOnDisconnect(t *testing.T) {
 	client := NewClient("sow-delete-disconnect")
 	client.connected.Store(true)

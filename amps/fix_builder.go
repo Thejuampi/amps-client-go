@@ -15,17 +15,13 @@ func (fmb *FixMessageBuilder) checkIfLog10(tag int) int {
 	if tag < 0 {
 		return 0
 	}
-	tagValue := uint64(tag) // #nosec G115 -- validated non-negative above
-	scalar := uint64(10)
 
-	for i := 1; i < 20; i++ {
-		if tagValue < scalar {
-			return i
-		}
-		scalar *= 10
+	digits := 1
+	for value := tag; value >= 10; value /= 10 {
+		digits++
 	}
 
-	return 0
+	return digits
 }
 
 func (fmb *FixMessageBuilder) checkCapacity(bytesNeeded int) {
