@@ -74,7 +74,7 @@ func readPackageSource(pkg string) (string, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
-		data, readErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+		data, readErr := os.ReadFile(filepath.Join(dir, entry.Name())) // #nosec G304 -- file list originates from trusted package directory
 		if readErr != nil {
 			return "", readErr
 		}
@@ -121,7 +121,7 @@ func headerContainsSymbol(headerRoot string, headers []string, symbol string) bo
 	}
 	for _, header := range headers {
 		path := filepath.Join(headerRoot, header)
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 -- header path is rooted under configured SDK directory
 		if err != nil {
 			continue
 		}

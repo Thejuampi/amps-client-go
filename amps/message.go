@@ -55,7 +55,7 @@ func (msg *Message) resetForParse() {
 func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) {
 
 	if msg == nil {
-		return array, errors.New("Message object error (Null Pointer)")
+		return array, errors.New("message object error (null pointer)")
 	}
 
 	if resetMessage {
@@ -81,7 +81,7 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 				return array[index+1:], nil
 			default:
 				if !isJSONWhitespace(character) && character != ',' {
-					return array, errors.New("Malformed AMPS header")
+					return array, errors.New("malformed AMPS header")
 				}
 			}
 
@@ -104,7 +104,7 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 				state = inValue
 				valueStart = index + 1
 			} else if !isJSONWhitespace(character) {
-				return array, errors.New("Malformed AMPS header")
+				return array, errors.New("malformed AMPS header")
 			}
 
 		case inValue:
@@ -139,7 +139,7 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 		}
 	}
 
-	return array, errors.New("Unexpected end of AMPS header")
+	return array, errors.New("unexpected end of AMPS header")
 }
 
 func isJSONWhitespace(character byte) bool {

@@ -2,11 +2,11 @@ package amps
 
 import (
 	"bytes"
+	cryptorand "crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/url"
 	"strconv"
@@ -14,12 +14,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 )
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.1.4"
+	ClientVersion = "0.1.5"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
@@ -53,6 +52,8 @@ type Client struct {
 	heartbeatTimeoutID *time.Timer
 	heartbeatLock      sync.Mutex
 
+	// Preferred lock order when multiple locks are required:
+	// client.lock -> client parity state lock -> store-specific locks.
 	lock              sync.Mutex
 	acksLock          sync.Mutex
 	ackProcessingLock sync.Mutex
@@ -91,11 +92,13 @@ type _Stats struct {
 	Error error
 }
 
+const defaultStatsAckTimeout = 30 * time.Second
+
 func unsafeStringFromBytes(value []byte) string {
 	if len(value) == 0 {
 		return ""
 	}
-	return unsafe.String(unsafe.SliceData(value), len(value))
+	return string(value)
 }
 
 func trimASCIISpaces(value []byte) []byte {
@@ -167,10 +170,10 @@ func (client *Client) makeCommandID() string {
 
 func (client *Client) send(command *Command) (err error) {
 	if !client.connected.Load() {
-		return errors.New("Client is not connected while trying to send data")
+		return errors.New("client is not connected while trying to send data")
 	}
 	if client.sendBuffer == nil {
-		return errors.New("Socket error while sending message (NullPointer)")
+		return errors.New("socket error while sending message (null pointer)")
 	}
 
 	client.sendBuffer.Reset()
@@ -191,7 +194,11 @@ func (client *Client) send(command *Command) (err error) {
 		}
 	}
 
-	length := uint32(client.sendBuffer.Len()) - 4
+	frameSize := client.sendBuffer.Len()
+	if frameSize < 4 || frameSize-4 > int(^uint32(0)) {
+		return NewError(ProtocolError, "outbound frame length exceeds uint32 bounds")
+	}
+	length := uint32(frameSize - 4) // #nosec G115 -- checked bounds above
 	rawBytes := client.sendBuffer.Bytes()
 	rawBytes[0] = (byte)((length & 0xFF000000) >> 24)
 	rawBytes[1] = (byte)((length & 0x00FF0000) >> 16)
@@ -203,7 +210,10 @@ func (client *Client) send(command *Command) (err error) {
 	if len(filtered) < 4 {
 		return NewError(ProtocolError, "transport filter produced an invalid frame")
 	}
-	filteredLength := uint32(len(filtered) - 4)
+	if len(filtered)-4 > int(^uint32(0)) {
+		return NewError(ProtocolError, "filtered frame length exceeds uint32 bounds")
+	}
+	filteredLength := uint32(len(filtered) - 4) // #nosec G115 -- checked bounds above
 	filtered[0] = byte((filteredLength & 0xFF000000) >> 24)
 	filtered[1] = byte((filteredLength & 0x00FF0000) >> 16)
 	filtered[2] = byte((filteredLength & 0x0000FF00) >> 8)
@@ -340,7 +350,12 @@ func (client *Client) readRoutine() {
 						client.onError(NewError(ProtocolError, "SOW record payload exceeds frame bounds"))
 						return
 					}
-					dataLengthValue := int(dataLength)
+					maxInt := int(^uint(0) >> 1)
+					if dataLength > uint(maxInt) {
+						client.onError(NewError(ProtocolError, "SOW record payload length exceeds int bounds"))
+						return
+					}
+					dataLengthValue := int(dataLength) // #nosec G115 -- checked bounds above
 					client.message.data = left[:dataLengthValue]
 
 					err = client.onMessage(client.message)
@@ -392,7 +407,11 @@ func (client *Client) onMessage(message *Message) (err error) {
 
 	if command == commandHeartbeat {
 		if hasHeartbeat {
-			timedelta := uint(time.Now().Unix()) - heartbeatTimestamp
+			nowUnix := time.Now().Unix()
+			if nowUnix < 0 {
+				return nil
+			}
+			timedelta := uint(nowUnix) - heartbeatTimestamp // #nosec G115 -- Unix timestamps are non-negative here
 			if timedelta > heartbeatInterval {
 				client.checkAndSendHeartbeat(true)
 			}
@@ -616,7 +635,11 @@ func (client *Client) onConnectionError(err error) {
 }
 
 func (client *Client) onHeartbeatAbsence() {
-	now := uint(time.Now().Unix())
+	nowUnix := time.Now().Unix()
+	if nowUnix < 0 {
+		return
+	}
+	now := uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
 	heartbeatMissing := false
 
 	client.heartbeatLock.Lock()
@@ -631,16 +654,28 @@ func (client *Client) onHeartbeatAbsence() {
 	client.heartbeatLock.Unlock()
 
 	if heartbeatMissing {
-		client.onError(errors.New("Heartbeat absence error"))
+		client.onError(errors.New("heartbeat absence error"))
 	}
 }
 
 func (client *Client) establishHeartbeat() (hbError error) {
-	done := make(chan error)
+	done := make(chan error, 1)
+	signalResult := func(err error) {
+		select {
+		case done <- err:
+		default:
+		}
+	}
 
 	client.heartbeatLock.Lock()
-	client.heartbeatTimestamp = uint(time.Now().Unix())
+	nowUnix := time.Now().Unix()
+	if nowUnix < 0 {
+		client.heartbeatTimestamp = 0
+	} else {
+		client.heartbeatTimestamp = uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
+	}
 	heartbeatInterval := client.heartbeatInterval
+	heartbeatTimeout := client.heartbeatTimeout
 	client.heartbeatLock.Unlock()
 
 	heartbeat := NewCommand("heartbeat").AddAckType(AckTypeProcessed).SetOptions("start," + strconv.FormatUint(uint64(heartbeatInterval), 10))
@@ -654,30 +689,54 @@ func (client *Client) establishHeartbeat() (hbError error) {
 				_ = client.heartbeatTimeoutID.Stop()
 			}
 			if client.heartbeatTimeout > 0 {
-				client.heartbeatTimeoutID = time.AfterFunc(time.Duration(client.heartbeatTimeout*1000), client.onHeartbeatAbsence)
+				client.heartbeatTimeoutID = time.AfterFunc(time.Second*time.Duration(client.heartbeatTimeout), client.onHeartbeatAbsence) // #nosec G115 -- timeout is a bounded configuration value
 			} else {
 				client.heartbeatTimeoutID = nil
 			}
 			client.heartbeatLock.Unlock()
 			client.notifyConnectionState(ConnectionStateHeartbeatInitiated)
 		} else {
-			err = errors.New("Heartbeat Establishment Error")
+			err = errors.New("heartbeat establishment error")
 		}
 
-		done <- err
+		signalResult(err)
 
 		return
 	})
 
 	if hbError == nil {
-		return <-done
+		waitTimeout := time.Second * time.Duration(heartbeatTimeout) // #nosec G115 -- timeout is a bounded configuration value
+		if waitTimeout <= 0 {
+			waitTimeout = 2 * time.Second
+		}
+		timer := time.NewTimer(waitTimeout)
+		defer timer.Stop()
+		poll := time.NewTicker(50 * time.Millisecond)
+		defer poll.Stop()
+
+		for {
+			select {
+			case err := <-done:
+				return err
+			case <-poll.C:
+				if !client.connected.Load() {
+					return NewError(DisconnectedError, "Client disconnected while waiting for heartbeat acknowledgement")
+				}
+			case <-timer.C:
+				return NewError(TimedOutError, "heartbeat establishment timed out waiting for processed ack")
+			}
+		}
 	}
 
 	return
 }
 
 func (client *Client) checkAndSendHeartbeat(force bool) {
-	now := uint(time.Now().Unix())
+	nowUnix := time.Now().Unix()
+	if nowUnix < 0 {
+		return
+	}
+	now := uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
 	shouldSend := false
 
 	client.heartbeatLock.Lock()
@@ -688,7 +747,7 @@ func (client *Client) checkAndSendHeartbeat(force bool) {
 				_ = client.heartbeatTimeoutID.Stop()
 			}
 			client.heartbeatTimeoutID = time.AfterFunc(
-				time.Duration(client.heartbeatTimeout*1000),
+				time.Second*time.Duration(client.heartbeatTimeout), // #nosec G115 -- timeout is a bounded configuration value
 				client.onHeartbeatAbsence,
 			)
 			shouldSend = true
@@ -818,7 +877,9 @@ func (client *Client) Connect(uri string) error {
 	if parsedURI.Scheme == "tcps" {
 		if client.tlsConfig == nil {
 
-			client.tlsConfig = &tls.Config{InsecureSkipVerify: true}
+			client.tlsConfig = &tls.Config{
+				MinVersion: tls.VersionTLS12,
+			}
 		}
 
 		connection, err := tls.Dial("tcp", parsedURI.Host, client.tlsConfig)
@@ -900,7 +961,7 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 	}
 	logonTimeout := time.Duration(0)
 	if hasParams && optionalParams[0].Timeout > 0 {
-		logonTimeout = time.Duration(optionalParams[0].Timeout) * time.Millisecond
+		logonTimeout = time.Millisecond * time.Duration(optionalParams[0].Timeout) // #nosec G115 -- timeout is user-provided bounded milliseconds
 	}
 
 	client.logging = true
@@ -978,20 +1039,20 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 
 	client.routes.Delete(commandID)
 
-		if logonFailed == nil {
-			client.lock.Unlock()
-			client.notifyConnectionState(ConnectionStateLoggedOn)
-			if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
-				bookmarkStore.SetServerVersion(client.serverVersion)
-			}
-			client.heartbeatLock.Lock()
-			hasHeartbeatTimeout := client.heartbeatTimeout != 0
-			client.heartbeatLock.Unlock()
-			if hasHeartbeatTimeout {
+	if logonFailed == nil {
+		client.lock.Unlock()
+		client.notifyConnectionState(ConnectionStateLoggedOn)
+		if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
+			bookmarkStore.SetServerVersion(client.serverVersion)
+		}
+		client.heartbeatLock.Lock()
+		hasHeartbeatTimeout := client.heartbeatTimeout != 0
+		client.heartbeatLock.Unlock()
+		if hasHeartbeatTimeout {
 
-				client.hbCommand.reset()
-				client.hbCommand.header.command = commandHeartbeat
-				client.hbCommand.header.options = []byte("beat")
+			client.hbCommand.reset()
+			client.hbCommand.header.command = commandHeartbeat
+			client.hbCommand.header.options = []byte("beat")
 
 			err = client.establishHeartbeat()
 			if err != nil {
@@ -1223,20 +1284,32 @@ func (client *Client) SowAndDeltaSubscribe(topic string, filter ...string) (*Mes
 }
 
 // ExecuteAsync sends a command and routes resulting messages to a callback.
+// Message callbacks may execute concurrently with other client callbacks;
+// handlers should be thread-safe.
 func (client *Client) ExecuteAsync(command *Command, messageHandler func(message *Message) error) (string, error) {
 	if command == nil || command.header.command == CommandUnknown {
 		return "", NewError(CommandError, "Invalid Command provided")
 	}
 
+	retryCommandOnDisconnect := client.shouldRetryCommand(command.header.command)
+	subscriptionManager := client.SubscriptionManager()
+
 	client.lock.Lock()
-	defer client.lock.Unlock()
+	lockHeld := true
+	unlockClient := func() {
+		if lockHeld {
+			client.lock.Unlock()
+			lockHeld = false
+		}
+	}
+	defer unlockClient()
 
 	commandID := client.makeCommandID()
 	command.SetCommandID(commandID)
-	state := ensureClientState(client)
 
 	if !client.connected.Load() {
-		if client.shouldRetryCommand(command.header.command) {
+		unlockClient()
+		if retryCommandOnDisconnect {
 			client.queueRetryCommand(command, messageHandler)
 			return commandID, nil
 		}
@@ -1306,13 +1379,8 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		if err != nil {
 			return commandID, err
 		}
-		if state != nil {
-			state.lock.Lock()
-			subscriptionManager := state.subscriptionManager
-			state.lock.Unlock()
-			if subscriptionManager != nil {
-				subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
-			}
+		if subscriptionManager != nil {
+			subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
 		}
 
 	case CommandUnsubscribe:
@@ -1339,13 +1407,8 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 				return subID, errors.New("Error deleting route")
 			}
 		}
-		if state != nil {
-			state.lock.Lock()
-			subscriptionManager := state.subscriptionManager
-			state.lock.Unlock()
-			if subscriptionManager != nil {
-				subscriptionManager.Unsubscribe(subID)
-			}
+		if subscriptionManager != nil {
+			subscriptionManager.Unsubscribe(subID)
 		}
 
 	case CommandFlush:
@@ -1409,8 +1472,11 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 
 			sendErr := client.send(command)
 			if sendErr != nil {
-				if client.shouldRetryCommand(command.header.command) {
+				if retryCommandOnDisconnect {
+					unlockClient()
 					client.queueRetryCommand(command, messageHandler)
+					client.lock.Lock()
+					lockHeld = true
 				}
 
 				routeErr := client.deleteRoute(routeID)
@@ -1448,8 +1514,11 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 
 		sendErr := client.send(command)
 		if sendErr != nil {
-			if client.shouldRetryCommand(command.header.command) {
+			if retryCommandOnDisconnect {
+				unlockClient()
 				client.queueRetryCommand(command, messageHandler)
+				client.lock.Lock()
+				lockHeld = true
 			}
 
 			routeErr := client.deleteRoute(routeID)
@@ -1512,21 +1581,47 @@ func (client *Client) SowAndDeltaSubscribeAsync(messageHandler func(*Message) er
 	return client.ExecuteAsync(cmd, messageHandler)
 }
 
+func (client *Client) waitForStatsAck(result <-chan _Stats, operation string) (*Message, error) {
+	timer := time.NewTimer(defaultStatsAckTimeout)
+	defer timer.Stop()
+	poll := time.NewTicker(50 * time.Millisecond)
+	defer poll.Stop()
+
+	for {
+		select {
+		case stats := <-result:
+			return stats.Stats, stats.Error
+		case <-poll.C:
+			if !client.connected.Load() {
+				return nil, NewError(DisconnectedError, "Client disconnected while waiting for "+operation+" ack")
+			}
+		case <-timer.C:
+			return nil, NewError(TimedOutError, operation+" timed out waiting for stats ack")
+		}
+	}
+}
+
 // SowDelete executes the exported sowdelete operation.
 func (client *Client) SowDelete(topic string, filter string) (*Message, error) {
-	result := make(chan _Stats)
+	result := make(chan _Stats, 1)
+	signalResult := func(stats _Stats) {
+		select {
+		case result <- stats:
+		default:
+		}
+	}
 
 	cmd := NewCommand("sow_delete").SetTopic(topic).SetFilter(filter).AddAckType(AckTypeStats)
 	_, err := client.ExecuteAsync(cmd, func(message *Message) error {
 		if ackType, hasAckType := message.AckType(); hasAckType && ackType == AckTypeStats {
 			status, _ := message.Status()
 			if status != "success" {
-				result <- _Stats{Error: reasonToError(string(message.header.reason))}
+				signalResult(_Stats{Error: reasonToError(string(message.header.reason))})
 			} else {
-				result <- _Stats{Stats: message.Copy()}
+				signalResult(_Stats{Stats: message.Copy()})
 			}
 		} else {
-			result <- _Stats{Error: NewError(UnknownError, "Unexpected response from AMPS")}
+			signalResult(_Stats{Error: NewError(UnknownError, "Unexpected response from AMPS")})
 		}
 
 		return nil
@@ -1536,27 +1631,30 @@ func (client *Client) SowDelete(topic string, filter string) (*Message, error) {
 		return nil, err
 	}
 
-	stats := <-result
-	close(result)
-
-	return stats.Stats, stats.Error
+	return client.waitForStatsAck(result, "sow_delete")
 }
 
 // SowDeleteByData executes the exported sowdeletebydata operation.
 func (client *Client) SowDeleteByData(topic string, data []byte) (*Message, error) {
-	result := make(chan _Stats)
+	result := make(chan _Stats, 1)
+	signalResult := func(stats _Stats) {
+		select {
+		case result <- stats:
+		default:
+		}
+	}
 
 	cmd := NewCommand("sow_delete").SetTopic(topic).SetData(data).AddAckType(AckTypeStats)
 	_, err := client.ExecuteAsync(cmd, func(message *Message) error {
 		if ackType, hasAckType := message.AckType(); hasAckType && ackType == AckTypeStats {
 			status, _ := message.Status()
 			if status != "success" {
-				result <- _Stats{Error: reasonToError(string(message.header.reason))}
+				signalResult(_Stats{Error: reasonToError(string(message.header.reason))})
 			} else {
-				result <- _Stats{Stats: message.Copy()}
+				signalResult(_Stats{Stats: message.Copy()})
 			}
 		} else {
-			result <- _Stats{Error: NewError(UnknownError, "Unexpected response from AMPS")}
+			signalResult(_Stats{Error: NewError(UnknownError, "Unexpected response from AMPS")})
 		}
 
 		return nil
@@ -1566,27 +1664,30 @@ func (client *Client) SowDeleteByData(topic string, data []byte) (*Message, erro
 		return nil, err
 	}
 
-	stats := <-result
-	close(result)
-
-	return stats.Stats, stats.Error
+	return client.waitForStatsAck(result, "sow_delete")
 }
 
 // SowDeleteByKeys executes the exported sowdeletebykeys operation.
 func (client *Client) SowDeleteByKeys(topic string, keys string) (*Message, error) {
-	result := make(chan _Stats)
+	result := make(chan _Stats, 1)
+	signalResult := func(stats _Stats) {
+		select {
+		case result <- stats:
+		default:
+		}
+	}
 
 	cmd := NewCommand("sow_delete").SetTopic(topic).SetSowKeys(keys).AddAckType(AckTypeStats)
 	_, err := client.ExecuteAsync(cmd, func(message *Message) error {
 		if ackType, hasAckType := message.AckType(); hasAckType && ackType == AckTypeStats {
 			status, _ := message.Status()
 			if status != "success" {
-				result <- _Stats{Error: reasonToError(string(message.header.reason))}
+				signalResult(_Stats{Error: reasonToError(string(message.header.reason))})
 			} else {
-				result <- _Stats{Stats: message.Copy()}
+				signalResult(_Stats{Stats: message.Copy()})
 			}
 		} else {
-			result <- _Stats{Error: NewError(UnknownError, "Unexpected response from AMPS")}
+			signalResult(_Stats{Error: NewError(UnknownError, "Unexpected response from AMPS")})
 		}
 
 		return nil
@@ -1596,10 +1697,7 @@ func (client *Client) SowDeleteByKeys(topic string, keys string) (*Message, erro
 		return nil, err
 	}
 
-	stats := <-result
-	close(result)
-
-	return stats.Stats, stats.Error
+	return client.waitForStatsAck(result, "sow_delete")
 }
 
 // Unsubscribe executes the exported unsubscribe operation.
@@ -1685,8 +1783,15 @@ func NewClient(clientName ...string) *Client {
 	if len(clientName) > 0 {
 		clientNameInternal = clientName[0]
 	} else {
+		randomBytes := make([]byte, 8)
+		randomValue := uint64(0)
+		if _, err := cryptorand.Read(randomBytes); err != nil {
+			randomValue = uint64(time.Now().UnixNano()) // #nosec G115 -- unix nanoseconds are non-negative on supported platforms
+		} else {
+			randomValue = binary.BigEndian.Uint64(randomBytes)
+		}
 		clientNameInternal = ClientVersion + "-" + strconv.FormatInt(time.Now().Unix(), 10) +
-			"-" + strconv.FormatInt(rand.Int63n(1000000000000), 10)
+			"-" + strconv.FormatUint(randomValue%1000000000000, 10)
 	}
 
 	client := &Client{

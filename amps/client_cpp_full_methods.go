@@ -20,7 +20,7 @@ func (client *Client) GetHandle() ClientHandle {
 	if client == nil {
 		return 0
 	}
-	return ClientHandle(uintptr(unsafe.Pointer(client)))
+	return ClientHandle(uintptr(unsafe.Pointer(client))) // #nosec G103 -- opaque handle compatibility API
 }
 
 // GetNameHash returns the current server-provided name hash.
@@ -267,7 +267,7 @@ func (client *Client) SetPublishBatching(batchSizeBytes uint64, batchTimeoutMill
 	}
 	state.lock.Lock()
 	state.publishBatchSizeBytes = batchSizeBytes
-	state.publishBatchTimeout = time.Duration(batchTimeoutMillis) * time.Millisecond
+	state.publishBatchTimeout = time.Millisecond * time.Duration(batchTimeoutMillis) // #nosec G115 -- configuration value from caller
 	state.lock.Unlock()
 	return client
 }

@@ -7,7 +7,6 @@ type MessageRouter struct {
 	routes *sync.Map
 	key    string
 	MessageRoute
-	client *Client
 }
 
 // MessageRoute stores exported state used by AMPS client APIs.
@@ -47,10 +46,7 @@ func (msgRoute *MessageRoute) deliverAck(message *Message, ackType int) int {
 	if msgRoute.requestedAcks&ackType == 0 {
 		return 0
 	}
-	err := msgRoute.messageHandler(message)
-	if err != nil {
-		err = NewError(MessageHandlerError, err)
-	}
+	_ = msgRoute.messageHandler(message)
 	return 1
 }
 
@@ -59,10 +55,7 @@ func (msgRoute *MessageRoute) isTerminationAck(ackType int) bool {
 }
 
 func (msgRoute *MessageRoute) deliverData(message *Message) int {
-	err := msgRoute.messageHandler(message)
-	if err != nil {
-		err = NewError(MessageHandlerError, err)
-	}
+	_ = msgRoute.messageHandler(message)
 	return 1
 }
 

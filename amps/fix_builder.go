@@ -12,10 +12,14 @@ type FixMessageBuilder struct {
 }
 
 func (fmb *FixMessageBuilder) checkIfLog10(tag int) int {
+	if tag < 0 {
+		return 0
+	}
+	tagValue := uint64(tag) // #nosec G115 -- validated non-negative above
 	scalar := uint64(10)
 
 	for i := 1; i < 20; i++ {
-		if uint64(tag) < scalar {
+		if tagValue < scalar {
 			return i
 		}
 		scalar *= 10
@@ -61,10 +65,10 @@ func (fmb *FixMessageBuilder) Data() string {
 // AppendBytes executes the exported appendbytes operation.
 func (fmb *FixMessageBuilder) AppendBytes(tag int, value []byte, offset int, length int) error {
 	if tag < 0 {
-		return errors.New("Illegal argument: negative tag value used in FIX builder")
+		return errors.New("illegal argument: negative tag value used in FIX builder")
 	}
 	if offset < 0 || length < 0 || offset > len(value) || offset+length > len(value) {
-		return errors.New("Illegal argument: invalid FIX value range")
+		return errors.New("illegal argument: invalid FIX value range")
 	}
 
 	tagValue := []byte(strconv.Itoa(tag))

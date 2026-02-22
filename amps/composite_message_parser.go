@@ -11,7 +11,7 @@ type CompositeMessageParser struct {
 }
 
 func (cmp *CompositeMessageParser) reset() {
-	cmp.parts = make([][]byte, 0, 0)
+	cmp.parts = make([][]byte, 0)
 }
 
 // Parse executes the exported parse operation.
@@ -23,13 +23,13 @@ func (cmp *CompositeMessageParser) Parse(data []byte) (int, error) {
 	length := len(data)
 	for start < length {
 		if length-start < 4 {
-			return cmp.Size(), errors.New("Truncated composite part header")
+			return cmp.Size(), errors.New("truncated composite part header")
 		}
 		partLength := binary.BigEndian.Uint32(data[start : start+4])
 		start += 4
-		remaining := uint32(length - start)
-		if partLength > remaining {
-			return cmp.Size(), errors.New("Invalid message part length")
+		remaining := length - start
+		if int64(partLength) > int64(remaining) {
+			return cmp.Size(), errors.New("invalid message part length")
 		}
 		end := start + int(partLength)
 		cmp.parts = append(cmp.parts, data[start:end])
@@ -55,7 +55,7 @@ func (cmp *CompositeMessageParser) Size() int {
 // Part executes the exported part operation.
 func (cmp *CompositeMessageParser) Part(index int) ([]byte, error) {
 	if index >= cmp.Size() || index < 0 {
-		return nil, errors.New("Invalid part index")
+		return nil, errors.New("invalid part index")
 	}
 
 	return cmp.parts[index], nil

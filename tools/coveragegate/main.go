@@ -56,7 +56,7 @@ var ioFiles = []string{
 }
 
 func parseProfile(path string) (map[string]coverage, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is explicitly provided by local CI/operator input
 	if err != nil {
 		return nil, err
 	}
@@ -187,4 +187,3 @@ func main() {
 	}
 	os.Exit(2)
 }
-

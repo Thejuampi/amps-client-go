@@ -23,7 +23,7 @@ type URI struct {
 	Raw       string
 	Transport string
 	User      string
-	Password  string
+	Password  string // #nosec G117 -- compatibility model includes URI credential component
 	Host      string
 	Port      string
 	Protocol  string

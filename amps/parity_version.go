@@ -38,8 +38,8 @@ func ConvertVersionToNumber(version string) uint64 {
 	seenDigit := false
 
 	for i := 0; i < len(version) && segmentIdx < len(segments); i++ {
-		ch := rune(version[i])
-		if unicode.IsDigit(ch) {
+		ch := version[i]
+		if unicode.IsDigit(rune(ch)) {
 			seenDigit = true
 			value = (value * 10) + uint64(ch-'0')
 			continue

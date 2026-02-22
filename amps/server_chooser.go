@@ -21,7 +21,7 @@ func NewDefaultServerChooser(uris ...string) *DefaultServerChooser {
 		endpoints: make([]chooserEndpoint, 0, len(uris)),
 	}
 	for _, uri := range uris {
-		chooser.Add(uri)
+		_ = chooser.Add(uri)
 	}
 	return chooser
 }

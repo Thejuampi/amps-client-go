@@ -47,10 +47,10 @@ func (nmb *NvfixMessageBuilder) Data() string {
 // AppendBytes executes the exported appendbytes operation.
 func (nmb *NvfixMessageBuilder) AppendBytes(tag []byte, value []byte, valOffset int, valLength int) error {
 	if len(tag) == 0 {
-		return errors.New("Illegal argument: no tag value provided to NVFIX builder")
+		return errors.New("illegal argument: no tag value provided to NVFIX builder")
 	}
 	if valOffset < 0 || valLength < 0 || valOffset > len(value) || valOffset+valLength > len(value) {
-		return errors.New("Illegal argument: invalid NVFIX value range")
+		return errors.New("illegal argument: invalid NVFIX value range")
 	}
 
 	sizeNeeded := len(tag) + 1 + valLength + 2

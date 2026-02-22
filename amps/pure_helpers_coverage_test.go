@@ -22,10 +22,6 @@ type valueListener struct{}
 
 func (valueListener) ConnectionStateChanged(ConnectionState) {}
 
-type alwaysFailSubscriptionClient struct {
-	*Client
-}
-
 func TestErrorHelpersCoverage(t *testing.T) {
 	reasonCases := map[string]string{
 		"bad filter":    "BadFilterError",
@@ -42,25 +38,25 @@ func TestErrorHelpersCoverage(t *testing.T) {
 	}
 
 	errorNames := map[int]string{
-		AlreadyConnectedError:         "AlreadyConnectedError",
-		AuthenticationError:           "AuthenticationError",
-		BadFilterError:                "BadFilterError",
-		BadRegexTopicError:            "BadRegexTopicError",
-		CommandError:                  "CommandError",
-		ConnectionError:               "ConnectionError",
-		ConnectionRefusedError:        "ConnectionRefusedError",
-		DisconnectedError:             "DisconnectedError",
-		ProtocolError:                 "ProtocolError",
-		InvalidTopicError:             "InvalidTopicError",
-		InvalidURIError:               "InvalidURIError",
-		nameInUseError:                "NameInUseError",
-		NotEntitledError:              "NotEntitledError",
-		RetryOperationError:           "RetryOperationError",
-		SubidInUseError:               "SubidInUseError",
+		AlreadyConnectedError:          "AlreadyConnectedError",
+		AuthenticationError:            "AuthenticationError",
+		BadFilterError:                 "BadFilterError",
+		BadRegexTopicError:             "BadRegexTopicError",
+		CommandError:                   "CommandError",
+		ConnectionError:                "ConnectionError",
+		ConnectionRefusedError:         "ConnectionRefusedError",
+		DisconnectedError:              "DisconnectedError",
+		ProtocolError:                  "ProtocolError",
+		InvalidTopicError:              "InvalidTopicError",
+		InvalidURIError:                "InvalidURIError",
+		nameInUseError:                 "NameInUseError",
+		NotEntitledError:               "NotEntitledError",
+		RetryOperationError:            "RetryOperationError",
+		SubidInUseError:                "SubidInUseError",
 		SubscriptionAlreadyExistsError: "SubscriptionAlreadyExistsError",
-		TimedOutError:                 "TimedOutError",
-		MessageHandlerError:           "MessageHandlerError",
-		UnknownError:                  "UnknownError",
+		TimedOutError:                  "TimedOutError",
+		MessageHandlerError:            "MessageHandlerError",
+		UnknownError:                   "UnknownError",
 	}
 	for code, expected := range errorNames {
 		if got := NewError(code); !strings.Contains(got.Error(), expected) {
@@ -391,17 +387,17 @@ func TestReconnectAndChooserCoverage(t *testing.T) {
 	if chooser.CurrentAuthenticator() != nil {
 		t.Fatalf("expected nil authenticator for empty chooser")
 	}
-	chooser.Add("")
-	chooser.Add("tcp://c:3/amps/json")
+	_ = chooser.Add("")
+	_ = chooser.Add("tcp://c:3/amps/json")
 	chooser.Remove("tcp://c:3/amps/json")
-	chooser.AddWithAuthenticator("", testAuthenticator{})
+	_ = chooser.AddWithAuthenticator("", testAuthenticator{})
 	chooser.index = 99
 	_ = chooser.CurrentURI()
 	chooser.index = -1
-	chooser.AddWithAuthenticator("tcp://idx:1/amps/json", testAuthenticator{})
+	_ = chooser.AddWithAuthenticator("tcp://idx:1/amps/json", testAuthenticator{})
 	_ = chooser.CurrentAuthenticator()
-	chooser.Add("tcp://a:1/amps/json")
-	chooser.AddWithAuthenticator("tcp://b:2/amps/json", testAuthenticator{})
+	_ = chooser.Add("tcp://a:1/amps/json")
+	_ = chooser.AddWithAuthenticator("tcp://b:2/amps/json", testAuthenticator{})
 	chooser.index = 999
 	_ = chooser.CurrentURI()
 	if chooser.CurrentURI() == "" {

@@ -100,7 +100,7 @@ func main() {
 	}
 	benchPattern := "^(" + strings.Join(benchmarkNames, "|") + ")$"
 
-	command := exec.Command("go", "test", *packagePath, "-run", "^$", "-bench", benchPattern, "-benchmem", "-count=1", "-benchtime="+*benchtime)
+	command := exec.Command("go", "test", *packagePath, "-run", "^$", "-bench", benchPattern, "-benchmem", "-count=1", "-benchtime="+*benchtime) // #nosec G204 -- arguments are passed without shell expansion
 	outputBytes, err := command.CombinedOutput()
 	output := string(outputBytes)
 	if err != nil {

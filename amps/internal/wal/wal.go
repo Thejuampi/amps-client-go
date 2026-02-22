@@ -20,7 +20,7 @@ func Read(path string) ([]byte, error) {
 	if path == "" {
 		return nil, errors.New("wal path is required")
 	}
-	return os.ReadFile(path)
+	return os.ReadFile(path) // #nosec G304 -- path is provided by store configuration
 }
 
 func WriteAtomic(path string, data []byte, mode os.FileMode) error {
@@ -29,7 +29,7 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	}
 	directory := filepath.Dir(path)
 	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o755); err != nil {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return err
 		}
 	}
@@ -49,11 +49,11 @@ func Append(path string, data []byte, syncWrite bool) error {
 	}
 	directory := filepath.Dir(path)
 	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o755); err != nil {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return err
 		}
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 -- path is provided by store configuration
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func replay(path string, apply func([]byte) error, copyLine bool) error {
 		return nil
 	}
 
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is provided by store configuration
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -144,7 +144,7 @@ func Truncate(path string) error {
 	if path == "" {
 		return errors.New("wal path is required")
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600) // #nosec G304 -- path is provided by store configuration
 	if err != nil {
 		return err
 	}

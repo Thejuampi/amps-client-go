@@ -634,6 +634,48 @@ func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	}
 }
 
+func TestClientSowDeleteWaitAbortsOnDisconnect(t *testing.T) {
+	client := NewClient("sow-delete-disconnect")
+	client.connected.Store(true)
+	client.connection = newTestConn()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.SowDelete("orders", "/id > 0")
+		errCh <- err
+	}()
+
+	_, _ = waitForAnyRouteHandler(t, client)
+	client.connected.Store(false)
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "DisconnectedError") {
+			t.Fatalf("expected disconnected error while waiting for sow delete ack, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected SowDelete wait to abort after disconnect")
+	}
+}
+
+func TestClientEstablishHeartbeatTimeoutCoverage(t *testing.T) {
+	client := NewClient("heartbeat-timeout")
+	client.connected.Store(true)
+	client.connection = newTestConn()
+	client.heartbeatInterval = 1
+	client.heartbeatTimeout = 1
+	client.SetErrorHandler(func(error) {})
+
+	start := time.Now()
+	err := client.establishHeartbeat()
+	if err == nil || !strings.Contains(err.Error(), "TimedOutError") {
+		t.Fatalf("expected heartbeat establishment timeout, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Fatalf("expected timeout close to one second, elapsed=%s", elapsed)
+	}
+}
+
 func TestClientLogonAckPathsCoverage(t *testing.T) {
 	successClient := NewClient("logon-success")
 	successConn := newTestConn()

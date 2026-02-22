@@ -9,7 +9,7 @@ import (
 )
 
 func mmapReadFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
+	return os.ReadFile(path) // #nosec G304 -- path is configured by trusted caller
 }
 
 func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64) error {
@@ -19,7 +19,7 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 	}
 	directory := filepath.Dir(path)
 	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o755); err != nil {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return err
 		}
 	}

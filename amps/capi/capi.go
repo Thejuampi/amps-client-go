@@ -130,13 +130,6 @@ type messageObject struct {
 
 type sslContextObject struct {
 	method    SSLMethod
-	verify    int
-	caFile    string
-	caPath    string
-	certFile  string
-	certType  int
-	keyFile   string
-	keyType   int
 	createdAt time.Time
 }
 
@@ -647,7 +640,7 @@ func ClientSetReadTimeout(handle Handle, timeoutMs uint) int {
 		err := conn.SetReadDeadline(time.Time{})
 		return setClientError(object, err)
 	}
-	err := conn.SetReadDeadline(time.Now().Add(time.Duration(timeoutMs) * time.Millisecond))
+	err := conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(timeoutMs))) // #nosec G115 -- timeoutMs is bounded API input
 	return setClientError(object, err)
 }
 
@@ -1043,7 +1036,12 @@ func SSLGetErrorCode(ssl SSLHandle, result int) int {
 			return code
 		}
 	}
-	return int(sslCode.Load())
+	code := sslCode.Load()
+	maxInt := uint64(int(^uint(0) >> 1))
+	if code > maxInt {
+		return int(^uint(0) >> 1)
+	}
+	return int(code) // #nosec G115 -- checked bounds above
 }
 
 // SSLConnect performs a compatibility SSL connect handshake.
@@ -1277,7 +1275,11 @@ func Deflate(stream *ZStream, flush int) int {
 	}
 	stream.TotalIn += uint64(len(stream.NextIn))
 	stream.NextOut = append(stream.NextOut[:0], buffer.Bytes()...)
-	stream.AvailOut = uint32(len(stream.NextOut))
+	if len(stream.NextOut) > int(^uint32(0)) {
+		stream.AvailOut = ^uint32(0)
+	} else {
+		stream.AvailOut = uint32(len(stream.NextOut)) // #nosec G115 -- checked bounds above
+	}
 	stream.TotalOut += uint64(len(stream.NextOut))
 	return EOK
 }
@@ -1333,7 +1335,11 @@ func Inflate(stream *ZStream, flush int) int {
 	}
 	stream.TotalIn += uint64(len(stream.NextIn))
 	stream.NextOut = append(stream.NextOut[:0], decoded...)
-	stream.AvailOut = uint32(len(stream.NextOut))
+	if len(stream.NextOut) > int(^uint32(0)) {
+		stream.AvailOut = ^uint32(0)
+	} else {
+		stream.AvailOut = uint32(len(stream.NextOut)) // #nosec G115 -- checked bounds above
+	}
 	stream.TotalOut += uint64(len(stream.NextOut))
 	return EOK
 }

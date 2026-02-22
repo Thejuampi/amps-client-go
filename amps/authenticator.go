@@ -25,18 +25,3 @@ type ChallengeAuthenticator interface {
 	Begin(username string, password string) (token string, err error)
 	Continue(username string, challenge string) (token string, err error)
 }
-
-type _DefaultAuthenticator struct{}
-
-// Authenticate executes the exported authenticate operation.
-func (auth *_DefaultAuthenticator) Authenticate(username string, password string) (string, error) {
-	return password, nil
-}
-
-// Retry executes the exported retry operation.
-func (auth *_DefaultAuthenticator) Retry(username string, password string) (string, error) {
-	return password, nil
-}
-
-// Completed executes the exported completed operation.
-func (auth *_DefaultAuthenticator) Completed(username string, password string, reason string) {}
