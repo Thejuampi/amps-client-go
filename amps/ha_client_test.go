@@ -171,6 +171,25 @@ func TestHAHandleDisconnectGuards(t *testing.T) {
 	}
 }
 
+func TestHADisconnectCancelsReconnectLoop(t *testing.T) {
+	ha := NewHAClient("ha-cancel-reconnect")
+	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:1/amps/json"})
+	ha.SetReconnectDelay(2 * time.Second)
+	ha.SetTimeout(0)
+
+	ha.handleDisconnect(NewError(ConnectionError, "trigger reconnect"))
+	time.Sleep(40 * time.Millisecond)
+	_ = ha.Disconnect()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for ha.reconnecting.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ha.reconnecting.Load() {
+		t.Fatalf("expected reconnect loop to stop promptly after Disconnect")
+	}
+}
+
 func TestCreateFileBackedAliases(t *testing.T) {
 	tempDir := t.TempDir()
 	publishPath := filepath.Join(tempDir, "publish.json")

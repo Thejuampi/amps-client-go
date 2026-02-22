@@ -267,11 +267,10 @@ func NewFilePublishStoreWithOptions(path string, options FileStoreOptions) *File
 	return fileStore
 }
 
-// appendWal writes a WAL record for the given store operation.
-// Callers are responsible for any necessary synchronisation; this function
-// does not acquire store.lock so that callers holding the lock can call it
-// without deadlocking.
-func (store *FilePublishStore) appendWal(record publishStoreWalRecord) error {
+// appendWalNoLock writes a WAL record for the given store operation.
+// It never acquires store.lock; callers may invoke it with or without the
+// store mutex held.
+func (store *FilePublishStore) appendWalNoLock(record publishStoreWalRecord) error {
 	if store == nil || store.walPath == "" || !store.options.UseWAL {
 		return nil
 	}
@@ -463,7 +462,7 @@ func (store *FilePublishStore) Store(command *Command) (uint64, error) {
 
 	snapshot := snapshotFromCommand(command)
 	snapshot.SequenceID = &sequence
-	if err = store.appendWal(publishStoreWalRecord{
+	if err = store.appendWalNoLock(publishStoreWalRecord{
 		Type:     "store",
 		Sequence: sequence,
 		Command:  snapshot,
@@ -481,7 +480,7 @@ func (store *FilePublishStore) DiscardUpTo(sequence uint64) error {
 	if err := store.MemoryPublishStore.DiscardUpTo(sequence); err != nil {
 		return err
 	}
-	if err := store.appendWal(publishStoreWalRecord{
+	if err := store.appendWalNoLock(publishStoreWalRecord{
 		Type:     "discard",
 		Sequence: sequence,
 	}); err != nil {
@@ -493,7 +492,7 @@ func (store *FilePublishStore) DiscardUpTo(sequence uint64) error {
 // SetErrorOnPublishGap sets error on publish gap on the receiver.
 func (store *FilePublishStore) SetErrorOnPublishGap(enabled bool) {
 	store.MemoryPublishStore.SetErrorOnPublishGap(enabled)
-	if err := store.appendWal(publishStoreWalRecord{
+	if err := store.appendWalNoLock(publishStoreWalRecord{
 		Type:       "error_on_gap",
 		ErrorOnGap: &enabled,
 	}); err != nil {

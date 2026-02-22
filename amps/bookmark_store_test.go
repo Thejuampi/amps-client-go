@@ -187,7 +187,7 @@ func TestFileBookmarkStoreWithOptionsWALReplayCoverage(t *testing.T) {
 }
 
 func TestFileBookmarkStoreAppendWalDoesNotDeadlockWhileLockHeld(t *testing.T) {
-	// appendWal no longer acquires store.lock internally (BUG-10 fix), so
+	// appendWalNoLock no longer acquires store.lock internally (BUG-10 fix), so
 	// calling it while a caller holds the lock externally must NOT deadlock.
 	path := filepath.Join(t.TempDir(), "bookmark_store_locking.json")
 	store := NewFileBookmarkStoreWithOptions(path, FileStoreOptions{
@@ -199,9 +199,9 @@ func TestFileBookmarkStoreAppendWalDoesNotDeadlockWhileLockHeld(t *testing.T) {
 	done := make(chan error, 1)
 	store.lock.Lock()
 	go func() {
-		// This must NOT block forever — appendWal should succeed without
+		// This must NOT block forever — appendWalNoLock should succeed without
 		// trying to re-acquire store.lock.
-		done <- store.appendWal(bookmarkWalRecord{
+		done <- store.appendWalNoLock(bookmarkWalRecord{
 			Type:     "upsert",
 			SubID:    "sub-1",
 			Bookmark: "10|1|",
@@ -213,10 +213,10 @@ func TestFileBookmarkStoreAppendWalDoesNotDeadlockWhileLockHeld(t *testing.T) {
 	case err := <-done:
 		// Returned promptly — no deadlock.
 		if err != nil {
-			t.Fatalf("expected appendWal to succeed while lock held externally, got %v", err)
+			t.Fatalf("expected appendWalNoLock to succeed while lock held externally, got %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatalf("appendWal deadlocked while store.lock was held externally")
+		t.Fatalf("appendWalNoLock deadlocked while store.lock was held externally")
 	}
 
 	store.lock.Unlock()

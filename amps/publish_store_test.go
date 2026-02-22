@@ -384,8 +384,8 @@ func TestFilePublishStoreLoadAndReplayErrorCoverage(t *testing.T) {
 	if err := noWal.replayWal(); err != nil {
 		t.Fatalf("expected replayWal noop when WAL disabled: %v", err)
 	}
-	if err := noWal.appendWal(publishStoreWalRecord{Type: "store"}); err != nil {
-		t.Fatalf("expected appendWal noop when WAL disabled: %v", err)
+	if err := noWal.appendWalNoLock(publishStoreWalRecord{Type: "store"}); err != nil {
+		t.Fatalf("expected appendWalNoLock noop when WAL disabled: %v", err)
 	}
 	if err := noWal.bumpMutationAndMaybeCheckpoint(); err != nil {
 		t.Fatalf("expected checkpoint path when WAL disabled: %v", err)
@@ -393,7 +393,7 @@ func TestFilePublishStoreLoadAndReplayErrorCoverage(t *testing.T) {
 }
 
 func TestFilePublishStoreAppendWalDoesNotDeadlockWhileLockHeld(t *testing.T) {
-	// appendWal no longer acquires store.lock internally (BUG-08 fix), so
+	// appendWalNoLock no longer acquires store.lock internally (BUG-08 fix), so
 	// calling it while a caller holds the lock externally must NOT deadlock.
 	path := filepath.Join(t.TempDir(), "publish_store_locking.json")
 	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{
@@ -405,19 +405,19 @@ func TestFilePublishStoreAppendWalDoesNotDeadlockWhileLockHeld(t *testing.T) {
 	done := make(chan error, 1)
 	store.lock.Lock()
 	go func() {
-		// This must NOT block forever — appendWal should succeed without
+		// This must NOT block forever — appendWalNoLock should succeed without
 		// trying to re-acquire store.lock.
-		done <- store.appendWal(publishStoreWalRecord{Type: "discard", Sequence: 1})
+		done <- store.appendWalNoLock(publishStoreWalRecord{Type: "discard", Sequence: 1})
 	}()
 
 	select {
 	case err := <-done:
 		// Returned promptly — no deadlock.
 		if err != nil {
-			t.Fatalf("expected appendWal to succeed while lock held externally, got %v", err)
+			t.Fatalf("expected appendWalNoLock to succeed while lock held externally, got %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatalf("appendWal deadlocked while store.lock was held externally")
+		t.Fatalf("appendWalNoLock deadlocked while store.lock was held externally")
 	}
 
 	store.lock.Unlock()
@@ -472,7 +472,7 @@ func TestFilePublishStoreWALFailurePaths(t *testing.T) {
 		},
 	}
 
-	// Store: appendWal fails → error is returned, but sequence is still valid.
+	// Store: appendWalNoLock fails → error is returned, but sequence is still valid.
 	seq, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
 	if err == nil {
 		t.Fatalf("expected Store to propagate WAL-append error")
@@ -481,14 +481,14 @@ func TestFilePublishStoreWALFailurePaths(t *testing.T) {
 		t.Fatalf("expected non-zero sequence even on WAL failure")
 	}
 
-	// DiscardUpTo: appendWal fails → error is returned.
+	// DiscardUpTo: appendWalNoLock fails → error is returned.
 	// Seed a real entry first via the in-memory layer directly.
 	seq2, _ := store.MemoryPublishStore.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":2}`)))
 	if err2 := store.DiscardUpTo(seq2); err2 == nil {
 		t.Fatalf("expected DiscardUpTo to propagate WAL-append error")
 	}
 
-	// SetErrorOnPublishGap: appendWal fails → error is silently swallowed but
+	// SetErrorOnPublishGap: appendWalNoLock fails → error is silently swallowed but
 	// the in-memory flag is still updated. We just verify no panic occurs and
 	// the flag is set in memory.
 	store.SetErrorOnPublishGap(true)

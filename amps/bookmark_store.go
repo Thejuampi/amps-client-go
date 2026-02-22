@@ -441,11 +441,10 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	return nil
 }
 
-// appendWal writes a WAL record for the given bookmark store operation.
-// Callers are responsible for any necessary synchronisation; this function
-// does not acquire store.lock so that callers holding the lock can call it
-// without deadlocking.
-func (store *FileBookmarkStore) appendWal(record bookmarkWalRecord) error {
+// appendWalNoLock writes a WAL record for the given bookmark store operation.
+// It never acquires store.lock; callers may invoke it with or without the
+// store mutex held.
+func (store *FileBookmarkStore) appendWalNoLock(record bookmarkWalRecord) error {
 	if store == nil || !store.options.UseWAL || store.walPath == "" {
 		return nil
 	}
@@ -556,7 +555,7 @@ func (store *FileBookmarkStore) appendUpsertFor(subID string, bookmark string) e
 	if recordCopy == nil {
 		return nil
 	}
-	return store.appendWal(bookmarkWalRecord{
+	return store.appendWalNoLock(bookmarkWalRecord{
 		Type:     "upsert",
 		SubID:    subID,
 		Bookmark: bookmark,
@@ -578,7 +577,7 @@ func (store *FileBookmarkStore) Log(message *Message) uint64 {
 // Discard executes the exported discard operation.
 func (store *FileBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	store.MemoryBookmarkStore.Discard(subID, bookmarkSeqNo)
-	_ = store.appendWal(bookmarkWalRecord{
+	_ = store.appendWalNoLock(bookmarkWalRecord{
 		Type:          "discard_upto",
 		SubID:         subID,
 		DiscardedUpTo: bookmarkSeqNo,
@@ -600,7 +599,7 @@ func (store *FileBookmarkStore) DiscardMessage(message *Message) {
 func (store *FileBookmarkStore) Purge(subID ...string) {
 	store.MemoryBookmarkStore.Purge(subID...)
 	copied := append([]string(nil), subID...)
-	_ = store.appendWal(bookmarkWalRecord{
+	_ = store.appendWalNoLock(bookmarkWalRecord{
 		Type:   "purge",
 		SubIDs: copied,
 	})
@@ -620,7 +619,7 @@ func (store *FileBookmarkStore) Persisted(subID string, bookmark string) string 
 // SetServerVersion sets server version on the receiver.
 func (store *FileBookmarkStore) SetServerVersion(version string) {
 	store.MemoryBookmarkStore.SetServerVersion(version)
-	_ = store.appendWal(bookmarkWalRecord{
+	_ = store.appendWalNoLock(bookmarkWalRecord{
 		Type:          "server_version",
 		ServerVersion: version,
 	})

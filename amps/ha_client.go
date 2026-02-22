@@ -1,6 +1,7 @@
 package amps
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +20,7 @@ type HAClient struct {
 	serverChooser          ServerChooser
 	reconnecting           atomic.Bool
 	stopped                atomic.Bool
+	reconnectCancel        context.CancelFunc
 }
 
 // NewHAClient returns a new HAClient.
@@ -49,9 +51,19 @@ func (ha *HAClient) handleDisconnect(err error) {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	ha.lock.Lock()
+	ha.reconnectCancel = cancel
+	ha.lock.Unlock()
+
 	go func() {
-		defer ha.reconnecting.Store(false)
-		_ = ha.ConnectAndLogon()
+		defer func() {
+			ha.reconnecting.Store(false)
+			ha.lock.Lock()
+			ha.reconnectCancel = nil
+			ha.lock.Unlock()
+		}()
+		_ = ha.connectAndLogon(ctx)
 		_ = err
 	}()
 }
@@ -93,8 +105,15 @@ func (ha *HAClient) reconnectWait(strategy ReconnectDelayStrategy, delay time.Du
 
 // ConnectAndLogon loops through selected endpoints until connect and logon succeed or timeout occurs.
 func (ha *HAClient) ConnectAndLogon() error {
+	return ha.connectAndLogon(context.Background())
+}
+
+func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 	if ha == nil || ha.client == nil {
 		return NewError(CommandError, "nil HAClient")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	ha.lock.Lock()
 	chooser := ha.serverChooser
@@ -115,6 +134,12 @@ func (ha *HAClient) ConnectAndLogon() error {
 
 	var lastErr error
 	for {
+		select {
+		case <-ctx.Done():
+			return NewError(DisconnectedError, "HAClient reconnect cancelled")
+		default:
+		}
+
 		if ha.stopped.Load() {
 			return NewError(DisconnectedError, "HAClient is stopped")
 		}
@@ -165,7 +190,11 @@ func (ha *HAClient) ConnectAndLogon() error {
 					wait = remaining
 				}
 			}
-			time.Sleep(wait)
+			select {
+			case <-ctx.Done():
+				return NewError(DisconnectedError, "HAClient reconnect cancelled")
+			case <-time.After(wait):
+			}
 		}
 	}
 }
@@ -321,6 +350,13 @@ func (ha *HAClient) Disconnect() error {
 		return nil
 	}
 	ha.stopped.Store(true)
+	ha.lock.Lock()
+	cancel := ha.reconnectCancel
+	ha.reconnectCancel = nil
+	ha.lock.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	return ha.client.Disconnect()
 }
 
