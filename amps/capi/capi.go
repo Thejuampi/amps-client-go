@@ -367,7 +367,7 @@ func commandFromMessage(message *messageObject) *amps.Command {
 		}
 	}
 	if message.data != nil {
-		command.SetData(append([]byte(nil), message.data...))
+		command.SetData(bytes.Clone(message.data))
 	}
 	return command
 }
@@ -396,7 +396,7 @@ func messageFromAmps(message *amps.Message) Handle {
 		object.fields["query_id"] = value
 	}
 	if payload := message.Data(); payload != nil {
-		object.data = append([]byte(nil), payload...)
+		object.data = bytes.Clone(payload)
 	}
 	return newHandle(object)
 }
@@ -729,7 +729,7 @@ func MessageCopy(message Handle) Handle {
 	if !ok {
 		return 0
 	}
-	copied := &messageObject{fields: make(map[string]string), data: append([]byte(nil), object.data...)}
+	copied := &messageObject{fields: make(map[string]string), data: bytes.Clone(object.data)}
 	for key, value := range object.fields {
 		copied.fields[key] = value
 	}
@@ -814,7 +814,7 @@ func MessageGetData(message Handle) []byte {
 	if !ok {
 		return nil
 	}
-	return append([]byte(nil), object.data...)
+	return bytes.Clone(object.data)
 }
 
 // MessageGetFieldLong parses a field as uint32-compatible value.

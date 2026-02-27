@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Thejuampi/amps-client-go/amps/internal/wal"
 )
@@ -29,7 +30,7 @@ type bookmarkWalRecord struct {
 
 // MemoryBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
 type MemoryBookmarkStore struct {
-	lock          sync.Mutex
+	lock          sync.RWMutex
 	nextSeqNo     uint64
 	records       map[string]map[string]*bookmarkRecord
 	mostRecent    map[string]string
@@ -381,7 +382,6 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	}
 
 	store.lock.Lock()
-	defer store.lock.Unlock()
 	subIDs := make([]string, 0, len(store.records))
 	for subID := range store.records {
 		subIDs = append(subIDs, subID)
@@ -418,6 +418,7 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	for key, value := range store.discardedUpTo {
 		state.DiscardedUpTo[key] = value
 	}
+	store.lock.Unlock()
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -437,7 +438,10 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 			return err
 		}
 	}
+
+	store.lock.Lock()
 	store.opsSinceCheckpoint = 0
+	store.lock.Unlock()
 	return nil
 }
 
@@ -456,15 +460,11 @@ func (store *FileBookmarkStore) bumpMutationAndMaybeCheckpoint() error {
 		return nil
 	}
 
-	store.lock.Lock()
-	store.opsSinceCheckpoint++
-	ops := store.opsSinceCheckpoint
-	checkpointInterval := store.options.CheckpointInterval
-	useWAL := store.options.UseWAL
-	store.lock.Unlock()
-
-	if !useWAL || ops >= checkpointInterval {
-		return store.saveCheckpoint()
+	ops := atomic.AddUint64(&store.opsSinceCheckpoint, 1)
+	if store.options.UseWAL && ops >= store.options.CheckpointInterval {
+		if atomic.CompareAndSwapUint64(&store.opsSinceCheckpoint, ops, 0) {
+			return store.saveCheckpoint()
+		}
 	}
 	return nil
 }
