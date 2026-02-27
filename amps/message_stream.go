@@ -385,7 +385,7 @@ func newMessageStream(client *Client) *MessageStream {
 
 type _MessageQueue struct {
 	capacity uint64
-	_length  uint64
+	_length  atomic.Uint64
 	first    uint64
 	last     uint64
 	ring     []*Message
@@ -412,10 +412,7 @@ func (queue *_MessageQueue) notifyNotEmptyLocked() {
 }
 
 func (queue *_MessageQueue) length() uint64 {
-	queue.lock.Lock()
-	defer queue.lock.Unlock()
-
-	return queue._length
+	return queue._length.Load()
 }
 
 func (queue *_MessageQueue) enqueue(message *Message) {
@@ -429,31 +426,31 @@ func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
 		return
 	}
 
-	for depth != 0 && queue._length > depth && !queue.closed {
+	for depth != 0 && queue._length.Load() > depth && !queue.closed {
 		queue.notFull.Wait()
 	}
 	if queue.closed {
 		return
 	}
 
-	if queue.capacity == queue._length {
+	if queue.capacity == queue._length.Load() {
 		queue.resize()
 	}
 
-	if queue._length != 0 {
+	if queue._length.Load() != 0 {
 		queue.last = (queue.last + 1) % queue.capacity
 	}
 	queue.ring[queue.last] = message
-	queue._length++
+	queue._length.Add(1)
 	queue.notifyNotEmptyLocked()
 }
 
 func (queue *_MessageQueue) dequeueLocked() *Message {
 	message := queue.ring[queue.first]
 	queue.ring[queue.first] = nil
-	queue._length--
+	queue._length.Add(^uint64(0))
 
-	if queue._length > 0 {
+	if queue._length.Load() > 0 {
 		queue.first = (queue.first + 1) % queue.capacity
 	} else {
 		queue.first = 0
@@ -468,7 +465,7 @@ func (queue *_MessageQueue) dequeue() (message *Message, err error) {
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
 
-	if queue._length == 0 {
+	if queue._length.Load() == 0 {
 		err = NewError(UnknownError, "Queue is empty")
 		return
 	}
@@ -480,7 +477,7 @@ func (queue *_MessageQueue) tryDequeue() (*Message, bool) {
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
 
-	if queue._length == 0 {
+	if queue._length.Load() == 0 {
 		return nil, false
 	}
 
@@ -490,7 +487,7 @@ func (queue *_MessageQueue) tryDequeue() (*Message, bool) {
 func (queue *_MessageQueue) waitDequeue() (*Message, bool) {
 	for {
 		queue.lock.Lock()
-		if queue._length > 0 {
+		if queue._length.Load() > 0 {
 			message := queue.dequeueLocked()
 			queue.lock.Unlock()
 			return message, true
@@ -522,7 +519,7 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 
 	for {
 		queue.lock.Lock()
-		if queue._length > 0 {
+		if queue._length.Load() > 0 {
 			message := queue.dequeueLocked()
 			queue.lock.Unlock()
 			return message, true
@@ -548,7 +545,7 @@ func (queue *_MessageQueue) clear() {
 
 	queue.first = 0
 	queue.last = 0
-	queue._length = 0
+	queue._length.Store(0)
 	queue.closed = false
 
 	queue.ring = make([]*Message, queue.capacity)
@@ -566,8 +563,9 @@ func (queue *_MessageQueue) close() {
 func (queue *_MessageQueue) resize() {
 	newRing := make([]*Message, queue.capacity*2)
 
+	currentLength := queue._length.Load()
 	i, j := queue.first, uint64(0)
-	for ; j < queue._length; j++ {
+	for ; j < currentLength; j++ {
 		newRing[j] = queue.ring[i]
 		i = (i + 1) % queue.capacity
 	}

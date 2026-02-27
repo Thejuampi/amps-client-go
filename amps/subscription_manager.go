@@ -7,7 +7,7 @@ import (
 
 // DefaultSubscriptionManager stores exported state used by AMPS client APIs.
 type DefaultSubscriptionManager struct {
-	lock                     sync.Mutex
+	lock                     sync.RWMutex
 	subscriptions            map[string]trackedSubscription
 	failedResubscribeHandler FailedResubscribeHandler
 }
@@ -54,10 +54,22 @@ func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Messag
 		return
 	}
 
+	var existingHandler func(*Message) error
+	manager.lock.RLock()
+	if messageHandler == nil {
+		if existing, exists := manager.subscriptions[subscriptionID]; exists {
+			existingHandler = existing.messageHandler
+		}
+	}
+	manager.lock.RUnlock()
+
 	manager.lock.Lock()
 	if messageHandler == nil {
 		if existing, exists := manager.subscriptions[subscriptionID]; exists {
 			messageHandler = existing.messageHandler
+		}
+		if messageHandler == nil {
+			messageHandler = existingHandler
 		}
 	}
 	manager.subscriptions[subscriptionID] = trackedSubscription{
@@ -109,18 +121,24 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 		return nil
 	}
 
-	manager.lock.Lock()
+	manager.lock.RLock()
 	ids := make([]string, 0, len(manager.subscriptions))
 	for subID := range manager.subscriptions {
 		ids = append(ids, subID)
 	}
+	failedHandler := manager.failedResubscribeHandler
+	manager.lock.RUnlock()
+
 	sort.Strings(ids)
+
 	subscriptions := make([]trackedSubscription, 0, len(ids))
 	for _, subID := range ids {
-		subscriptions = append(subscriptions, manager.subscriptions[subID])
+		manager.lock.RLock()
+		if sub, ok := manager.subscriptions[subID]; ok {
+			subscriptions = append(subscriptions, sub)
+		}
+		manager.lock.RUnlock()
 	}
-	failedHandler := manager.failedResubscribeHandler
-	manager.lock.Unlock()
 
 	state := ensureClientState(client)
 	noResubscribe := map[string]struct{}{}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Thejuampi/amps-client-go/amps/internal/wal"
@@ -32,7 +33,7 @@ type publishStoreWalRecord struct {
 
 // MemoryPublishStore stores replay or bookmark state for recovery-oriented workflows.
 type MemoryPublishStore struct {
-	lock              sync.Mutex
+	lock              sync.RWMutex
 	entries           map[uint64]*Command
 	lastPersisted     uint64
 	nextSequence      uint64
@@ -160,8 +161,8 @@ func (store *MemoryPublishStore) UnpersistedCount() int {
 	if store == nil {
 		return 0
 	}
-	store.lock.Lock()
-	defer store.lock.Unlock()
+	store.lock.RLock()
+	defer store.lock.RUnlock()
 	return len(store.entries)
 }
 
@@ -173,22 +174,28 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 
 	if timeout <= 0 {
 		for {
-			if store.UnpersistedCount() == 0 {
+			store.lock.Lock()
+			if len(store.entries) == 0 {
+				store.lock.Unlock()
 				return nil
 			}
-			time.Sleep(10 * time.Millisecond)
+			store.lock.Unlock()
+			time.Sleep(time.Millisecond)
 		}
 	}
 
 	deadline := time.Now().Add(timeout)
 	for {
-		if store.UnpersistedCount() == 0 {
+		store.lock.Lock()
+		if len(store.entries) == 0 {
+			store.lock.Unlock()
 			return nil
 		}
+		store.lock.Unlock()
 		if time.Now().After(deadline) {
 			return NewError(TimedOutError, "publish store flush timed out")
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -197,8 +204,8 @@ func (store *MemoryPublishStore) GetLowestUnpersisted() uint64 {
 	if store == nil {
 		return 0
 	}
-	store.lock.Lock()
-	defer store.lock.Unlock()
+	store.lock.RLock()
+	defer store.lock.RUnlock()
 	if len(store.entries) == 0 {
 		return 0
 	}
@@ -282,15 +289,11 @@ func (store *FilePublishStore) bumpMutationAndMaybeCheckpoint() error {
 		return nil
 	}
 
-	store.lock.Lock()
-	store.opsSinceCheckpoint++
-	ops := store.opsSinceCheckpoint
-	checkpointInterval := store.options.CheckpointInterval
-	useWAL := store.options.UseWAL
-	store.lock.Unlock()
-
-	if !useWAL || ops >= checkpointInterval {
-		return store.saveCheckpoint()
+	ops := atomic.AddUint64(&store.opsSinceCheckpoint, 1)
+	if store.options.UseWAL && ops >= store.options.CheckpointInterval {
+		if atomic.CompareAndSwapUint64(&store.opsSinceCheckpoint, ops, 0) {
+			return store.saveCheckpoint()
+		}
 	}
 	return nil
 }
@@ -301,7 +304,6 @@ func (store *FilePublishStore) saveCheckpoint() error {
 	}
 
 	store.lock.Lock()
-	defer store.lock.Unlock()
 	sequences := make([]uint64, 0, len(store.entries))
 	for sequence := range store.entries {
 		sequences = append(sequences, sequence)
@@ -322,6 +324,7 @@ func (store *FilePublishStore) saveCheckpoint() error {
 		ErrorOnGap:    store.errorOnPublishGap,
 		Records:       records,
 	}
+	store.lock.Unlock()
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -341,7 +344,10 @@ func (store *FilePublishStore) saveCheckpoint() error {
 			return err
 		}
 	}
+
+	store.lock.Lock()
 	store.opsSinceCheckpoint = 0
+	store.lock.Unlock()
 	return nil
 }
 

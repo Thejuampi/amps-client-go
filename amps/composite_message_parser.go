@@ -11,7 +11,11 @@ type CompositeMessageParser struct {
 }
 
 func (cmp *CompositeMessageParser) reset() {
-	cmp.parts = make([][]byte, 0)
+	if cap(cmp.parts) == 0 {
+		cmp.parts = make([][]byte, 0, 4)
+	} else {
+		cmp.parts = cmp.parts[:0]
+	}
 }
 
 // Parse executes the exported parse operation.
