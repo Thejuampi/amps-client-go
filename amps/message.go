@@ -8,20 +8,28 @@ import (
 )
 
 const jsonBufferSize = 256
-const jsonBufferCount = 16
 
-var jsonBufferPool [jsonBufferCount][jsonBufferSize]byte
-var jsonBufferCounter atomic.Uint64
+// Ring buffer mode - VERY FAST but only safe when caller processes synchronously
+// (no concurrent access to same buffer slot). Use for benchmarks or single-worker loops.
+const ringBufferCount = 256 // plenty of slots to minimize collision
+var jsonBufferPool [ringBufferCount][jsonBufferSize]byte
+var ringBufferCounter atomic.Uint64
 
 // UseRingBuffer enables high-performance ring buffer mode.
-// WARNING: Only safe when caller processes buffer synchronously before next call.
-// For concurrent/production use, keep false (default) to use sync.Pool.
+// WARNING: Only safe when:
+//   - Single-threaded (benchmarks)
+//   - Each goroutine has dedicated slot (worker pools)
+//   - Caller processes synchronously before next call
+//
+// For concurrent/production use with multiple goroutines sharing buffers,
+// keep false (default) to use sync.Pool.
 var UseRingBuffer = false
 
+// sync.Pool for production - thread-safe, good performance
 var jsonBufferSyncPool = sync.Pool{
 	New: func() interface{} {
 		buf := make([]byte, jsonBufferSize)
-		return &buf
+		return buf
 	},
 }
 
@@ -30,19 +38,22 @@ func getJsonBuffer(size int) []byte {
 		return make([]byte, size)
 	}
 	if UseRingBuffer {
-		idx := int(jsonBufferCounter.Add(1)) % jsonBufferCount
-		return jsonBufferPool[idx][:size:jsonBufferSize]
+		idx := int(ringBufferCounter.Add(1)) % ringBufferCount
+		return jsonBufferPool[idx][:size]
 	}
-	buf := jsonBufferSyncPool.Get().(*[]byte)
-	return (*buf)[:size]
+	// sync.Pool is thread-safe and uses per-P caching
+	return jsonBufferSyncPool.Get().([]byte)[:size]
 }
 
 func putJsonBuffer(buf []byte) {
-	if UseRingBuffer || cap(buf) > jsonBufferSize {
+	if UseRingBuffer {
 		return
 	}
-	b := buf[:cap(buf)]
-	jsonBufferSyncPool.Put(b)
+	if cap(buf) > jsonBufferSize {
+		return
+	}
+	// Return to sync.Pool for reuse (thread-safe)
+	jsonBufferSyncPool.Put(buf[:0]) // return empty slice with capacity
 }
 
 // Message stores exported state used by AMPS client APIs.
