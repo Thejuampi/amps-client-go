@@ -63,7 +63,6 @@ func (msg *Message) resetForParse() {
 }
 
 func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) {
-
 	if msg == nil {
 		return array, errors.New("message object error (null pointer)")
 	}
@@ -72,7 +71,276 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 		msg.resetForParse()
 	}
 
-	header := msg.header
+	if end, ok := parseHeaderTrusted(msg.header, array); ok {
+		return array[end:], nil
+	}
+
+	return parseHeaderChecked(msg.header, array)
+}
+
+func parseHeaderTrusted(header *_Header, array []byte) (int, bool) {
+	var n = len(array)
+	if n == 0 {
+		return 0, false
+	}
+
+	var index int
+	for index < n && isJSONWhitespace(array[index]) {
+		index++
+	}
+	if index < n && array[index] == '{' {
+		index++
+	}
+
+	if end, ok := parseHeaderTrustedCTSubID(header, array, index); ok {
+		return end, true
+	}
+	if end, ok := parseHeaderTrustedTopicOnly(header, array, index); ok {
+		return end, true
+	}
+
+	for index < n {
+		if isJSONWhitespace(array[index]) || array[index] == ',' {
+			index++
+			continue
+		}
+		if array[index] == '}' {
+			return index + 1, true
+		}
+		if array[index] != '"' {
+			return 0, false
+		}
+
+		var keyStart = index + 1
+		index++
+		for index < n {
+			if array[index] == '"' {
+				break
+			}
+			if array[index] == '\\' {
+				return 0, false
+			}
+			index++
+		}
+		if index >= n {
+			return 0, false
+		}
+		var keyEnd = index
+		index++
+		if index >= n || array[index] != ':' {
+			return 0, false
+		}
+		index++
+		if index >= n {
+			return 0, false
+		}
+
+		var valueStart int
+		var valueEnd int
+		if array[index] == '"' {
+			valueStart = index + 1
+			index++
+			for index < n {
+				if array[index] == '"' {
+					break
+				}
+				if array[index] == '\\' {
+					return 0, false
+				}
+				index++
+			}
+			if index >= n {
+				return 0, false
+			}
+			valueEnd = index
+			index++
+		} else {
+			valueStart = index
+			for index < n {
+				if array[index] == ',' || array[index] == '}' {
+					break
+				}
+				if isJSONWhitespace(array[index]) {
+					return 0, false
+				}
+				index++
+			}
+			if index >= n {
+				return 0, false
+			}
+			valueEnd = index
+		}
+
+		parseFieldTrusted(header, array[keyStart:keyEnd], array[valueStart:valueEnd])
+
+		if index >= n {
+			return 0, false
+		}
+		if array[index] == ',' {
+			index++
+			continue
+		}
+		if array[index] == '}' {
+			return index + 1, true
+		}
+		return 0, false
+	}
+
+	return 0, false
+}
+
+func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, bool) {
+	var n = len(array)
+	if index+11 >= n {
+		return 0, false
+	}
+	if array[index] != '"' || array[index+1] != 'c' || array[index+2] != '"' || array[index+3] != ':' || array[index+4] != '"' {
+		return 0, false
+	}
+
+	var i = index + 5
+	var cmdStart = i
+	for i < n && array[i] != '"' {
+		i++
+	}
+	if i >= n || i+11 >= n {
+		return 0, false
+	}
+	var cmdEnd = i
+	if array[i+1] != ',' || array[i+2] != '"' || array[i+3] != 't' || array[i+4] != '"' || array[i+5] != ':' || array[i+6] != '"' {
+		return 0, false
+	}
+
+	var topicStart = i + 7
+	i = topicStart
+	for i < n && array[i] != '"' {
+		i++
+	}
+	if i >= n || i+11 >= n {
+		return 0, false
+	}
+	var topicEnd = i
+	if array[i+1] != ',' || array[i+2] != '"' || array[i+3] != 's' || array[i+4] != 'u' || array[i+5] != 'b' || array[i+6] != '_' || array[i+7] != 'i' || array[i+8] != 'd' || array[i+9] != '"' || array[i+10] != ':' || array[i+11] != '"' {
+		return 0, false
+	}
+
+	var subIDStart = i + 12
+	i = subIDStart
+	for i < n && array[i] != '"' {
+		i++
+	}
+	if i >= n || i+1 >= n || array[i+1] != '}' {
+		return 0, false
+	}
+	var subIDEnd = i
+
+	if cmdEnd == cmdStart+1 && array[cmdStart] == 'p' {
+		header.command = CommandPublish
+	} else {
+		header.command = commandBytesToInt(array[cmdStart:cmdEnd])
+	}
+	header.topic = array[topicStart:topicEnd]
+	header.subID = array[subIDStart:subIDEnd]
+	return i + 2, true
+}
+
+func parseHeaderTrustedTopicOnly(header *_Header, array []byte, index int) (int, bool) {
+	var n = len(array)
+	if index+4 >= n {
+		return 0, false
+	}
+	if array[index] != '"' || array[index+1] != 't' || array[index+2] != '"' || array[index+3] != ':' {
+		return 0, false
+	}
+
+	var valueStart = index + 4
+	var valueEnd int
+	if valueStart < n && array[valueStart] == '"' {
+		valueStart++
+		valueEnd = valueStart
+		for valueEnd < n && array[valueEnd] != '"' {
+			valueEnd++
+		}
+		if valueEnd >= n || valueEnd+1 >= n || array[valueEnd+1] != '}' {
+			return 0, false
+		}
+		header.topic = array[valueStart:valueEnd]
+		return valueEnd + 2, true
+	}
+
+	valueEnd = valueStart
+	for valueEnd < n {
+		if array[valueEnd] == '}' {
+			break
+		}
+		valueEnd++
+	}
+	if valueEnd >= n {
+		return 0, false
+	}
+
+	header.topic = array[valueStart:valueEnd]
+	return valueEnd + 1, true
+}
+
+func parseFieldTrusted(header *_Header, key []byte, value []byte) {
+	if len(key) == 1 {
+		switch key[0] {
+		case 'c':
+			header.command = commandBytesToInt(value)
+			return
+		case 't':
+			header.topic = value
+			return
+		case 's':
+			if sequenceID, ok := parseUint64Value(value); ok {
+				header.sequenceIDValue = sequenceID
+				header.sequenceID = &header.sequenceIDValue
+			}
+			return
+		case 'e':
+			if expiration, ok := parseUint32Value(value); ok {
+				header.expirationValue = expiration
+				header.expiration = &header.expirationValue
+			}
+			return
+		case 'f':
+			header.filter = value
+			return
+		case 'o':
+			header.options = value
+			return
+		case 'a':
+			if ack := parseAckBytes(value); ack >= 0 {
+				header.ackTypeValue = ack
+				header.ackType = &header.ackTypeValue
+			}
+			return
+		}
+	}
+
+	if len(key) == 3 {
+		if key[0] == 'c' && key[1] == 'i' && key[2] == 'd' {
+			header.commandID = value
+			return
+		}
+	}
+
+	if len(key) == 6 {
+		if key[0] == 's' && key[1] == 'u' && key[2] == 'b' && key[3] == '_' && key[4] == 'i' && key[5] == 'd' {
+			header.subID = value
+			return
+		}
+		if key[0] == 'f' && key[1] == 'i' && key[2] == 'l' && key[3] == 't' && key[4] == 'e' && key[5] == 'r' {
+			header.filter = value
+			return
+		}
+	}
+
+	header.parseField(key, value)
+}
+
+func parseHeaderChecked(header *_Header, array []byte) ([]byte, error) {
 	state := inHeader
 	var keyStart, keyEnd, valueStart, valueEnd int
 	escaped := false
