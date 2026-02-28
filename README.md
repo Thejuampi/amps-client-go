@@ -18,22 +18,9 @@ Version: `0.1.7`
 
 This repository provides a custom Go implementation of an AMPS client API with parity-oriented behavior for C++ `Client`/`HAClient` 5.3.5.1.
 
-## Performance Highlights
+## Performance Profile
 
-Recent hot-path optimizations significantly improved parse, route, and header serialization performance.
-
-- `BenchmarkHeaderHotParse`: `75.0 -> 20.2 ns/op` (~73% faster)
-- `BenchmarkSOWBatchParse`: `122.0 -> 76.0 ns/op` (~38% faster)
-- `BenchmarkReadHotFrameDecodeDispatch`: `235.0 -> 164.6 ns/op` (~30% faster)
-- `BenchmarkHeaderHotWrite`: `230.0 -> 166.7 ns/op` (~28% faster)
-- `BenchmarkAckToString`: `175.0 -> 24.0 ns/op` (~86% faster)
-
-Strict parity benchmarks against the official AMPS C parser also show Go ahead on this machine/profile:
-
-- Header parse parity: Go `~19.3-19.9 ns/op` vs C `~22.1-22.4 ns/op`
-- SOW batch parity: Go `~98.5-100.0 ns/op` vs C `~121.3-123.3 ns/op`
-
-Full-suite p95/p99 nearest-rank artifacts are committed under `tools/perf_tail_baseline.json`, `tools/perf_tail_current.json`, and `tools/perf_tail_comparison.json`.
+This client is engineered as a low-latency AMPS implementation in Go, with optimized hot paths for header parsing, SOW batch parsing, route dispatch, and header serialization. On current parity benchmarks, it performs ahead of the official C client for the equivalent strict parser scenarios on this environment, while preserving API compatibility and coverage gates. Full-suite tail behavior is tracked with committed nearest-rank percentile artifacts in `tools/perf_tail_baseline.json`, `tools/perf_tail_current.json`, and `tools/perf_tail_comparison.json` so p95/p99 regressions are visible over time.
 
 ## Install
 
