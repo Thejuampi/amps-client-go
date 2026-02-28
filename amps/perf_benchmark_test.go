@@ -8,106 +8,20 @@ import (
 	"testing"
 )
 
-func init() {
-	UseRingBuffer = true
-}
-
 func benchmarkFrame(header *_Header, payload []byte) []byte {
-	buf := getJsonBuffer(256)
-	n := 0
-	buf[n] = ' '
-	buf[n+1] = ' '
-	buf[n+2] = ' '
-	buf[n+3] = ' '
-	n += 4
-
-	if header.command >= 0 {
-		buf[n] = '"'
-		buf[n+1] = 'c'
-		buf[n+2] = '"'
-		buf[n+3] = ':'
-		buf[n+4] = '"'
-		n += 5
-		cmdStr := commandIntToString(header.command)
-		copy(buf[n:], cmdStr)
-		n += len(cmdStr)
-		buf[n] = '"'
-		buf[n+1] = ','
-		n += 2
+	buffer := bytes.NewBuffer(nil)
+	_, _ = buffer.WriteString("    ")
+	_ = header.write(buffer)
+	if len(payload) > 0 {
+		_, _ = buffer.Write(payload)
 	}
-	if header.topic != nil {
-		buf[n] = '"'
-		buf[n+1] = 't'
-		buf[n+2] = '"'
-		buf[n+3] = ':'
-		buf[n+4] = '"'
-		n += 5
-		copy(buf[n:], header.topic)
-		n += len(header.topic)
-		buf[n] = '"'
-		buf[n+1] = ','
-		n += 2
-	}
-	if header.subID != nil {
-		buf[n] = '"'
-		buf[n+1] = 's'
-		buf[n+2] = 'u'
-		buf[n+3] = 'b'
-		buf[n+4] = '_'
-		buf[n+5] = 'i'
-		buf[n+6] = 'd'
-		buf[n+7] = '"'
-		buf[n+8] = ':'
-		buf[n+9] = '"'
-		n += 10
-		copy(buf[n:], header.subID)
-		n += len(header.subID)
-		buf[n] = '"'
-		n += 1
-	}
-	if n > 4 && buf[n-1] == ',' {
-		buf[n-1] = '}'
-	} else {
-		buf[n] = '}'
-		n++
-	}
-
-	length := uint32(n - 4)
-	buf[0] = byte((length >> 24) & 0xFF)
-	buf[1] = byte((length >> 16) & 0xFF)
-	buf[2] = byte((length >> 8) & 0xFF)
-	buf[3] = byte(length & 0xFF)
-
-	if len(payload) > 0 && n+len(payload) <= jsonBufferSize {
-		copy(buf[n:], payload)
-		n += len(payload)
-	}
-
-	return buf[:n]
-}
-
-func benchmarkFrameFixed(header *_Header, payload []byte) []byte {
-	buf := getJsonBuffer(64)
-	n := 0
-	buf[n] = ' '
-	buf[n+1] = ' '
-	buf[n+2] = ' '
-	buf[n+3] = ' '
-	n += 4
-	hdr := *header
-	if hdr.topic != nil {
-		copy(buf[n:], `"t":`)
-		n += 4
-		copy(buf[n:], hdr.topic)
-		n += len(hdr.topic)
-	}
-	buf[n] = '}'
-	length := uint32(n + 1 - 4)
-	buf[0] = byte((length >> 24) & 0xFF)
-	buf[1] = byte((length >> 16) & 0xFF)
-	buf[2] = byte((length >> 8) & 0xFF)
-	buf[3] = byte(length & 0xFF)
-	return buf[:n+1]
+	length := uint32(buffer.Len() - 4)
+	raw := buffer.Bytes()
+	raw[0] = byte((length >> 24) & 0xFF)
+	raw[1] = byte((length >> 16) & 0xFF)
+	raw[2] = byte((length >> 8) & 0xFF)
+	raw[3] = byte(length & 0xFF)
+	return append([]byte(nil), raw...)
 }
 
 func BenchmarkHeaderHotWrite(b *testing.B) {
@@ -413,7 +327,7 @@ func BenchmarkPublishSendFull(b *testing.B) {
 }
 
 func BenchmarkSOWBatchParse(b *testing.B) {
-	frame := benchmarkFrameFixed(&_Header{
+	frame := benchmarkFrame(&_Header{
 		command: CommandSOW,
 		topic:   []byte("orders"),
 		subID:   []byte("sub-1"),
