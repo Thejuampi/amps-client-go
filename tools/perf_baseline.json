@@ -61,7 +61,7 @@
       "allocs_op": 0.0
     },
     "BenchmarkSOWBatchParse": {
-      "ns_op": 370.0,
+      "ns_op": 107.0,
       "allocs_op": 0.0
     },
     "BenchmarkRouteHotManySubscriptions": {

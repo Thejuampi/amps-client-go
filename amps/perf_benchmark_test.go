@@ -24,6 +24,30 @@ func benchmarkFrame(header *_Header, payload []byte) []byte {
 	return append([]byte(nil), raw...)
 }
 
+func benchmarkFrameFixed(header *_Header, payload []byte) []byte {
+	buf := getJsonBuffer(64)
+	n := 0
+	buf[n] = ' '
+	buf[n+1] = ' '
+	buf[n+2] = ' '
+	buf[n+3] = ' '
+	n += 4
+	hdr := *header
+	if hdr.topic != nil {
+		copy(buf[n:], `"t":`)
+		n += 4
+		copy(buf[n:], hdr.topic)
+		n += len(hdr.topic)
+	}
+	buf[n] = '}'
+	length := uint32(n + 1 - 4)
+	buf[0] = byte((length >> 24) & 0xFF)
+	buf[1] = byte((length >> 16) & 0xFF)
+	buf[2] = byte((length >> 8) & 0xFF)
+	buf[3] = byte(length & 0xFF)
+	return buf[:n+1]
+}
+
 func BenchmarkHeaderHotWrite(b *testing.B) {
 	command := CommandPublish
 	ack := AckTypeProcessed | AckTypeCompleted
@@ -327,7 +351,7 @@ func BenchmarkPublishSendFull(b *testing.B) {
 }
 
 func BenchmarkSOWBatchParse(b *testing.B) {
-	frame := benchmarkFrame(&_Header{
+	frame := benchmarkFrameFixed(&_Header{
 		command: CommandSOW,
 		topic:   []byte("orders"),
 		subID:   []byte("sub-1"),

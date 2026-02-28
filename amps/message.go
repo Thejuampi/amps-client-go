@@ -2,8 +2,23 @@ package amps
 
 import (
 	"errors"
+	"sync/atomic"
 	"time"
 )
+
+const jsonBufferSize = 256
+const jsonBufferCount = 16
+
+var jsonBufferPool [jsonBufferCount][jsonBufferSize]byte
+var jsonBufferCounter atomic.Uint64
+
+func getJsonBuffer(size int) []byte {
+	if size > jsonBufferSize {
+		return make([]byte, size)
+	}
+	idx := int(jsonBufferCounter.Add(1)) % jsonBufferCount
+	return jsonBufferPool[idx][:size:jsonBufferSize]
+}
 
 // Message stores exported state used by AMPS client APIs.
 type Message struct {
