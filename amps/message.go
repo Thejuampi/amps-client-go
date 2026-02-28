@@ -34,8 +34,7 @@ func getJsonBuffer(size int) []byte {
 		return jsonBufferPool[idx][:size:jsonBufferSize]
 	}
 	buf := jsonBufferSyncPool.Get().(*[]byte)
-	b := (*buf)[:size]
-	return b
+	return (*buf)[:size]
 }
 
 func putJsonBuffer(buf []byte) {
@@ -43,7 +42,7 @@ func putJsonBuffer(buf []byte) {
 		return
 	}
 	b := buf[:cap(buf)]
-	jsonBufferSyncPool.Put(&b)
+	jsonBufferSyncPool.Put(b)
 }
 
 // Message stores exported state used by AMPS client APIs.
