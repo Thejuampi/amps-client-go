@@ -70,6 +70,16 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 	if resetMessage {
 		msg.resetForParse()
 	}
+	if len(array) > 6 && array[0] == '{' && array[1] == '"' && array[2] == 'c' && array[3] == '"' && array[4] == ':' && array[5] == '"' {
+		if end, ok := parseHeaderTrustedCTSubID(msg.header, array, 1); ok {
+			return array[end:], nil
+		}
+	}
+	if len(array) > 5 && array[0] == '{' && array[1] == '"' && array[2] == 't' && array[3] == '"' && array[4] == ':' {
+		if end, ok := parseHeaderTrustedTopicOnly(msg.header, array, 1); ok {
+			return array[end:], nil
+		}
+	}
 
 	if end, ok := parseHeaderTrusted(msg.header, array); ok {
 		return array[end:], nil
@@ -199,14 +209,25 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 	}
 
 	var i = index + 5
-	var cmdStart = i
-	for i < n && array[i] != '"' {
-		i++
+	var cmdStart int
+	var cmdEnd int
+	if i+1 < n && array[i+1] == '"' {
+		cmdStart = i
+		cmdEnd = i + 1
+		i = cmdEnd
+	} else {
+		cmdStart = i
+		for i < n && array[i] != '"' {
+			i++
+		}
+		if i >= n {
+			return 0, false
+		}
+		cmdEnd = i
 	}
-	if i >= n || i+11 >= n {
+	if i+11 >= n {
 		return 0, false
 	}
-	var cmdEnd = i
 	if array[i+1] != ',' || array[i+2] != '"' || array[i+3] != 't' || array[i+4] != '"' || array[i+5] != ':' || array[i+6] != '"' {
 		return 0, false
 	}

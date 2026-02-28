@@ -1,0 +1,238 @@
+{
+  "baseline_generated_at_utc": "2026-02-28T18:01:03Z",
+  "current_generated_at_utc": "2026-02-28T18:37:11Z",
+  "metric": "ns/op (lower is better)",
+  "percentile_method": "nearest-rank",
+  "benchmarks": {
+    "BenchmarkAckToString-20": {
+      "p95_before": 116.9,
+      "p95_after": 21.79,
+      "p95_delta": -95.11,
+      "p95_delta_pct": -81.3601,
+      "p99_before": 120.8,
+      "p99_after": 23.41,
+      "p99_delta": -97.39,
+      "p99_delta_pct": -80.6209
+    },
+    "BenchmarkHeaderHotParse-20": {
+      "p95_before": 22.6,
+      "p95_after": 21.44,
+      "p95_delta": -1.16,
+      "p95_delta_pct": -5.1327,
+      "p99_before": 23.53,
+      "p99_after": 22.27,
+      "p99_delta": -1.26,
+      "p99_delta_pct": -5.3549
+    },
+    "BenchmarkHeaderHotWrite-20": {
+      "p95_before": 236.2,
+      "p95_after": 182.8,
+      "p95_delta": -53.4,
+      "p95_delta_pct": -22.608,
+      "p99_before": 251.0,
+      "p99_after": 186.5,
+      "p99_delta": -64.5,
+      "p99_delta_pct": -25.6972
+    },
+    "BenchmarkHeaderReset-20": {
+      "p95_before": 0.1309,
+      "p95_after": 0.1269,
+      "p95_delta": -0.004,
+      "p95_delta_pct": -3.0558,
+      "p99_before": 0.1528,
+      "p99_after": 0.1387,
+      "p99_delta": -0.0141,
+      "p99_delta_pct": -9.2277
+    },
+    "BenchmarkMessageCopy-20": {
+      "p95_before": 367.7,
+      "p95_after": 373.3,
+      "p95_delta": 5.6,
+      "p95_delta_pct": 1.523,
+      "p99_before": 368.1,
+      "p99_after": 380.5,
+      "p99_delta": 12.4,
+      "p99_delta_pct": 3.3686
+    },
+    "BenchmarkMessageReset-20": {
+      "p95_before": 66.94,
+      "p95_after": 67.24,
+      "p95_delta": 0.3,
+      "p95_delta_pct": 0.4482,
+      "p99_before": 70.13,
+      "p99_after": 69.55,
+      "p99_delta": -0.58,
+      "p99_delta_pct": -0.827
+    },
+    "BenchmarkParseUint32Value-20": {
+      "p95_before": 8.635,
+      "p95_after": 8.725,
+      "p95_delta": 0.09,
+      "p95_delta_pct": 1.0423,
+      "p99_before": 8.676,
+      "p99_after": 9.295,
+      "p99_delta": 0.619,
+      "p99_delta_pct": 7.1346
+    },
+    "BenchmarkParseUintBytes-20": {
+      "p95_before": 8.767,
+      "p95_after": 8.872,
+      "p95_delta": 0.105,
+      "p95_delta_pct": 1.1977,
+      "p99_before": 8.778,
+      "p99_after": 9.612,
+      "p99_delta": 0.834,
+      "p99_delta_pct": 9.501
+    },
+    "BenchmarkPublishSendFull-20": {
+      "p95_before": 48.11,
+      "p95_after": 48.7,
+      "p95_delta": 0.59,
+      "p95_delta_pct": 1.2264,
+      "p99_before": 49.13,
+      "p99_after": 50.11,
+      "p99_delta": 0.98,
+      "p99_delta_pct": 1.9947
+    },
+    "BenchmarkReadHotFrameDecodeDispatch-20": {
+      "p95_before": 204.2,
+      "p95_after": 177.3,
+      "p95_delta": -26.9,
+      "p95_delta_pct": -13.1734,
+      "p99_before": 207.2,
+      "p99_after": 180.3,
+      "p99_delta": -26.9,
+      "p99_delta_pct": -12.9826
+    },
+    "BenchmarkRouteHotManySubscriptions-20": {
+      "p95_before": 165.7,
+      "p95_after": 137.7,
+      "p95_delta": -28.0,
+      "p95_delta_pct": -16.898,
+      "p99_before": 172.5,
+      "p99_after": 140.8,
+      "p99_delta": -31.7,
+      "p99_delta_pct": -18.3768
+    },
+    "BenchmarkRouteHotMultiSIDs-20": {
+      "p95_before": 207.2,
+      "p95_after": 181.0,
+      "p95_delta": -26.2,
+      "p95_delta_pct": -12.6448,
+      "p99_before": 218.3,
+      "p99_after": 182.0,
+      "p99_delta": -36.3,
+      "p99_delta_pct": -16.6285
+    },
+    "BenchmarkRouteHotSingle-20": {
+      "p95_before": 165.0,
+      "p95_after": 139.0,
+      "p95_delta": -26.0,
+      "p95_delta_pct": -15.7576,
+      "p99_before": 170.1,
+      "p99_after": 147.9,
+      "p99_delta": -22.2,
+      "p99_delta_pct": -13.0511
+    },
+    "BenchmarkSOWBatchParse-20": {
+      "p95_before": 77.22,
+      "p95_after": 78.27,
+      "p95_delta": 1.05,
+      "p95_delta_pct": 1.3598,
+      "p99_before": 98.22,
+      "p99_after": 85.48,
+      "p99_delta": -12.74,
+      "p99_delta_pct": -12.9709
+    },
+    "BenchmarkStreamConcurrentDequeue-20": {
+      "p95_before": 103.8,
+      "p95_after": 107.1,
+      "p95_delta": 3.3,
+      "p95_delta_pct": 3.1792,
+      "p99_before": 105.4,
+      "p99_after": 111.6,
+      "p99_delta": 6.2,
+      "p99_delta_pct": 5.8824
+    },
+    "BenchmarkStreamHotDequeue-20": {
+      "p95_before": 75.09,
+      "p95_after": 75.39,
+      "p95_delta": 0.3,
+      "p95_delta_pct": 0.3995,
+      "p99_before": 79.52,
+      "p99_after": 77.21,
+      "p99_delta": -2.31,
+      "p99_delta_pct": -2.9049
+    },
+    "BenchmarkStreamHotTimeout-20": {
+      "p95_before": 12.84,
+      "p95_after": 12.79,
+      "p95_delta": -0.05,
+      "p95_delta_pct": -0.3894,
+      "p99_before": 12.95,
+      "p99_after": 12.85,
+      "p99_delta": -0.1,
+      "p99_delta_pct": -0.7722
+    },
+    "BenchmarkStrictParityHeaderHotParse-20": {
+      "p95_before": 21.51,
+      "p95_after": 20.14,
+      "p95_delta": -1.37,
+      "p95_delta_pct": -6.3691,
+      "p99_before": 21.55,
+      "p99_after": 20.7,
+      "p99_delta": -0.85,
+      "p99_delta_pct": -3.9443
+    },
+    "BenchmarkStrictParitySOWBatchParse-20": {
+      "p95_before": 110.8,
+      "p95_after": 99.2,
+      "p95_delta": -11.6,
+      "p95_delta_pct": -10.4693,
+      "p99_before": 115.2,
+      "p99_after": 99.2,
+      "p99_delta": -16.0,
+      "p99_delta_pct": -13.8889
+    },
+    "BenchmarkSyncMapLoad-20": {
+      "p95_before": 9.471,
+      "p95_after": 9.677,
+      "p95_delta": 0.206,
+      "p95_delta_pct": 2.1751,
+      "p99_before": 9.628,
+      "p99_after": 9.728,
+      "p99_delta": 0.1,
+      "p99_delta_pct": 1.0386
+    },
+    "BenchmarkSyncMapStore-20": {
+      "p95_before": 239.0,
+      "p95_after": 239.3,
+      "p95_delta": 0.3,
+      "p95_delta_pct": 0.1255,
+      "p99_before": 240.1,
+      "p99_after": 244.6,
+      "p99_delta": 4.5,
+      "p99_delta_pct": 1.8742
+    },
+    "BenchmarkTrimASCIISpaces-20": {
+      "p95_before": 3.178,
+      "p95_after": 3.125,
+      "p95_delta": -0.053,
+      "p95_delta_pct": -1.6677,
+      "p99_before": 3.312,
+      "p99_after": 3.136,
+      "p99_delta": -0.176,
+      "p99_delta_pct": -5.314
+    },
+    "BenchmarkUnsafeStringFromBytes-20": {
+      "p95_before": 1.99,
+      "p95_after": 0.2384,
+      "p95_delta": -1.7516,
+      "p95_delta_pct": -88.0201,
+      "p99_before": 2.034,
+      "p99_after": 0.2393,
+      "p99_delta": -1.7947,
+      "p99_delta_pct": -88.235
+    }
+  }
+}

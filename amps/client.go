@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 // ClientVersion and related constants define protocol and client behavior values.
@@ -98,7 +99,7 @@ func unsafeStringFromBytes(value []byte) string {
 	if len(value) == 0 {
 		return ""
 	}
-	return string(value)
+	return unsafe.String(unsafe.SliceData(value), len(value))
 }
 
 func trimASCIISpaces(value []byte) []byte {
@@ -433,9 +434,9 @@ func (client *Client) onMessage(message *Message) (err error) {
 	if len(subIDsBytes) > 0 {
 		start := 0
 		for start < len(subIDsBytes) {
-			end := len(subIDsBytes)
-			if comma := bytes.IndexByte(subIDsBytes[start:], ','); comma >= 0 {
-				end = start + comma
+			end := start
+			for end < len(subIDsBytes) && subIDsBytes[end] != ',' {
+				end++
 			}
 
 			candidateRoute := trimASCIISpaces(subIDsBytes[start:end])

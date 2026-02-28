@@ -296,26 +296,39 @@ const (
 )
 
 func ackToString(ackType int) string {
-	var result []string
+	if ackType == AckTypeNone {
+		return ""
+	}
+
+	var encoded [64]byte
+	result := encoded[:0]
+	appendToken := func(token string) {
+		if len(result) > 0 {
+			result = append(result, ',')
+		}
+		result = append(result, token...)
+	}
+
 	if ackType&AckTypeReceived > 0 {
-		result = append(result, "received")
+		appendToken("received")
 	}
 	if ackType&AckTypeParsed > 0 {
-		result = append(result, "parsed")
+		appendToken("parsed")
 	}
 	if ackType&AckTypeProcessed > 0 {
-		result = append(result, "processed")
+		appendToken("processed")
 	}
 	if ackType&AckTypePersisted > 0 {
-		result = append(result, "persisted")
+		appendToken("persisted")
 	}
 	if ackType&AckTypeCompleted > 0 {
-		result = append(result, "completed")
+		appendToken("completed")
 	}
 	if ackType&AckTypeStats > 0 {
-		result = append(result, "stats")
+		appendToken("stats")
 	}
-	return strings.Join(result, ",")
+
+	return string(result)
 }
 
 func stringToAck(ackType string) int {

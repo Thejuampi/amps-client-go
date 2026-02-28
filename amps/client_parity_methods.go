@@ -260,8 +260,15 @@ func (client *Client) callGlobalCommandTypeHandler(commandType int, message *Mes
 }
 
 func (client *Client) detectAndTrackDuplicate(message *Message) bool {
+	if message == nil {
+		return false
+	}
+	if _, hasBookmark := message.Bookmark(); !hasBookmark {
+		return false
+	}
+
 	state := ensureClientState(client)
-	if state == nil || message == nil {
+	if state == nil {
 		return false
 	}
 
@@ -269,10 +276,6 @@ func (client *Client) detectAndTrackDuplicate(message *Message) bool {
 	bookmarkStore := state.bookmarkStore
 	state.lock.Unlock()
 	if bookmarkStore == nil {
-		return false
-	}
-
-	if _, hasBookmark := message.Bookmark(); !hasBookmark {
 		return false
 	}
 
@@ -330,8 +333,7 @@ func makeAckBatchKey(topic string, subID string) string {
 }
 
 func (client *Client) maybeAutoAck(message *Message) {
-	state := ensureClientState(client)
-	if state == nil || message == nil {
+	if message == nil {
 		return
 	}
 	if message.GetIgnoreAutoAck() {
@@ -345,6 +347,11 @@ func (client *Client) maybeAutoAck(message *Message) {
 		return
 	}
 	if !hasTopic || !hasBookmark || topic == "" || bookmark == "" {
+		return
+	}
+
+	state := ensureClientState(client)
+	if state == nil {
 		return
 	}
 
