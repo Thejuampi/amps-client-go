@@ -339,24 +339,63 @@ func parseFieldInline(header *_Header, key []byte, value []byte) {
 		return
 	}
 	if l >= 8 && l <= 16 {
-		if ck == 'c' && l == 10 && key[1] == 'l' && key[2] == 'i' && key[3] == 'e' && key[4] == 'n' && key[5] == 't' && key[6] == '_' && key[7] == 'n' && key[8] == 'a' && key[9] == 'm' && key[10] == 'e' {
+		if ck == 'c' &&
+			l == 10 &&
+			key[1] == 'l' &&
+			key[2] == 'i' &&
+			key[3] == 'e' &&
+			key[4] == 'n' &&
+			key[5] == 't' &&
+			key[6] == '_' &&
+			key[7] == 'n' &&
+			key[8] == 'a' &&
+			key[9] == 'm' &&
+			key[10] == 'e' {
 			header.clientName = value
 			return
 		}
-		if ck == 'q' && l == 8 && key[1] == 'u' && key[2] == 'e' && key[3] == 'r' && key[4] == 'y' && key[5] == '_' && key[6] == 'i' && key[7] == 'd' {
+		if ck == 'q' &&
+			l == 8 &&
+			key[1] == 'u' &&
+			key[2] == 'e' &&
+			key[3] == 'r' &&
+			key[4] == 'y' &&
+			key[5] == '_' &&
+			key[6] == 'i' &&
+			key[7] == 'd' {
 			header.queryID = value
 			return
 		}
 		if ck == 'r' {
-			if l == 14 && key[1] == 'e' && key[2] == 'c' && key[3] == 'o' && key[4] == 'r' && key[5] == 'd' && key[6] == 's' && key[7] == '_' {
-				if key[8] == 'd' && key[9] == 'e' && key[10] == 'l' && key[11] == 'e' && key[12] == 't' && key[13] == 'e' && key[14] == 'd' {
+			if l == 14 &&
+				key[1] == 'e' &&
+				key[2] == 'c' &&
+				key[3] == 'o' &&
+				key[4] == 'r' &&
+				key[5] == 'd' &&
+				key[6] == 's' &&
+				key[7] == '_' {
+				if key[8] == 'd' &&
+					key[9] == 'e' &&
+					key[10] == 'l' &&
+					key[11] == 'e' &&
+					key[12] == 't' &&
+					key[13] == 'e' &&
+					key[14] == 'd' {
 					if records, ok := parseUint32Value(value); ok {
 						header.recordsDeletedValue = records
 						header.recordsDeleted = &header.recordsDeletedValue
 					}
 					return
 				}
-				if key[8] == 'i' && key[9] == 'n' && key[10] == 's' && key[11] == 'e' && key[12] == 'r' && key[13] == 't' && key[14] == 'e' && key[15] == 'd' {
+				if key[8] == 'i' &&
+					key[9] == 'n' &&
+					key[10] == 's' &&
+					key[11] == 'e' &&
+					key[12] == 'r' &&
+					key[13] == 't' &&
+					key[14] == 'e' &&
+					key[15] == 'd' {
 					if records, ok := parseUint32Value(value); ok {
 						header.recordsInsertedValue = records
 						header.recordsInserted = &header.recordsInsertedValue
@@ -364,7 +403,22 @@ func parseFieldInline(header *_Header, key []byte, value []byte) {
 					return
 				}
 			}
-			if l == 15 && key[1] == 'e' && key[2] == 'c' && key[3] == 'o' && key[4] == 'r' && key[5] == 'd' && key[6] == 's' && key[7] == '_' && key[8] == 'r' && key[9] == 'e' && key[10] == 't' && key[11] == 'u' && key[12] == 'r' && key[13] == 'n' && key[14] == 'e' && key[15] == 'd' {
+			if l == 15 &&
+				key[1] == 'e' &&
+				key[2] == 'c' &&
+				key[3] == 'o' &&
+				key[4] == 'r' &&
+				key[5] == 'd' &&
+				key[6] == 's' &&
+				key[7] == '_' &&
+				key[8] == 'r' &&
+				key[9] == 'e' &&
+				key[10] == 't' &&
+				key[11] == 'u' &&
+				key[12] == 'r' &&
+				key[13] == 'n' &&
+				key[14] == 'e' &&
+				key[15] == 'd' {
 				if records, ok := parseUint32Value(value); ok {
 					header.recordsReturnedValue = records
 					header.recordsReturned = &header.recordsReturnedValue
@@ -372,11 +426,32 @@ func parseFieldInline(header *_Header, key []byte, value []byte) {
 				return
 			}
 		}
-		if ck == 's' && l == 7 && key[1] == 'o' && key[2] == 'w' && key[3] == '_' && key[4] == 'k' && key[5] == 'e' && key[6] == 'y' && key[7] == 's' {
+		if ck == 's' &&
+			l == 7 &&
+			key[1] == 'o' &&
+			key[2] == 'w' &&
+			key[3] == '_' &&
+			key[4] == 'k' &&
+			key[5] == 'e' &&
+			key[6] == 'y' &&
+			key[7] == 's' {
 			header.sowKeys = value
 			return
 		}
-		if ck == 't' && l == 14 && key[1] == 'o' && key[2] == 'p' && key[3] == 'i' && key[4] == 'c' && key[5] == '_' && key[6] == 'm' && key[7] == 'a' && key[8] == 't' && key[9] == 'c' && key[10] == 'h' && key[11] == 'e' && key[12] == 's' {
+		if ck == 't' &&
+			l == 14 &&
+			key[1] == 'o' &&
+			key[2] == 'p' &&
+			key[3] == 'i' &&
+			key[4] == 'c' &&
+			key[5] == '_' &&
+			key[6] == 'm' &&
+			key[7] == 'a' &&
+			key[8] == 't' &&
+			key[9] == 'c' &&
+			key[10] == 'h' &&
+			key[11] == 'e' &&
+			key[12] == 's' {
 			if tm, ok := parseUint32Value(value); ok {
 				header.topicMatchesValue = tm
 				header.topicMatches = &header.topicMatchesValue
