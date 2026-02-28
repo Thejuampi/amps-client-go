@@ -68,3 +68,95 @@ func TestHeaderWriteExactOutput(t *testing.T) {
 		t.Fatalf("unexpected header payload: got %q want %q", buffer.String(), expected)
 	}
 }
+
+func TestHeaderParseWithoutOpeningBrace(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	left, err := parseHeader(message, true, []byte(`"c":"p","t":"orders","sub_id":"sub-1"}tail`))
+	if err != nil {
+		t.Fatalf("parse header failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	topic, hasTopic := message.Topic()
+	if !hasTopic || topic != "orders" {
+		t.Fatalf("unexpected topic: has=%v value=%q", hasTopic, topic)
+	}
+	subID, hasSubID := message.SubID()
+	if !hasSubID || subID != "sub-1" {
+		t.Fatalf("unexpected sub id: has=%v value=%q", hasSubID, subID)
+	}
+}
+
+func TestHeaderParseFallbackWithWhitespace(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	left, err := parseHeader(message, true, []byte(`{ "c":"p", "filter":"/id > 10", "t":"orders" }tail`))
+	if err != nil {
+		t.Fatalf("parse header failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	filter, hasFilter := message.Filter()
+	if !hasFilter || filter != "/id > 10" {
+		t.Fatalf("unexpected filter: has=%v value=%q", hasFilter, filter)
+	}
+}
+
+func TestHeaderParseTrustedFieldCoverage(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	left, err := parseHeader(message, true, []byte(`{"a":"processed,completed","c":"p","e":42,"f":"/id > 10","o":"replace","s":99,"t":"orders","cid":"cmd-1","sub_id":"sub-1","bs":10}tail`))
+	if err != nil {
+		t.Fatalf("parse header failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	ack, hasAck := message.AckType()
+	if !hasAck || ack != AckTypeProcessed|AckTypeCompleted {
+		t.Fatalf("unexpected ack type: has=%v value=%q", hasAck, ack)
+	}
+	expiration, hasExpiration := message.Expiration()
+	if !hasExpiration || expiration != 42 {
+		t.Fatalf("unexpected expiration: has=%v value=%d", hasExpiration, expiration)
+	}
+	batchSize, hasBatchSize := message.BatchSize()
+	if !hasBatchSize || batchSize != 10 {
+		t.Fatalf("unexpected batch size: has=%v value=%d", hasBatchSize, batchSize)
+	}
+}
+
+func TestHeaderParseTopicOnlyQuotedFastPath(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	left, err := parseHeader(message, true, []byte(`"t":"orders"}tail`))
+	if err != nil {
+		t.Fatalf("parse header failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	topic, hasTopic := message.Topic()
+	if !hasTopic || topic != "orders" {
+		t.Fatalf("unexpected topic: has=%v value=%q", hasTopic, topic)
+	}
+}
+
+func TestHeaderParseTopicOnlyUnquotedFastPath(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	left, err := parseHeader(message, true, []byte(`"t":orders}tail`))
+	if err != nil {
+		t.Fatalf("parse header failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	topic, hasTopic := message.Topic()
+	if !hasTopic || topic != "orders" {
+		t.Fatalf("unexpected topic: has=%v value=%q", hasTopic, topic)
+	}
+}
