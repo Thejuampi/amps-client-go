@@ -243,7 +243,11 @@ func parseFieldInline(header *_Header, key []byte, value []byte) {
 		return
 	}
 	if l == 5 {
-		if ck == 't' && key[1] == 'o' && key[2] == 'p' && key[3] == '_' && key[4] == 'n' {
+		if ck == 't' &&
+			key[1] == 'o' &&
+			key[2] == 'p' &&
+			key[3] == '_' &&
+			key[4] == 'n' {
 			if topN, ok := parseUint32Value(value); ok {
 				header.topNValue = topN
 				header.topN = &header.topNValue
@@ -252,19 +256,39 @@ func parseFieldInline(header *_Header, key []byte, value []byte) {
 		return
 	}
 	if l == 6 {
-		if ck == 's' && key[1] == 'u' && key[2] == 'b' && key[3] == '_' && key[4] == 'i' && key[5] == 'd' {
+		if ck == 's' &&
+			key[1] == 'u' &&
+			key[2] == 'b' &&
+			key[3] == '_' &&
+			key[4] == 'i' &&
+			key[5] == 'd' {
 			header.subID = value
 			return
 		}
-		if ck == 'r' && key[1] == 'e' && key[2] == 'a' && key[3] == 's' && key[4] == 'o' && key[5] == 'n' {
+		if ck == 'r' &&
+			key[1] == 'e' &&
+			key[2] == 'a' &&
+			key[3] == 's' &&
+			key[4] == 'o' &&
+			key[5] == 'n' {
 			header.reason = value
 			return
 		}
-		if ck == 's' && key[1] == 't' && key[2] == 'a' && key[3] == 't' && key[4] == 'u' && key[5] == 's' {
+		if ck == 's' &&
+			key[1] == 't' &&
+			key[2] == 'a' &&
+			key[3] == 't' &&
+			key[4] == 'u' &&
+			key[5] == 's' {
 			header.status = value
 			return
 		}
-		if ck == 'f' && key[1] == 'i' && key[2] == 'l' && key[3] == 't' && key[4] == 'e' && key[5] == 'r' {
+		if ck == 'f' &&
+			key[1] == 'i' &&
+			key[2] == 'l' &&
+			key[3] == 't' &&
+			key[4] == 'e' &&
+			key[5] == 'r' {
 			header.filter = value
 			return
 		}
@@ -273,22 +297,42 @@ func parseFieldInline(header *_Header, key []byte, value []byte) {
 	if l == 7 {
 		switch ck {
 		case 'm':
-			if key[1] == 'a' && key[2] == 't' && key[3] == 'c' && key[4] == 'h' && key[5] == 'e' && key[6] == 's' {
+			if key[1] == 'a' &&
+				key[2] == 't' &&
+				key[3] == 'c' &&
+				key[4] == 'h' &&
+				key[5] == 'e' &&
+				key[6] == 's' {
 				if matches, ok := parseUint32Value(value); ok {
 					header.matchesValue = matches
 					header.matches = &header.matchesValue
 				}
 			}
 		case 'o':
-			if key[1] == 'r' && key[2] == 'd' && key[3] == 'e' && key[4] == 'r' && key[5] == 'B' && key[6] == 'y' {
+			if key[1] == 'r' &&
+				key[2] == 'd' &&
+				key[3] == 'e' &&
+				key[4] == 'r' &&
+				key[5] == 'B' &&
+				key[6] == 'y' {
 				header.orderBy = value
 			}
 		case 'u':
-			if key[1] == 's' && key[2] == 'e' && key[3] == 'r' && key[4] == '_' && key[5] == 'i' && key[6] == 'd' {
+			if key[1] == 's' &&
+				key[2] == 'e' &&
+				key[3] == 'r' &&
+				key[4] == '_' &&
+				key[5] == 'i' &&
+				key[6] == 'd' {
 				header.userID = value
 			}
 		case 'v':
-			if key[1] == 'e' && key[2] == 'r' && key[3] == 's' && key[4] == 'i' && key[5] == 'o' && key[6] == 'n' {
+			if key[1] == 'e' &&
+				key[2] == 'r' &&
+				key[3] == 's' &&
+				key[4] == 'i' &&
+				key[5] == 'o' &&
+				key[6] == 'n' {
 				header.version = value
 			}
 		}
