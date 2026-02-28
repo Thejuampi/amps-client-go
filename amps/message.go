@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+// Lookup table for O(1) JSON whitespace detection.
+var jsonWhitespaceLookup [256]bool
+
+func init() {
+	jsonWhitespaceLookup[' '] = true
+	jsonWhitespaceLookup['\n'] = true
+	jsonWhitespaceLookup['\r'] = true
+	jsonWhitespaceLookup['\t'] = true
+}
+
 // Message stores exported state used by AMPS client APIs.
 type Message struct {
 	header              *_Header
@@ -62,6 +72,7 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 		msg.resetForParse()
 	}
 
+	header := msg.header
 	state := inHeader
 	var keyStart, keyEnd, valueStart, valueEnd int
 	escaped := false
@@ -76,7 +87,6 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 				keyStart = index + 1
 				escaped = false
 			case '{':
-				// start of header object
 			case '}':
 				return array[index+1:], nil
 			default:
@@ -116,9 +126,9 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 			case ',':
 				state = inHeader
 				valueEnd = index
-				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
+				header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
 			case '}':
-				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:index])
+				header.parseField(array[keyStart:keyEnd], array[valueStart:index])
 				return array[index+1:], nil
 			}
 
@@ -134,7 +144,7 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 			if character == '"' {
 				state = inHeader
 				valueEnd = index
-				msg.header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
+				header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
 			}
 		}
 	}
@@ -143,7 +153,7 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 }
 
 func isJSONWhitespace(character byte) bool {
-	return character == ' ' || character == '\n' || character == '\r' || character == '\t'
+	return jsonWhitespaceLookup[character]
 }
 
 // Copy executes the exported copy operation.
