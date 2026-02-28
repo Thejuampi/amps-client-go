@@ -145,6 +145,22 @@ func TestHeaderParseTopicOnlyQuotedFastPath(t *testing.T) {
 	}
 }
 
+func TestHeaderParseTopicOnlyQuotedFastPathWithBrace(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	left, err := parseHeader(message, true, []byte(`{"t":"orders"}tail`))
+	if err != nil {
+		t.Fatalf("parse header failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	topic, hasTopic := message.Topic()
+	if !hasTopic || topic != "orders" {
+		t.Fatalf("unexpected topic: has=%v value=%q", hasTopic, topic)
+	}
+}
+
 func TestHeaderParseTopicOnlyUnquotedFastPath(t *testing.T) {
 	message := &Message{header: new(_Header)}
 

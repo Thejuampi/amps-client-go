@@ -18,6 +18,10 @@ Version: `0.1.7`
 
 This repository provides a custom Go implementation of an AMPS client API with parity-oriented behavior for C++ `Client`/`HAClient` 5.3.5.1.
 
+## Performance Profile
+
+This client is engineered as a low-latency AMPS implementation in Go, with optimized hot paths for header parsing, SOW batch parsing, route dispatch, and header serialization. On current parity benchmarks, it performs ahead of the official C client for the equivalent strict parser scenarios on this environment, while preserving API compatibility and coverage gates. Full-suite tail behavior is tracked with committed nearest-rank percentile artifacts in `tools/perf_tail_baseline.json`, `tools/perf_tail_current.json`, and `tools/perf_tail_comparison.json` so p95/p99 regressions are visible over time.
+
 ## Install
 
 ```bash

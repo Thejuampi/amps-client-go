@@ -31,6 +31,7 @@ func TestParseHeaderTrustedCTSubIDInvalid(t *testing.T) {
 		index int
 	}{
 		{name: "too-short", input: []byte(`"c":"p"`), index: 0},
+		{name: "short-after-command", input: []byte(`"c":"p","t":"`), index: 0},
 		{name: "wrong-prefix", input: []byte(`"x":"p","t":"orders","sub_id":"sub-1"}`), index: 0},
 		{name: "missing-topic-separator", input: []byte(`"c":"p""t":"orders","sub_id":"sub-1"}`), index: 0},
 		{name: "missing-subid-end", input: []byte(`"c":"p","t":"orders","sub_id":"sub-1"`), index: 0},
