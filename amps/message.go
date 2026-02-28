@@ -2,6 +2,7 @@ package amps
 
 import (
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -12,12 +13,37 @@ const jsonBufferCount = 16
 var jsonBufferPool [jsonBufferCount][jsonBufferSize]byte
 var jsonBufferCounter atomic.Uint64
 
+// UseRingBuffer enables high-performance ring buffer mode.
+// WARNING: Only safe when caller processes buffer synchronously before next call.
+// For concurrent/production use, keep false (default) to use sync.Pool.
+var UseRingBuffer = false
+
+var jsonBufferSyncPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, jsonBufferSize)
+		return &buf
+	},
+}
+
 func getJsonBuffer(size int) []byte {
 	if size > jsonBufferSize {
 		return make([]byte, size)
 	}
-	idx := int(jsonBufferCounter.Add(1)) % jsonBufferCount
-	return jsonBufferPool[idx][:size:jsonBufferSize]
+	if UseRingBuffer {
+		idx := int(jsonBufferCounter.Add(1)) % jsonBufferCount
+		return jsonBufferPool[idx][:size:jsonBufferSize]
+	}
+	buf := jsonBufferSyncPool.Get().(*[]byte)
+	b := (*buf)[:size]
+	return b
+}
+
+func putJsonBuffer(buf []byte) {
+	if UseRingBuffer || cap(buf) > jsonBufferSize {
+		return
+	}
+	b := buf[:cap(buf)]
+	jsonBufferSyncPool.Put(&b)
 }
 
 // Message stores exported state used by AMPS client APIs.

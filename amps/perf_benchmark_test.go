@@ -8,6 +8,10 @@ import (
 	"testing"
 )
 
+func init() {
+	UseRingBuffer = true
+}
+
 func benchmarkFrame(header *_Header, payload []byte) []byte {
 	buffer := bytes.NewBuffer(nil)
 	_, _ = buffer.WriteString("    ")
