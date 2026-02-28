@@ -5,6 +5,39 @@ import (
 	"testing"
 )
 
+func TestBufferPoolFunctions(t *testing.T) {
+	oldUseRingBuffer := UseRingBuffer
+	UseRingBuffer = false
+	defer func() { UseRingBuffer = oldUseRingBuffer }()
+
+	buf := getJsonBuffer(128)
+	if len(buf) != 128 {
+		t.Fatalf("expected len 128, got %d", len(buf))
+	}
+	putJsonBuffer(buf)
+
+	buf2 := getJsonBuffer(300)
+	if cap(buf2) != 300 {
+		t.Fatalf("expected cap 300, got %d", cap(buf2))
+	}
+	putJsonBuffer(buf2)
+
+	buf3 := getJsonBuffer(64)
+	putJsonBuffer(buf3)
+}
+
+func TestBufferPoolRingBufferMode(t *testing.T) {
+	oldUseRingBuffer := UseRingBuffer
+	UseRingBuffer = true
+	defer func() { UseRingBuffer = oldUseRingBuffer }()
+
+	buf := getJsonBuffer(64)
+	if len(buf) != 64 {
+		t.Fatalf("expected len 64, got %d", len(buf))
+	}
+	putJsonBuffer(buf)
+}
+
 func TestHeaderNumericParseEdgeAndInvalid(t *testing.T) {
 	message := &Message{header: new(_Header)}
 

@@ -9,7 +9,7 @@ import (
 )
 
 func init() {
-	UseRingBuffer = true
+	UseRingBuffer = true // for benchmark comparison
 }
 
 func benchmarkFrame(header *_Header, payload []byte) []byte {
