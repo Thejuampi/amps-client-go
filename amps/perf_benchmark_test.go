@@ -9,11 +9,10 @@ import (
 )
 
 func init() {
-	UseRingBuffer = true // for benchmark comparison
 }
 
 func benchmarkFrame(header *_Header, payload []byte) []byte {
-	buf := getJsonBuffer(256)
+	buf := make([]byte, 256)
 	n := 0
 	buf[n] = ' '
 	buf[n+1] = ' '
@@ -78,7 +77,7 @@ func benchmarkFrame(header *_Header, payload []byte) []byte {
 	buf[2] = byte((length >> 8) & 0xFF)
 	buf[3] = byte(length & 0xFF)
 
-	if len(payload) > 0 && n+len(payload) <= jsonBufferSize {
+	if len(payload) > 0 && n+len(payload) <= 256 {
 		copy(buf[n:], payload)
 		n += len(payload)
 	}
@@ -87,7 +86,7 @@ func benchmarkFrame(header *_Header, payload []byte) []byte {
 }
 
 func benchmarkFrameFixed(header *_Header, payload []byte) []byte {
-	buf := getJsonBuffer(64)
+	buf := make([]byte, 64)
 	n := 0
 	buf[n] = ' '
 	buf[n+1] = ' '
