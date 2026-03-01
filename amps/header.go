@@ -295,7 +295,24 @@ const (
 	closeNumberValue = ","
 )
 
+var ackTypeCache [64]string
+
+func init() {
+	var index int
+	for index = 0; index < len(ackTypeCache); index++ {
+		ackTypeCache[index] = ackToStringSlow(index)
+	}
+}
+
 func ackToString(ackType int) string {
+	if ackType >= 0 && ackType < len(ackTypeCache) {
+		return ackTypeCache[ackType]
+	}
+
+	return ackToStringSlow(ackType)
+}
+
+func ackToStringSlow(ackType int) string {
 	if ackType == AckTypeNone {
 		return ""
 	}

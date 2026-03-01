@@ -259,3 +259,24 @@ func TestHandleSendFailureOnlyForPublishCommands(t *testing.T) {
 		t.Fatalf("expected failed write callback for publish command")
 	}
 }
+
+func TestAddRouteNilRequestedAckHandler(t *testing.T) {
+	var client = NewClient("nil-requested-ack-handler")
+
+	var routeErr = client.addRoute("route-ack", nil, AckTypeNone, AckTypeProcessed, false, false)
+	if routeErr != nil {
+		t.Fatalf("expected addRoute to accept nil requested-ack handler: %v", routeErr)
+	}
+
+	var handlerValue, exists = client.routes.Load("route-ack")
+	if !exists {
+		t.Fatalf("expected route handler to be stored")
+	}
+
+	var ackType = AckTypeProcessed
+	var message = &Message{header: &_Header{command: CommandAck, ackType: &ackType, status: []byte("success")}}
+	var handlerErr = handlerValue.(func(*Message) error)(message)
+	if handlerErr != nil {
+		t.Fatalf("expected nil handler execution to succeed: %v", handlerErr)
+	}
+}

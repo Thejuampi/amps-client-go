@@ -1,0 +1,48 @@
+{
+  "baseline_generated_at_utc": "2026-03-01T04:37:21Z",
+  "current_generated_at_utc": "2026-03-01T05:51:32Z",
+  "metric": "ns/op (lower is better)",
+  "percentile_method": "nearest-rank",
+  "benchmarks": {
+    "OfficialCIntegrationConnectLogon": {
+      "p95_before": 689634.67,
+      "p95_after": 990982,
+      "p95_delta": 301347.32999999996,
+      "p95_delta_pct": 43.69666188621287,
+      "p99_before": 881306.67,
+      "p99_after": 2124850.67,
+      "p99_delta": 1243544,
+      "p99_delta_pct": 141.1023021078463
+    },
+    "OfficialCIntegrationHAConnectAndLogon": {
+      "p95_before": 639606.25,
+      "p95_after": 459820,
+      "p95_delta": -179786.25,
+      "p95_delta_pct": -28.10889512102172,
+      "p99_before": 640266.25,
+      "p99_after": 740551.25,
+      "p99_delta": 100285,
+      "p99_delta_pct": 15.663015190945954
+    },
+    "OfficialCIntegrationPublish": {
+      "p95_before": 46921.5,
+      "p95_after": 121651.58,
+      "p95_delta": 74730.08,
+      "p95_delta_pct": 159.26617861747815,
+      "p99_before": 48558.75,
+      "p99_after": 126046.58,
+      "p99_delta": 77487.83,
+      "p99_delta_pct": 159.57542152547174
+    },
+    "OfficialCIntegrationSubscribe": {
+      "p95_before": 33311.2,
+      "p95_after": 95934.8,
+      "p95_delta": 62623.600000000006,
+      "p95_delta_pct": 187.99562909772092,
+      "p99_before": 45110.4,
+      "p99_after": 101912,
+      "p99_delta": 56801.6,
+      "p99_delta_pct": 125.91686174363339
+    }
+  }
+}

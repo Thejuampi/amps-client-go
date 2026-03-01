@@ -150,9 +150,20 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 
 		var uri string
 		var authenticator Authenticator
+		var chooserInfo ConnectionInfo
+		var chooserNeedsInfo bool
 		if chooser != nil {
-			uri = chooser.CurrentURI()
-			authenticator = chooser.CurrentAuthenticator()
+			if endpointChooser, ok := chooser.(interface {
+				CurrentEndpoint() (string, Authenticator)
+			}); ok {
+				uri, authenticator = endpointChooser.CurrentEndpoint()
+			} else {
+				uri = chooser.CurrentURI()
+				authenticator = chooser.CurrentAuthenticator()
+			}
+			if _, isDefault := chooser.(*DefaultServerChooser); !isDefault {
+				chooserNeedsInfo = true
+			}
 		}
 		if uri == "" {
 			uri = ha.client.URI()
@@ -163,7 +174,10 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 
 		if err := ha.connectAndLogonOnce(uri, authenticator, options, hasLogonOptions); err == nil {
 			if chooser != nil {
-				chooser.ReportSuccess(ha.client.GetConnectionInfo())
+				if chooserNeedsInfo {
+					chooserInfo = ha.client.GetConnectionInfo()
+				}
+				chooser.ReportSuccess(chooserInfo)
 			}
 			if strategy != nil {
 				strategy.Reset()
@@ -172,7 +186,10 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 		} else {
 			lastErr = err
 			if chooser != nil {
-				chooser.ReportFailure(err, ha.client.GetConnectionInfo())
+				if chooserNeedsInfo {
+					chooserInfo = ha.client.GetConnectionInfo()
+				}
+				chooser.ReportFailure(err, chooserInfo)
 			}
 		}
 

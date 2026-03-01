@@ -1,0 +1,44 @@
+{
+  "generated_at_utc": "2026-03-01T05:51:11Z",
+  "source_command": "go test ./amps -run ^$ -bench BenchmarkAPIIntegrationClient(Publish|Subscribe)$ -benchmem -benchtime=1s -count=20 ; go test ./amps -run ^$ -bench BenchmarkAPIIntegration(ClientConnectLogon|HAConnectAndLogon)$ -benchmem -benchtime=5x -count=20",
+  "percentile_method": "nearest-rank",
+  "samples_per_benchmark": 20,
+  "benchmarks": {
+    "BenchmarkAPIIntegrationClientConnectLogon": {
+      "n": 20,
+      "min_ns_op": 323520,
+      "p50_ns_op": 374640,
+      "p95_ns_op": 498040,
+      "p99_ns_op": 655580,
+      "max_ns_op": 655580,
+      "mean_ns_op": 408390
+    },
+    "BenchmarkAPIIntegrationClientPublish": {
+      "n": 20,
+      "min_ns_op": 40943,
+      "p50_ns_op": 43384,
+      "p95_ns_op": 48151,
+      "p99_ns_op": 58008,
+      "max_ns_op": 58008,
+      "mean_ns_op": 44307.8
+    },
+    "BenchmarkAPIIntegrationClientSubscribe": {
+      "n": 20,
+      "min_ns_op": 33539,
+      "p50_ns_op": 34063,
+      "p95_ns_op": 40156,
+      "p99_ns_op": 40626,
+      "max_ns_op": 40626,
+      "mean_ns_op": 36400.35
+    },
+    "BenchmarkAPIIntegrationHAConnectAndLogon": {
+      "n": 20,
+      "min_ns_op": 342680,
+      "p50_ns_op": 367540,
+      "p95_ns_op": 420560,
+      "p99_ns_op": 435480,
+      "max_ns_op": 435480,
+      "mean_ns_op": 374825
+    }
+  }
+}

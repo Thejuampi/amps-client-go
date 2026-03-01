@@ -35,6 +35,12 @@ make fmt              # go fmt
 make release          # vet + test + build (release gate)
 ```
 
+## Coverage Policy (Enforced)
+
+- Coverage gate is required before merge: `make coverage-check`.
+- `./amps/...` thresholds are strict: aggregate `>=90%`, pure files `100%`, IO/stateful files `>=80%`.
+- Test design target for changed areas is `>=80%`, but gate values above are mandatory.
+
 ## Coding Conventions
 
 - **Local variable declarations** — prefer `var` for clarity, but `:=` short declarations are allowed where concise and improve readability.

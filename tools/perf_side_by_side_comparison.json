@@ -1,0 +1,219 @@
+{
+  "baseline_generated_at_utc": "2026-03-01T04:38:35Z",
+  "current_generated_at_utc": "2026-03-01T05:51:43Z",
+  "entries": [
+    {
+      "benchmark_id": "client.parse.header.strict",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "go",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.parse.sow_batch.strict",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "go",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.serialize.header.strict",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "c",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.route.single",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.route.multi_sids",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.read.decode.dispatch",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.set_name",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_name",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_name_hash",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.set_logon_correlation_data",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_logon_correlation_data",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.set_auto_ack",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_auto_ack",
+      "tier": "offline",
+      "ha": false,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_timeout",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_timeout",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_reconnect_delay",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_reconnect_delay",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_reconnect_delay_strategy",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_logon_options",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_logon_options",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_server_chooser",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_server_chooser",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "ha.disconnected",
+      "tier": "offline",
+      "ha": true,
+      "winner_before": "n/a",
+      "winner_after": "n/a"
+    },
+    {
+      "benchmark_id": "client.connect_logon.integration",
+      "tier": "integration",
+      "ha": false,
+      "go_p95_before": 922400,
+      "go_p95_after": 498040,
+      "go_p95_delta": -424360,
+      "c_p95_before": 689634.67,
+      "c_p95_after": 990982,
+      "c_p95_delta": 301347.32999999996,
+      "winner_before": "c",
+      "winner_after": "go"
+    },
+    {
+      "benchmark_id": "client.publish.integration",
+      "tier": "integration",
+      "ha": false,
+      "go_p95_before": 214700,
+      "go_p95_after": 48151,
+      "go_p95_delta": -166549,
+      "c_p95_before": 46921.5,
+      "c_p95_after": 121651.58,
+      "c_p95_delta": 74730.08,
+      "winner_before": "c",
+      "winner_after": "go"
+    },
+    {
+      "benchmark_id": "client.subscribe.integration",
+      "tier": "integration",
+      "ha": false,
+      "go_p95_before": 146600,
+      "go_p95_after": 40156,
+      "go_p95_delta": -106444,
+      "c_p95_before": 33311.2,
+      "c_p95_after": 95934.8,
+      "c_p95_delta": 62623.600000000006,
+      "winner_before": "c",
+      "winner_after": "go"
+    },
+    {
+      "benchmark_id": "ha.connect_and_logon.integration",
+      "tier": "integration",
+      "ha": true,
+      "go_p95_before": 1084500,
+      "go_p95_after": 420560,
+      "go_p95_delta": -663940,
+      "c_p95_before": 639606.25,
+      "c_p95_after": 459820,
+      "c_p95_delta": -179786.25,
+      "winner_before": "c",
+      "winner_after": "go"
+    }
+  ]
+}

@@ -27,7 +27,7 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 		t.Fatalf("expected parseUint64Value success, got value=%d ok=%v", value, ok)
 	}
 
-	if ack := parseAckBytes([]byte("received,parsed,processed,persisted,completed,stats,unknown")); ack != (AckTypeReceived|AckTypeParsed|AckTypeProcessed|AckTypePersisted|AckTypeCompleted|AckTypeStats) {
+	if ack := parseAckBytes([]byte("received,parsed,processed,persisted,completed,stats,unknown")); ack != (AckTypeReceived | AckTypeParsed | AckTypeProcessed | AckTypePersisted | AckTypeCompleted | AckTypeStats) {
 		t.Fatalf("unexpected parsed ack bitset: %d", ack)
 	}
 	if value := ackToString(AckTypeReceived | AckTypeCompleted | AckTypeStats); value != "received,completed,stats" {
@@ -39,7 +39,7 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	if value := ackToString(AckTypeNone); value != "" {
 		t.Fatalf("unexpected empty ackToString value: %q", value)
 	}
-	if value := stringToAck("received,parsed,processed,persisted,completed,stats,unknown"); value != (AckTypeReceived|AckTypeParsed|AckTypeProcessed|AckTypePersisted|AckTypeCompleted|AckTypeStats) {
+	if value := stringToAck("received,parsed,processed,persisted,completed,stats,unknown"); value != (AckTypeReceived | AckTypeParsed | AckTypeProcessed | AckTypePersisted | AckTypeCompleted | AckTypeStats) {
 		t.Fatalf("unexpected stringToAck value: %d", value)
 	}
 
@@ -88,7 +88,7 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	if command, _ := (&Message{header: header}).Command(); command != CommandPublish {
 		t.Fatalf("unexpected parsed command: %d", command)
 	}
-	if ack, _ := (&Message{header: header}).AckType(); ack != (AckTypeProcessed|AckTypeStats) {
+	if ack, _ := (&Message{header: header}).AckType(); ack != (AckTypeProcessed | AckTypeStats) {
 		t.Fatalf("unexpected parsed ack: %d", ack)
 	}
 
@@ -548,5 +548,23 @@ func TestMessageAccessorsCoverage(t *testing.T) {
 	noTopicBookmark.SetClientImpl(client)
 	if err := noTopicBookmark.Ack(); err == nil {
 		t.Fatalf("expected Ack missing topic/bookmark error")
+	}
+}
+
+func TestAckToStringOutOfRangeFallsBackToSlowPath(t *testing.T) {
+	var value = ackToString(64)
+	if value != "" {
+		t.Fatalf("expected out-of-range ack to encode as empty string, got %q", value)
+	}
+}
+
+func TestGetRawTransmissionTimeFormatsUnixNanoLazily(t *testing.T) {
+	var rawNano = int64(1700000000123456789)
+	var message = &Message{rawTransmissionUnixNano: rawNano}
+	var expected = time.Unix(0, rawNano).UTC().Format(time.RFC3339Nano)
+
+	var actual = message.GetRawTransmissionTime()
+	if actual != expected {
+		t.Fatalf("unexpected raw transmission time: got %q want %q", actual, expected)
 	}
 }

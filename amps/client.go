@@ -36,11 +36,14 @@ const (
 	maxInboundFrameLength = 256 * 1024 * 1024
 )
 
+var clientVersionBytes = []byte(ClientVersion)
+
 // Client manages a single AMPS connection, command execution, and message routing.
 type Client struct {
 	clientName         string
 	nameHash           string
 	nameHashValue      uint64
+	clientNameBytes    []byte
 	serverVersion      string
 	logonCorrelationID string
 	nextID             atomic.Uint64
@@ -100,6 +103,12 @@ func unsafeStringFromBytes(value []byte) string {
 		return ""
 	}
 	return unsafe.String(unsafe.SliceData(value), len(value))
+}
+
+func defaultErrorHandler(client *Client) func(err error) {
+	return func(err error) {
+		fmt.Println(time.Now().Local().String()+" ["+client.clientName+"] >>>", err)
+	}
 }
 
 func trimASCIISpaces(value []byte) []byte {
@@ -392,7 +401,8 @@ func (client *Client) onMessage(message *Message) (err error) {
 	}
 	message.client = client
 	message.valid = true
-	message.rawTransmissionTime = time.Now().UTC().Format(time.RFC3339Nano)
+	message.rawTransmissionTime = ""
+	message.rawTransmissionUnixNano = time.Now().UTC().UnixNano()
 
 	command := message.header.command
 	queryIDBytes := message.header.queryID
@@ -563,9 +573,11 @@ func (client *Client) addRoute(
 
 				requestedAcks &^= ack
 
-				err = messageHandler(message)
-				if err != nil {
-					err = NewError(MessageHandlerError, err)
+				if messageHandler != nil {
+					err = messageHandler(message)
+					if err != nil {
+						err = NewError(MessageHandlerError, err)
+					}
 				}
 			}
 
@@ -861,19 +873,35 @@ func (client *Client) Connect(uri string) error {
 		state.lock.Unlock()
 	}
 
-	pathParts := strings.Split(parsedURI.Path, "/")
-	partsLength := len(pathParts)
-	if partsLength > 1 {
-		if pathParts[1] != "amps" {
+	var path = strings.TrimPrefix(parsedURI.Path, "/")
+	if path != "" {
+		if path == "amps" {
+			client.messageType = nil
+		} else if strings.HasPrefix(path, "amps/") {
+			var messageTypeValue = path[len("amps/"):]
+			if slash := strings.IndexByte(messageTypeValue, '/'); slash >= 0 {
+				messageTypeValue = messageTypeValue[:slash]
+			}
+			if messageTypeValue != "" {
+				client.messageType = []byte(messageTypeValue)
+			} else {
+				client.messageType = nil
+			}
+		} else {
 			return NewError(ProtocolError, "Specification of message type requires amps protocol")
-		}
-
-		if partsLength > 2 {
-			client.messageType = []byte(pathParts[2])
 		}
 	}
 
 	client.url = parsedURI
+	dialNetwork := "tcp"
+	hostname := parsedURI.Hostname()
+	if ip := net.ParseIP(hostname); ip != nil {
+		if ip.To4() != nil {
+			dialNetwork = "tcp4"
+		} else {
+			dialNetwork = "tcp6"
+		}
+	}
 
 	if parsedURI.Scheme == "tcps" {
 		if client.tlsConfig == nil {
@@ -883,13 +911,13 @@ func (client *Client) Connect(uri string) error {
 			}
 		}
 
-		connection, err := tls.Dial("tcp", parsedURI.Host, client.tlsConfig)
+		connection, err := tls.Dial(dialNetwork, parsedURI.Host, client.tlsConfig)
 		client.connection = connection
 		if err != nil {
 			return NewError(ConnectionRefusedError, err)
 		}
 	} else {
-		connection, err := net.Dial("tcp", parsedURI.Host)
+		connection, err := net.Dial(dialNetwork, parsedURI.Host)
 		client.connection = connection
 		if err != nil {
 			return NewError(ConnectionRefusedError, err)
@@ -922,8 +950,8 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 	client.command.header.ackType = &ack
 
 	commandID := client.makeCommandID()
-	client.command.header.clientName = []byte(client.clientName)
-	client.command.header.version = []byte(ClientVersion)
+	client.command.header.clientName = client.clientNameBytes
+	client.command.header.version = clientVersionBytes
 	client.command.header.messageType = client.messageType
 
 	var username, password string
@@ -1321,6 +1349,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	var routeID string
 	var systemAcks int
 	userAcks, hasUserAcks := command.AckType()
+	var waitForProcessedAck = true
 
 	switch command.header.command {
 	case CommandSubscribe:
@@ -1349,7 +1378,13 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			}
 		}
 
-		systemAcks |= AckTypeProcessed
+		if isSubscribe && messageHandler != nil && hasUserAcks && userAcks&AckTypeProcessed > 0 {
+			waitForProcessedAck = false
+		}
+
+		if waitForProcessedAck {
+			systemAcks |= AckTypeProcessed
+		}
 
 		if !isSubscribe {
 			systemAcks |= AckTypeCompleted
@@ -1374,13 +1409,15 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			routeID = commandID
 		}
 
-		client.setSyncAckProcessing(make(chan _Result, 1))
+		if systemAcks != AckTypeNone {
+			client.setSyncAckProcessing(make(chan _Result, 1))
+		}
 
 		err := client.addRoute(routeID, messageHandler, systemAcks, userAcks, isSubscribe, isReplace)
 		if err != nil {
 			return commandID, err
 		}
-		if subscriptionManager != nil {
+		if retryCommandOnDisconnect && subscriptionManager != nil {
 			subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
 		}
 
@@ -1408,7 +1445,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 				return subID, errors.New("Error deleting route")
 			}
 		}
-		if subscriptionManager != nil {
+		if retryCommandOnDisconnect && subscriptionManager != nil {
 			subscriptionManager.Unsubscribe(subID)
 		}
 
@@ -1796,15 +1833,17 @@ func NewClient(clientName ...string) *Client {
 	}
 
 	client := &Client{
-		clientName:     clientNameInternal,
-		nameHash:       fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
-		sendBuffer:     bytes.NewBuffer(nil),
-		command:        &Command{header: new(_Header)},
-		hbCommand:      &Command{header: new(_Header)},
-		message:        &Message{header: new(_Header)},
-		routes:         new(sync.Map),
-		messageStreams: new(sync.Map),
+		clientName:      clientNameInternal,
+		nameHash:        fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
+		clientNameBytes: []byte(clientNameInternal),
+		sendBuffer:      bytes.NewBuffer(nil),
+		command:         &Command{header: new(_Header)},
+		hbCommand:       &Command{header: new(_Header)},
+		message:         &Message{header: new(_Header)},
+		routes:          new(sync.Map),
+		messageStreams:  new(sync.Map),
 	}
+	client.errorHandler = defaultErrorHandler(client)
 	client.nameHashValue = unsafeStringHash(client.nameHash)
 
 	state := ensureClientState(client)

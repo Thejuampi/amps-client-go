@@ -1,0 +1,48 @@
+{
+  "baseline_generated_at_utc": "2026-03-01T04:32:50Z",
+  "current_generated_at_utc": "2026-03-01T05:51:11Z",
+  "metric": "ns/op (lower is better)",
+  "percentile_method": "nearest-rank",
+  "benchmarks": {
+    "BenchmarkAPIIntegrationClientConnectLogon": {
+      "p95_before": 922400,
+      "p95_after": 498040,
+      "p95_delta": -424360,
+      "p95_delta_pct": -46.00607111882047,
+      "p99_before": 1199900,
+      "p99_after": 655580,
+      "p99_delta": -544320,
+      "p99_delta_pct": -45.363780315026254
+    },
+    "BenchmarkAPIIntegrationClientPublish": {
+      "p95_before": 214700,
+      "p95_after": 48151,
+      "p95_delta": -166549,
+      "p95_delta_pct": -77.57289240801117,
+      "p99_before": 233300,
+      "p99_after": 58008,
+      "p99_delta": -175292,
+      "p99_delta_pct": -75.1358765537934
+    },
+    "BenchmarkAPIIntegrationClientSubscribe": {
+      "p95_before": 146600,
+      "p95_after": 40156,
+      "p95_delta": -106444,
+      "p95_delta_pct": -72.60845839017736,
+      "p99_before": 351800,
+      "p99_after": 40626,
+      "p99_delta": -311174,
+      "p99_delta_pct": -88.4519613416714
+    },
+    "BenchmarkAPIIntegrationHAConnectAndLogon": {
+      "p95_before": 1084500,
+      "p95_after": 420560,
+      "p95_delta": -663940,
+      "p95_delta_pct": -61.22083909635777,
+      "p99_before": 1213600,
+      "p99_after": 435480,
+      "p99_delta": -778120,
+      "p99_delta_pct": -64.11667765326303
+    }
+  }
+}

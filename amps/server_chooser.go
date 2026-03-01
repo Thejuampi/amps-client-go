@@ -28,34 +28,31 @@ func NewDefaultServerChooser(uris ...string) *DefaultServerChooser {
 
 // CurrentURI executes the exported currenturi operation.
 func (chooser *DefaultServerChooser) CurrentURI() string {
+	var uri, _ = chooser.CurrentEndpoint()
+	return uri
+}
+
+// CurrentEndpoint returns current URI/authenticator snapshot under a single lock.
+func (chooser *DefaultServerChooser) CurrentEndpoint() (string, Authenticator) {
 	if chooser == nil {
-		return ""
+		return "", nil
 	}
 	chooser.lock.Lock()
 	defer chooser.lock.Unlock()
 	if len(chooser.endpoints) == 0 {
-		return ""
+		return "", nil
 	}
 	if chooser.index < 0 || chooser.index >= len(chooser.endpoints) {
 		chooser.index = 0
 	}
-	return chooser.endpoints[chooser.index].uri
+	var endpoint = chooser.endpoints[chooser.index]
+	return endpoint.uri, endpoint.authenticator
 }
 
 // CurrentAuthenticator executes the exported currentauthenticator operation.
 func (chooser *DefaultServerChooser) CurrentAuthenticator() Authenticator {
-	if chooser == nil {
-		return nil
-	}
-	chooser.lock.Lock()
-	defer chooser.lock.Unlock()
-	if len(chooser.endpoints) == 0 {
-		return nil
-	}
-	if chooser.index < 0 || chooser.index >= len(chooser.endpoints) {
-		chooser.index = 0
-	}
-	return chooser.endpoints[chooser.index].authenticator
+	var _, authenticator = chooser.CurrentEndpoint()
+	return authenticator
 }
 
 // ReportFailure executes the exported reportfailure operation.

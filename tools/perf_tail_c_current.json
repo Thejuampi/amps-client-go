@@ -1,0 +1,44 @@
+{
+  "generated_at_utc": "2026-03-01T05:51:32Z",
+  "source_command": "./tools/cperf/fakeamps_c_integration_benchmark.exe",
+  "percentile_method": "nearest-rank",
+  "samples_per_benchmark": 20,
+  "benchmarks": {
+    "OfficialCIntegrationConnectLogon": {
+      "n": 20,
+      "min_ns_op": 224454,
+      "p50_ns_op": 345888,
+      "p95_ns_op": 990982,
+      "p99_ns_op": 2124850.67,
+      "max_ns_op": 2124850.67,
+      "mean_ns_op": 525920.0005
+    },
+    "OfficialCIntegrationHAConnectAndLogon": {
+      "n": 20,
+      "min_ns_op": 312321.26,
+      "p50_ns_op": 360891.25,
+      "p95_ns_op": 459820,
+      "p99_ns_op": 740551.25,
+      "max_ns_op": 740551.25,
+      "mean_ns_op": 384839.062
+    },
+    "OfficialCIntegrationPublish": {
+      "n": 20,
+      "min_ns_op": 43065.58,
+      "p50_ns_op": 44995.83,
+      "p95_ns_op": 121651.58,
+      "p99_ns_op": 126046.58,
+      "max_ns_op": 126046.58,
+      "mean_ns_op": 56672.6535
+    },
+    "OfficialCIntegrationSubscribe": {
+      "n": 20,
+      "min_ns_op": 27922.7,
+      "p50_ns_op": 29324.4,
+      "p95_ns_op": 95934.8,
+      "p99_ns_op": 101912,
+      "max_ns_op": 101912,
+      "mean_ns_op": 39486.425
+    }
+  }
+}
