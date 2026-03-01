@@ -361,6 +361,28 @@ func (j *messageJournal) replayFrom(topic string, afterSeq uint64) []journalEntr
 	return result
 }
 
+func (j *messageJournal) replayAll(afterSeq uint64) []journalEntry {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+
+	var result = make([]journalEntry, 0, 64)
+	if j.count == 0 {
+		return result
+	}
+
+	var start = (j.head - j.count + j.maxSize) % j.maxSize
+	var index int
+	for index = 0; index < j.count; index++ {
+		var current = (start + index) % j.maxSize
+		var entry = j.entries[current]
+		if entry.seqNum > afterSeq {
+			result = append(result, entry)
+		}
+	}
+
+	return result
+}
+
 // parseBookmarkSeq extracts the sequence number from a bookmark string.
 // Bookmark format: "epoch_us|publisher|seq|"
 // Returns 0 if the bookmark is "0" (EPOCH) or unparseable.

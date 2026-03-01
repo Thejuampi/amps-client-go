@@ -18,11 +18,15 @@ import (
 type headerFields struct {
 	c          string // command
 	cid        string // command ID
+	status     string // ack status
+	reason     string // ack reason
 	t          string // topic
 	subID      string // sub_id
 	a          string // ack types requested
 	opts       string // options (multi-char key "opts")
 	o          string // options (single-char key "o")
+	repl       string // replication source id
+	replSync   string // replication sync marker
 	clientName string // client_name
 	version    string // version
 	queryID    string // query_id
@@ -173,6 +177,8 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 		case 5:
 			if frame[keyStart] == 't' && frame[keyStart+1] == 'o' { // top_n
 				h.topN = string(frame[valueStart:valueEnd])
+			} else if frame[keyStart] == '_' && frame[keyStart+1] == 'r' && frame[keyStart+2] == 'e' && frame[keyStart+3] == 'p' && frame[keyStart+4] == 'l' {
+				h.repl = string(frame[valueStart:valueEnd])
 			}
 		case 6:
 			switch {
@@ -180,8 +186,10 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 				h.subID = string(frame[valueStart:valueEnd])
 			case frame[keyStart] == 'f' && frame[keyStart+1] == 'i': // filter
 				h.filter = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 's' && frame[keyStart+1] == 't': // status (ignore inbound)
-			case frame[keyStart] == 'r' && frame[keyStart+1] == 'e': // reason (ignore inbound)
+			case frame[keyStart] == 's' && frame[keyStart+1] == 't': // status
+				h.status = string(frame[valueStart:valueEnd])
+			case frame[keyStart] == 'r' && frame[keyStart+1] == 'e': // reason
+				h.reason = string(frame[valueStart:valueEnd])
 			}
 		case 7:
 			switch frame[keyStart] {
@@ -204,6 +212,8 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 			switch {
 			case keyLen == 11 && frame[keyStart] == 'c': // client_name
 				h.clientName = string(frame[valueStart:valueEnd])
+			case keyLen == 10 && frame[keyStart] == '_' && frame[keyStart+1] == 'r' && frame[keyStart+2] == 'e' && frame[keyStart+3] == 'p' && frame[keyStart+4] == 'l' && frame[keyStart+5] == '_' && frame[keyStart+6] == 's' && frame[keyStart+7] == 'y' && frame[keyStart+8] == 'n' && frame[keyStart+9] == 'c':
+				h.replSync = string(frame[valueStart:valueEnd])
 			}
 		}
 	}
@@ -284,12 +294,21 @@ func buildAck(buf *bytes.Buffer, ackType, commandID, status string, extras ...kv
 // ---- Persisted Ack (echoes sequence ID for publish store discard) ----
 
 func buildPersistedAck(buf *bytes.Buffer, commandID, seqID string) []byte {
+	return buildPersistedAckStatus(buf, commandID, seqID, "success", "")
+}
+
+func buildPersistedAckStatus(buf *bytes.Buffer, commandID, seqID, status, reason string) []byte {
 	startFrame(buf)
-	buf.WriteString(`{"c":"ack","a":"persisted","status":"success"`)
+	buf.WriteString(`{"c":"ack","a":"persisted","status":"`)
+	buf.WriteString(status)
+	buf.WriteByte('"')
 	writeField(buf, "cid", commandID)
 	if seqID != "" {
 		buf.WriteString(`,"s":`)
 		buf.WriteString(seqID)
+	}
+	if reason != "" {
+		writeField(buf, "reason", reason)
 	}
 	buf.WriteByte('}')
 	return finalizeFrame(buf)

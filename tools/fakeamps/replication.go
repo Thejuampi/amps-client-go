@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -32,11 +35,14 @@ import (
 // ---------------------------------------------------------------------------
 
 type peerConn struct {
-	addr   string
-	conn   net.Conn
-	mu     sync.Mutex
-	alive  bool
-	stopCh chan struct{}
+	addr       string
+	conn       net.Conn
+	mu         sync.Mutex
+	alive      bool
+	stopCh     chan struct{}
+	pendingMu  sync.Mutex
+	pendingAck map[string]chan headerFields
+	nextCID    atomic.Uint64
 }
 
 var (
@@ -55,7 +61,7 @@ func initReplication(peerAddrs string, instanceID string) {
 		if addr == "" {
 			continue
 		}
-		p := &peerConn{addr: addr, stopCh: make(chan struct{})}
+		p := &peerConn{addr: addr, stopCh: make(chan struct{}), pendingAck: make(map[string]chan headerFields)}
 		replicaPeers = append(replicaPeers, p)
 		go p.connectLoop()
 	}
@@ -84,6 +90,9 @@ func (p *peerConn) connectLoop() {
 
 		// Send logon to peer.
 		p.sendLogon()
+		if err := p.syncCatchUp(); err != nil {
+			log.Printf("fakeamps: repl peer %s catch-up failed: %v", p.addr, err)
+		}
 
 		// Read loop — receive replicated messages from peer.
 		p.readFromPeer(conn)
@@ -134,6 +143,10 @@ func (p *peerConn) readFromPeer(conn net.Conn) {
 
 		// Parse and apply locally (without re-replicating).
 		header, payload := parseAMPSHeader(frame)
+		if header.c == "ack" {
+			p.handlePeerAck(header)
+			continue
+		}
 		if header.c == "publish" || header.c == "delta_publish" || header.c == "p" {
 			applyReplicatedPublish(header, payload)
 		}
@@ -188,37 +201,156 @@ func applyReplicatedPublish(header headerFields, payload []byte) {
 	})
 }
 
-// replicatePublish forwards a publish to all connected peers.
-func replicatePublish(topic string, payload []byte, messageType, sowKey string) {
-	if len(replicaPeers) == 0 {
+const replicationSyncAckTimeout = 2 * time.Second
+
+func (p *peerConn) nextCommandID() string {
+	var id = p.nextCID.Add(1)
+	return "repl-" + replID + "-" + strconv.FormatUint(id, 10)
+}
+
+func (p *peerConn) registerPendingAck(commandID string) chan headerFields {
+	var ackCh = make(chan headerFields, 1)
+	p.pendingMu.Lock()
+	if p.pendingAck == nil {
+		p.pendingAck = make(map[string]chan headerFields)
+	}
+	p.pendingAck[commandID] = ackCh
+	p.pendingMu.Unlock()
+	return ackCh
+}
+
+func (p *peerConn) clearPendingAck(commandID string) {
+	p.pendingMu.Lock()
+	delete(p.pendingAck, commandID)
+	p.pendingMu.Unlock()
+}
+
+func (p *peerConn) handlePeerAck(header headerFields) {
+	if p == nil || header.cid == "" {
 		return
 	}
 
-	buf := getWriteBuf()
-	defer putWriteBuf(buf)
+	p.pendingMu.Lock()
+	var ackCh = p.pendingAck[header.cid]
+	if ackCh != nil {
+		delete(p.pendingAck, header.cid)
+	}
+	p.pendingMu.Unlock()
 
+	if ackCh != nil {
+		ackCh <- header
+	}
+}
+
+func (p *peerConn) writeReplicatedPublish(topic string, payload []byte, messageType, sowKey string, waitSyncAck bool) error {
+	if p == nil {
+		return errors.New("nil replication peer")
+	}
+
+	var commandID string
+	var ackCh chan headerFields
+	if waitSyncAck {
+		commandID = p.nextCommandID()
+		ackCh = p.registerPendingAck(commandID)
+	}
+
+	var buf = getWriteBuf()
 	startFrame(buf)
 	buf.WriteString(`{"c":"publish","t":"`)
 	buf.WriteString(topic)
 	buf.WriteByte('"')
 	writeField(buf, "mt", messageType)
 	writeField(buf, "k", sowKey)
-	buf.WriteString(`,"_repl":"`)
-	buf.WriteString(replID)
-	buf.WriteByte('"')
+	writeField(buf, "_repl", replID)
+	if waitSyncAck {
+		writeField(buf, "cid", commandID)
+		writeField(buf, "a", "processed")
+		writeField(buf, "_repl_sync", "1")
+	}
 	buf.WriteByte('}')
 	if len(payload) > 0 {
 		buf.Write(payload)
 	}
-	frame := finalizeFrame(buf)
+	var frame = finalizeFrame(buf)
+	putWriteBuf(buf)
 
-	for _, p := range replicaPeers {
-		p.mu.Lock()
-		if p.alive && p.conn != nil {
-			_, _ = p.conn.Write(frame)
-		}
+	p.mu.Lock()
+	if !p.alive || p.conn == nil {
 		p.mu.Unlock()
+		if waitSyncAck {
+			p.clearPendingAck(commandID)
+		}
+		return errors.New("replication peer unavailable")
 	}
+	var _, err = p.conn.Write(frame)
+	p.mu.Unlock()
+	if err != nil {
+		if waitSyncAck {
+			p.clearPendingAck(commandID)
+		}
+		return err
+	}
+
+	if !waitSyncAck {
+		return nil
+	}
+
+	select {
+	case ack := <-ackCh:
+		if ack.status != "success" {
+			return errors.New(firstNonEmpty(ack.reason, "replication peer acknowledged failure"))
+		}
+		return nil
+	case <-time.After(replicationSyncAckTimeout):
+		p.clearPendingAck(commandID)
+		return errors.New("replication sync ack timed out")
+	}
+}
+
+func (p *peerConn) syncCatchUp() error {
+	if p == nil || journal == nil {
+		return nil
+	}
+
+	var entries = journal.replayAll(0)
+	var index int
+	for index = 0; index < len(entries); index++ {
+		var entry = entries[index]
+		if entry.topic == "" {
+			continue
+		}
+		var err = p.writeReplicatedPublish(entry.topic, entry.payload, getTopicMessageType(entry.topic), entry.sowKey, false)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// replicatePublish forwards a publish to all connected peers.
+func replicatePublish(topic string, payload []byte, messageType, sowKey string) error {
+	return replicatePublishWithMode(topic, payload, messageType, sowKey, false)
+}
+
+func replicatePublishSync(topic string, payload []byte, messageType, sowKey string) error {
+	return replicatePublishWithMode(topic, payload, messageType, sowKey, true)
+}
+
+func replicatePublishWithMode(topic string, payload []byte, messageType, sowKey string, waitSyncAck bool) error {
+	if len(replicaPeers) == 0 {
+		return nil
+	}
+
+	var firstErr error
+	for _, p := range replicaPeers {
+		var err = p.writeReplicatedPublish(topic, payload, messageType, sowKey, waitSyncAck)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
 }
 
 func stopReplication() {
@@ -235,8 +367,5 @@ func stopReplication() {
 // parseReplicationID extracts the _repl field from a publish header
 // to detect replication loops.
 func isReplicatedMessage(header headerFields) bool {
-	// If the message was already replicated from a peer, don't re-replicate.
-	// This is detected by checking if the header was parsed from a peer connection.
-	// In practice, the handler sets a flag for peer-originated messages.
-	return false
+	return header.repl != ""
 }

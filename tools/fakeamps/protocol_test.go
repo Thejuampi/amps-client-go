@@ -41,6 +41,18 @@ func TestParseAMPSHeaderExtendedFields(t *testing.T) {
 	}
 }
 
+func TestParseAMPSHeaderReplicationAndAckFields(t *testing.T) {
+	var frame = []byte(`{"c":"ack","cid":"r1","status":"failure","reason":"replica rejected","_repl":"node-a","_repl_sync":"1"}`)
+	var h, payload = parseAMPSHeader(frame)
+
+	if h.c != "ack" || h.cid != "r1" || h.status != "failure" || h.reason != "replica rejected" || h.repl != "node-a" || h.replSync != "1" {
+		t.Fatalf("unexpected replication/ack fields: %+v", h)
+	}
+	if len(payload) != 0 {
+		t.Fatalf("expected empty payload for header-only frame")
+	}
+}
+
 func TestFinalizeFrameAndStartFrame(t *testing.T) {
 	buf := bytes.NewBuffer(nil)
 	startFrame(buf)

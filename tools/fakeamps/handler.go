@@ -115,6 +115,7 @@ func handleConnection(conn net.Conn) {
 	localSubs := make(map[string]*localSub)
 	conflationBuffers := make(map[string]*conflationBuffer) // subID → conflation buffer
 	var connUserID string                                   // set on logon
+	var connClientName string                               // set on logon
 	var heartbeatWatchdog *time.Timer                       // liveness check
 	var heartbeatTimeout time.Duration
 
@@ -208,6 +209,7 @@ func handleConnection(conn net.Conn) {
 
 		wantProcessed := containsToken(ackTypes, "processed")
 		wantPersisted := containsToken(ackTypes, "persisted")
+		wantSync := containsToken(ackTypes, "sync")
 		wantCompleted := containsToken(ackTypes, "completed")
 		wantStats := containsToken(ackTypes, "stats")
 		wantReceived := containsToken(ackTypes, "received")
@@ -250,6 +252,7 @@ func handleConnection(conn net.Conn) {
 		// ---------------------------------------------------------------
 		case "logon":
 			connUserID = header.userID
+			connClientName = firstNonEmpty(header.clientName, connUserID)
 
 			// Authentication check.
 			if *flagAuth != "" {
@@ -543,9 +546,23 @@ func handleConnection(conn net.Conn) {
 			}
 
 			stats.publishIn.Add(1)
+			var isReplicatedCommand = header.repl != ""
+			var needsPostApplyProcessedAck = isReplicatedCommand && (header.replSync == "1" || strings.EqualFold(header.replSync, "true"))
+			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
+			var isDuplicateCommand = commandDedupe.seenBefore(dedupeClientID, commandID)
 
-			if wantProcessed {
+			if wantProcessed && !needsPostApplyProcessedAck {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
+			}
+
+			if isDuplicateCommand {
+				if wantProcessed && needsPostApplyProcessedAck {
+					writer.send(buildAck(buf, "processed", commandID, "success"))
+				}
+				if wantPersisted {
+					writer.send(buildPersistedAck(buf, commandID, seqID))
+				}
+				continue
 			}
 
 			mt := getOrSetTopicMessageType(topic, messageType)
@@ -578,16 +595,29 @@ func handleConnection(conn net.Conn) {
 				}
 			}
 
+			var syncReplicationErr error
+			if wantSync && len(replicaPeers) > 0 && !isReplicatedCommand {
+				syncReplicationErr = replicatePublishSync(topic, payload, mt, effectiveSowKey)
+			}
+
+			if wantProcessed && needsPostApplyProcessedAck {
+				writer.send(buildAck(buf, "processed", commandID, "success"))
+			}
+
 			if wantPersisted {
-				writer.send(buildPersistedAck(buf, commandID, seqID))
+				if wantSync && syncReplicationErr != nil {
+					writer.send(buildPersistedAckStatus(buf, commandID, seqID, "failure", "sync replication failed"))
+				} else {
+					writer.send(buildPersistedAck(buf, commandID, seqID))
+				}
 			}
 
 			// Fire on-publish actions.
 			fireOnPublish(topic, payload, bm)
 
 			// Replication.
-			if len(replicaPeers) > 0 {
-				replicatePublish(topic, payload, mt, effectiveSowKey)
+			if !wantSync && len(replicaPeers) > 0 && !isReplicatedCommand {
+				_ = replicatePublish(topic, payload, mt, effectiveSowKey)
 			}
 
 			// Fan-out to subscribers.
@@ -626,10 +656,15 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 
+			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
+			var isDuplicateCommand = commandDedupe.seenBefore(dedupeClientID, commandID)
+
 			deleted := 0
 			var deletedKeys []string
 
-			if header.sowKeys != "" {
+			if isDuplicateCommand {
+				deleted = 0
+			} else if header.sowKeys != "" {
 				if sow != nil {
 					deleted = sow.deleteByKeys(topic, header.sowKeys)
 				}
@@ -656,6 +691,9 @@ func handleConnection(conn net.Conn) {
 			}
 			if wantStats {
 				writer.send(buildSOWDeleteAck(buf, "stats", commandID, deleted))
+			}
+			if wantPersisted {
+				writer.send(buildPersistedAck(buf, commandID, seqID))
 			}
 
 			// OOF to delta subscribers.
