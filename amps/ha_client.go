@@ -153,10 +153,6 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 	}
 
 	var lastErr error
-	var cachedSingleURI string
-	var cachedSingleAuthenticator Authenticator
-	var hasCachedSingle bool
-	cachedSingleURI, cachedSingleAuthenticator, hasCachedSingle = singleDefaultEndpoint(chooser)
 	for {
 		select {
 		case <-ctx.Done():
@@ -172,6 +168,10 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 		var authenticator Authenticator
 		var chooserInfo ConnectionInfo
 		var chooserNeedsInfo bool
+		var cachedSingleURI string
+		var cachedSingleAuthenticator Authenticator
+		var hasCachedSingle bool
+		cachedSingleURI, cachedSingleAuthenticator, hasCachedSingle = singleDefaultEndpoint(chooser)
 		if hasCachedSingle {
 			uri = cachedSingleURI
 			authenticator = cachedSingleAuthenticator

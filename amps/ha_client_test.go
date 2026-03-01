@@ -25,6 +25,27 @@ func (errorReconnectStrategy) GetConnectWaitDuration(string) (time.Duration, err
 }
 func (errorReconnectStrategy) Reset() {}
 
+type chooserMutationStrategy struct {
+	chooser   *DefaultServerChooser
+	firstURI  string
+	secondURI string
+	uris      []string
+	calls     int
+}
+
+func (strategy *chooserMutationStrategy) GetConnectWaitDuration(uri string) (time.Duration, error) {
+	strategy.uris = append(strategy.uris, uri)
+	strategy.calls++
+	if strategy.calls == 1 {
+		strategy.chooser.Remove(strategy.firstURI)
+		strategy.chooser.Add(strategy.secondURI)
+		return 0, nil
+	}
+	return 0, NewError(ConnectionError, "stop reconnect loop")
+}
+
+func (strategy *chooserMutationStrategy) Reset() {}
+
 func TestHAClientSetDisconnectHandlerUnsupported(t *testing.T) {
 	ha := NewHAClient("ha-disconnect")
 	err := ha.SetDisconnectHandler(func(client *HAClient, err error) {})
@@ -298,5 +319,35 @@ func TestSingleDefaultEndpointCoverage(t *testing.T) {
 	_, _, ok = singleDefaultEndpoint(&fixedChooser{uri: "tcp://127.0.0.1:19000/amps/json"})
 	if ok {
 		t.Fatalf("expected no single default endpoint for non-default chooser")
+	}
+}
+
+func TestHAConnectAndLogonObservesChooserEndpointMutation(t *testing.T) {
+	var firstURI = "tcp://127.0.0.1:1/amps/json"
+	var secondURI = "tcp://127.0.0.1:2/amps/json"
+	var chooser = NewDefaultServerChooser(firstURI)
+	var strategy = &chooserMutationStrategy{
+		chooser:   chooser,
+		firstURI:  firstURI,
+		secondURI: secondURI,
+	}
+
+	var ha = NewHAClient("ha-dynamic-default-chooser")
+	ha.SetServerChooser(chooser)
+	ha.SetReconnectDelay(0)
+	ha.SetReconnectDelayStrategy(strategy)
+	ha.SetTimeout(0)
+
+	var err = ha.ConnectAndLogon()
+	if err == nil {
+		t.Fatalf("expected connect and logon to fail for refused endpoints")
+	}
+
+	if len(strategy.uris) < 2 {
+		t.Fatalf("expected at least two reconnect attempts, got %d", len(strategy.uris))
+	}
+
+	if strategy.uris[1] != secondURI {
+		t.Fatalf("expected second reconnect attempt to use updated chooser endpoint, got %s", strategy.uris[1])
 	}
 }

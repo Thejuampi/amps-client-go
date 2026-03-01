@@ -99,3 +99,25 @@ func TestApplyEntitlementFilter(t *testing.T) {
 		t.Fatalf("expected filter to be unchanged for users without required filters")
 	}
 }
+
+func TestConfigureAuthPasswordWithColon(t *testing.T) {
+	resetAuthForTest()
+	defer resetAuthForTest()
+
+	configureAuth("alice:pa:ss,bob:pwd:/owner = 'bob'")
+
+	var alice = authenticateLogon("alice", "pa:ss")
+	if !alice.success {
+		t.Fatalf("expected alice auth success with colon in password")
+	}
+
+	var bob = authenticateLogon("bob", "pwd")
+	if !bob.success {
+		t.Fatalf("expected bob auth success")
+	}
+
+	var bobFilter = applyEntitlementFilter("bob", "")
+	if bobFilter != `/owner = 'bob'` {
+		t.Fatalf("expected bob required filter to parse correctly, got %q", bobFilter)
+	}
+}
