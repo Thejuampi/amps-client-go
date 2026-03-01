@@ -1,0 +1,15 @@
+{
+  "id": "filter_any_all",
+  "description": "Filter evaluation profile using ANY and ALL quantifiers",
+  "transport": "tcp",
+  "auth": "none",
+  "topology": "single",
+  "queue_mode": "none",
+  "filter_mode": "any_all",
+  "payload_profile": "4KB",
+  "fakeamps_flags": [
+    "-addr",
+    "127.0.0.1:19000",
+    "-fanout=true"
+  ]
+}

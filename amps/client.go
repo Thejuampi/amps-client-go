@@ -606,6 +606,109 @@ func (client *Client) addRoute(
 	return
 }
 
+func (client *Client) addSubscribeRouteDirect(routeID string, messageHandler func(*Message) error, requestedAcks int, isReplace bool) error {
+	var previousMessageHandler interface{}
+	var messageHandlerExists bool
+	previousMessageHandler, messageHandlerExists = client.routes.Load(routeID)
+
+	if !isReplace {
+		if messageHandlerExists {
+			return NewError(SubidInUseError, "Subscription with ID '"+routeID+"' already exists")
+		}
+	} else {
+		if messageHandler == nil {
+			if messageHandlerExists {
+				messageHandler = previousMessageHandler.(func(*Message) error)
+			}
+		}
+	}
+
+	if messageHandler == nil {
+		messageHandler = func(*Message) error {
+			return nil
+		}
+	}
+
+	if requestedAcks == AckTypeNone || requestedAcks == AckTypeProcessed {
+		client.routes.Store(routeID, messageHandler)
+		return nil
+	}
+
+	var pendingRequestedAcks = requestedAcks
+	client.routes.Store(routeID, func(message *Message) error {
+		if message == nil {
+			return nil
+		}
+
+		if message.header.command == CommandAck {
+			var ack, hasAck = message.AckType()
+			if !hasAck || pendingRequestedAcks&ack == 0 {
+				return nil
+			}
+			pendingRequestedAcks &^= ack
+		}
+
+		var err = messageHandler(message)
+		if err != nil {
+			return NewError(MessageHandlerError, err)
+		}
+
+		return nil
+	})
+
+	return nil
+}
+
+func (client *Client) addCommandRouteDirect(routeID string, messageHandler func(*Message) error, requestedAcks int) error {
+	if _, exists := client.routes.Load(routeID); exists {
+		return NewError(CommandError, "SubID is set to a non-Subscribe command")
+	}
+
+	if messageHandler == nil {
+		messageHandler = func(*Message) error {
+			return nil
+		}
+	}
+
+	if requestedAcks == AckTypeNone {
+		client.routes.Store(routeID, messageHandler)
+		return nil
+	}
+
+	var pendingRequestedAcks = requestedAcks
+	client.routes.Store(routeID, func(message *Message) error {
+		if message == nil {
+			return nil
+		}
+
+		if message.header.command == CommandAck {
+			var ack, hasAck = message.AckType()
+			if !hasAck || pendingRequestedAcks&ack == 0 {
+				return nil
+			}
+			pendingRequestedAcks &^= ack
+
+			var err = messageHandler(message)
+			if err != nil {
+				return NewError(MessageHandlerError, err)
+			}
+
+			if pendingRequestedAcks == AckTypeNone {
+				client.routes.Delete(routeID)
+			}
+			return nil
+		}
+
+		var err = messageHandler(message)
+		if err != nil {
+			return NewError(MessageHandlerError, err)
+		}
+		return nil
+	})
+
+	return nil
+}
+
 func (client *Client) onError(err error) {
 	if client.errorHandler != nil {
 		client.errorHandler(err)
@@ -1413,7 +1516,14 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 			client.setSyncAckProcessing(make(chan _Result, 1))
 		}
 
-		err := client.addRoute(routeID, messageHandler, systemAcks, userAcks, isSubscribe, isReplace)
+		var err error
+		if isSubscribe && systemAcks == AckTypeNone {
+			err = client.addSubscribeRouteDirect(routeID, messageHandler, userAcks, isReplace)
+		} else if !isSubscribe && systemAcks == AckTypeNone && hasUserAcks {
+			err = client.addCommandRouteDirect(routeID, messageHandler, userAcks)
+		} else {
+			err = client.addRoute(routeID, messageHandler, systemAcks, userAcks, isSubscribe, isReplace)
+		}
 		if err != nil {
 			return commandID, err
 		}

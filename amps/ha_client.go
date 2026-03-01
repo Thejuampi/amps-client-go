@@ -107,6 +107,22 @@ func (ha *HAClient) reconnectWait(strategy ReconnectDelayStrategy, delay time.Du
 	return delay, nil
 }
 
+func singleDefaultEndpoint(chooser ServerChooser) (string, Authenticator, bool) {
+	var defaultChooser, ok = chooser.(*DefaultServerChooser)
+	if !ok || defaultChooser == nil {
+		return "", nil, false
+	}
+
+	defaultChooser.lock.Lock()
+	defer defaultChooser.lock.Unlock()
+	if len(defaultChooser.endpoints) != 1 {
+		return "", nil, false
+	}
+
+	var endpoint = defaultChooser.endpoints[0]
+	return endpoint.uri, endpoint.authenticator, true
+}
+
 // ConnectAndLogon loops through selected endpoints until connect and logon succeed or timeout occurs.
 func (ha *HAClient) ConnectAndLogon() error {
 	return ha.connectAndLogon(context.Background())
@@ -137,6 +153,10 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 	}
 
 	var lastErr error
+	var cachedSingleURI string
+	var cachedSingleAuthenticator Authenticator
+	var hasCachedSingle bool
+	cachedSingleURI, cachedSingleAuthenticator, hasCachedSingle = singleDefaultEndpoint(chooser)
 	for {
 		select {
 		case <-ctx.Done():
@@ -152,7 +172,10 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 		var authenticator Authenticator
 		var chooserInfo ConnectionInfo
 		var chooserNeedsInfo bool
-		if chooser != nil {
+		if hasCachedSingle {
+			uri = cachedSingleURI
+			authenticator = cachedSingleAuthenticator
+		} else if chooser != nil {
 			if endpointChooser, ok := chooser.(interface {
 				CurrentEndpoint() (string, Authenticator)
 			}); ok {

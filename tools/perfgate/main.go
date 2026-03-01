@@ -15,10 +15,18 @@ import (
 type benchmarkBaseline struct {
 	NSOp     float64 `json:"ns_op"`
 	AllocsOp float64 `json:"allocs_op"`
+	Group    string  `json:"group,omitempty"`
+}
+
+type regressionGroup struct {
+	MaxRegressionPct       float64 `json:"max_regression_pct,omitempty"`
+	MaxAllocsRegressionPct float64 `json:"max_allocs_regression_pct,omitempty"`
 }
 
 type baselineFile struct {
-	Benchmarks map[string]benchmarkBaseline `json:"benchmarks"`
+	MaxRegression float64                      `json:"max_regression,omitempty"`
+	Groups        map[string]regressionGroup   `json:"groups,omitempty"`
+	Benchmarks    map[string]benchmarkBaseline `json:"benchmarks"`
 }
 
 type benchmarkResult struct {
@@ -94,6 +102,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	var defaultRegression = *maxRegression
+	if baseline.MaxRegression > 0 {
+		defaultRegression = baseline.MaxRegression
+	}
+
 	benchmarkNames := make([]string, 0, len(baseline.Benchmarks))
 	for name := range baseline.Benchmarks {
 		benchmarkNames = append(benchmarkNames, regexp.QuoteMeta(name))
@@ -117,12 +130,25 @@ func main() {
 			continue
 		}
 
-		maxNS := expected.NSOp * (1.0 + (*maxRegression / 100.0))
+		var regressionLimit = defaultRegression
+		var allocRegressionLimit = defaultRegression
+		if expected.Group != "" {
+			if group, ok := baseline.Groups[expected.Group]; ok {
+				if group.MaxRegressionPct > 0 {
+					regressionLimit = group.MaxRegressionPct
+				}
+				if group.MaxAllocsRegressionPct > 0 {
+					allocRegressionLimit = group.MaxAllocsRegressionPct
+				}
+			}
+		}
+
+		maxNS := expected.NSOp * (1.0 + (regressionLimit / 100.0))
 		if actual.NSOp > maxNS {
 			failures = append(failures, fmt.Sprintf("%s ns/op regression: baseline %.2f, actual %.2f, max %.2f", name, expected.NSOp, actual.NSOp, maxNS))
 		}
 
-		maxAllocs := expected.AllocsOp * (1.0 + (*maxRegression / 100.0))
+		maxAllocs := expected.AllocsOp * (1.0 + (allocRegressionLimit / 100.0))
 		if expected.AllocsOp == 0 {
 			maxAllocs = 0
 		}

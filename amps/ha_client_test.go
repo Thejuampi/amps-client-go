@@ -274,3 +274,29 @@ func TestHAClientLogonOptionsZeroValue(t *testing.T) {
 		t.Fatalf("expected zero-value LogonOptions, got %+v", got)
 	}
 }
+
+func TestSingleDefaultEndpointCoverage(t *testing.T) {
+	var chooser = NewDefaultServerChooser("tcp://127.0.0.1:19000/amps/json")
+
+	var uri, authenticator, ok = singleDefaultEndpoint(chooser)
+	if !ok {
+		t.Fatalf("expected single default endpoint match")
+	}
+	if uri != "tcp://127.0.0.1:19000/amps/json" {
+		t.Fatalf("unexpected single endpoint uri: %s", uri)
+	}
+	if authenticator != nil {
+		t.Fatalf("expected nil authenticator for plain endpoint")
+	}
+
+	chooser.Add("tcp://127.0.0.1:19001/amps/json")
+	_, _, ok = singleDefaultEndpoint(chooser)
+	if ok {
+		t.Fatalf("expected no single default endpoint when chooser has multiple entries")
+	}
+
+	_, _, ok = singleDefaultEndpoint(&fixedChooser{uri: "tcp://127.0.0.1:19000/amps/json"})
+	if ok {
+		t.Fatalf("expected no single default endpoint for non-default chooser")
+	}
+}
