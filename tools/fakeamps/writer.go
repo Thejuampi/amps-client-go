@@ -45,6 +45,7 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 	bw := bufio.NewWriterSize(conn, *flagWriteBuf)
 
 	for frame := range cw.ch {
+		channelClosed := false
 		// Compress frame if compression is enabled.
 		if cw.compress && len(frame) > 64 {
 			frame = cw.compressFrame(frame)
@@ -61,7 +62,12 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 		drained := true
 		for drained {
 			select {
-			case f := <-cw.ch:
+			case f, ok := <-cw.ch:
+				if !ok {
+					channelClosed = true
+					drained = false
+					continue
+				}
 				if cw.compress && len(f) > 64 {
 					f = cw.compressFrame(f)
 				}
@@ -74,6 +80,9 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 		}
 
 		_ = bw.Flush()
+		if channelClosed {
+			return
+		}
 	}
 	_ = bw.Flush()
 }
