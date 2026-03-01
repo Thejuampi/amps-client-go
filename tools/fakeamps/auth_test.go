@@ -4,9 +4,10 @@ import "testing"
 
 func resetAuthForTest() {
 	auth = &authStore{
-		users:        make(map[string]string),
-		entitlements: make(map[string]*topicEntitlement),
-		defaultAllow: true,
+		users:           make(map[string]string),
+		entitlements:    make(map[string]*topicEntitlement),
+		requiredFilters: make(map[string]string),
+		defaultAllow:    true,
 	}
 }
 
@@ -72,5 +73,29 @@ func TestConfigureAuthAndLogonHelpers(t *testing.T) {
 
 	if authorizeCommand("alice", "publish", "orders") {
 		t.Fatalf("expected publish authorization to be denied without entitlements")
+	}
+}
+
+func TestApplyEntitlementFilter(t *testing.T) {
+	resetAuthForTest()
+	defer resetAuthForTest()
+
+	auth.addUser("alice", "pwd", nil)
+	auth.defaultAllow = true
+	auth.requiredFilters["alice"] = `/owner = 'alice'`
+
+	var combined = applyEntitlementFilter("alice", "/status = 'active'")
+	if combined != `(/status = 'active') AND (/owner = 'alice')` {
+		t.Fatalf("unexpected combined entitlement filter: %q", combined)
+	}
+
+	var requiredOnly = applyEntitlementFilter("alice", "")
+	if requiredOnly != `/owner = 'alice'` {
+		t.Fatalf("expected required filter when no client filter provided")
+	}
+
+	var unchanged = applyEntitlementFilter("bob", "/status = 'active'")
+	if unchanged != "/status = 'active'" {
+		t.Fatalf("expected filter to be unchanged for users without required filters")
 	}
 }

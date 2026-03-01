@@ -148,31 +148,40 @@ func (cw *connWriter) close() {
 // ---------------------------------------------------------------------------
 
 func statsLogger(addr string, stats *connStats, done chan struct{}) {
-	ticker := time.NewTicker(*flagStatsIvl)
+	var interval = *flagStatsIvl
+	statsLoggerWithInterval(addr, stats, done, interval)
+}
+
+func statsLoggerWithInterval(addr string, stats *connStats, done <-chan struct{}, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	var ticker = time.NewTicker(interval)
 	defer ticker.Stop()
 
 	var prevIn, prevOut, prevPubIn, prevPubOut uint64
-	prev := time.Now()
+	var prev = time.Now()
 	for {
 		select {
 		case <-done:
 			return
 		case now := <-ticker.C:
-			elapsed := now.Sub(prev).Seconds()
+			var elapsed = now.Sub(prev).Seconds()
 			if elapsed <= 0 {
 				elapsed = 1
 			}
 			prev = now
 
-			mIn := stats.messagesIn.Load()
-			mOut := stats.messagesOut.Load()
-			pIn := stats.publishIn.Load()
-			pOut := stats.publishOut.Load()
+			var mIn = stats.messagesIn.Load()
+			var mOut = stats.messagesOut.Load()
+			var pIn = stats.publishIn.Load()
+			var pOut = stats.publishOut.Load()
 
-			dIn := mIn - prevIn
-			dOut := mOut - prevOut
-			dPIn := pIn - prevPubIn
-			dPOut := pOut - prevPubOut
+			var dIn = mIn - prevIn
+			var dOut = mOut - prevOut
+			var dPIn = pIn - prevPubIn
+			var dPOut = pOut - prevPubOut
 			prevIn, prevOut, prevPubIn, prevPubOut = mIn, mOut, pIn, pOut
 
 			if dIn > 0 || dOut > 0 {

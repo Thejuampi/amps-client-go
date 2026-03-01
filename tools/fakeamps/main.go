@@ -61,11 +61,14 @@ var (
 	flagOutDepth    = flag.Int("out-depth", 65536, "per-connection outbound channel depth")
 
 	// Authentication
-	flagAuth = flag.String("auth", "", "enable auth with user:pass pairs (e.g. 'user1:pass1,user2:pass2')")
+	flagAuth          = flag.String("auth", "", "enable auth with user:pass pairs (e.g. 'user1:pass1,user2:pass2')")
+	flagAuthChallenge = flag.Bool("auth-challenge", false, "require two-step challenge-response logon when auth is enabled")
 
 	// Replication
 	flagPeers  = flag.String("peers", "", "comma-separated peer addresses for HA replication")
 	flagReplID = flag.String("repl-id", "instance-1", "unique replication instance ID")
+	// Redirect behavior for HA client failover testing.
+	flagRedirectURI = flag.String("redirect-uri", "", "if set, logon responds with redirect command to this URI")
 
 	// Admin API
 	flagAdminAddr = flag.String("admin", "", "admin REST API listen address (e.g. ':8085')")
@@ -176,10 +179,15 @@ func main() {
 		go func() {
 			ticker := time.NewTicker(30 * time.Second)
 			defer ticker.Stop()
+			var stats connStats
 			for range ticker.C {
 				if sow != nil {
-					if n := sow.gcExpired(); n > 0 {
-						log.Printf("fakeamps: sow gc removed %d expired records", n)
+					var expired = sow.gcExpiredRecords()
+					if len(expired) > 0 {
+						for _, record := range expired {
+							fanoutOOFWithReason(nil, record.topic, record.sowKey, record.bookmark, "expire", &stats)
+						}
+						log.Printf("fakeamps: sow gc removed %d expired records", len(expired))
 					}
 				}
 			}
@@ -204,10 +212,10 @@ func main() {
 		_ = listener.Close()
 	}()
 
-	log.Printf("fakeamps %s listening on %s  (fanout=%v sow=%v journal=%v journal_disk=%q queue=%v echo=%v auth=%v views=%d actions=%d peers=%q admin=%q GOMAXPROCS=%d)",
+	log.Printf("fakeamps %s listening on %s  (fanout=%v sow=%v journal=%v journal_disk=%q queue=%v echo=%v auth=%v views=%d actions=%d peers=%q redirect=%q admin=%q GOMAXPROCS=%d)",
 		*flagVersion, *flagAddr, *flagFanout, *flagSOWEnabled, *flagJournal,
 		*flagJournalDisk, *flagQueue, *flagEcho, *flagAuth != "", len(flagViews), len(flagActions),
-		*flagPeers, *flagAdminAddr, runtime.GOMAXPROCS(0))
+		*flagPeers, *flagRedirectURI, *flagAdminAddr, runtime.GOMAXPROCS(0))
 
 	for {
 		conn, acceptErr := listener.Accept()

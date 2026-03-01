@@ -95,19 +95,16 @@ func TestConnWriterRunAndClose(t *testing.T) {
 }
 
 func TestStatsLogger(t *testing.T) {
-	old := *flagStatsIvl
-	*flagStatsIvl = 5 * time.Millisecond
-	defer func() { *flagStatsIvl = old }()
-
-	stats := &connStats{}
+	var stats = &connStats{}
 	stats.messagesIn.Store(10)
 	stats.messagesOut.Store(20)
 	stats.publishIn.Store(5)
 	stats.publishOut.Store(7)
 
-	done := make(chan struct{})
-	go statsLogger("test", stats, done)
+	var done = make(chan struct{})
+	go statsLoggerWithInterval("test", stats, done, 5*time.Millisecond)
 	time.Sleep(15 * time.Millisecond)
 	close(done)
+	time.Sleep(10 * time.Millisecond)
 	// no panic means success
 }
