@@ -85,7 +85,8 @@ go test ./amps -run '^TestName$' -count=1 -v
 
 ## Coverage and Mutation Expectations
 - Test design target for changed feature areas: `>= 80%` coverage.
-- Repository gate for `./amps/...` is stricter:
+- Coverage gate is mandatory and must pass before merge (`make coverage-check`).
+- Enforced repository gate for `./amps/...`:
   - aggregate `>= 90%`
   - pure files `100%`
   - IO/stateful files `>= 80%`
@@ -94,6 +95,8 @@ Quick coverage checks:
 ```bash
 go test ./tools/fakeamps -coverprofile tools/fakeamps.cover.out
 go tool cover -func tools/fakeamps.cover.out
+go test -count=1 ./amps/... -coverprofile=coverage.out
+go run ./tools/coveragegate -profile coverage.out
 ```
 
 Mutation requirements:
@@ -158,6 +161,7 @@ Never skip RED.
 - GREEN implementation added and tests passing.
 - Focused tests run.
 - `go test ./...` run.
+- Coverage gate verified (`make coverage-check` or equivalent).
 - Mutation resistance evaluated and strengthened.
 
 When in doubt: choose simpler design, stronger tests, and explicit behavior.
