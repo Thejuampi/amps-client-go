@@ -1,0 +1,17 @@
+{
+  "id": "single_ws_challenge",
+  "description": "Single fake server websocket path with auth challenge enabled",
+  "transport": "websocket",
+  "auth": "challenge",
+  "topology": "single",
+  "queue_mode": "none",
+  "filter_mode": "scalar",
+  "payload_profile": "1KB",
+  "fakeamps_flags": [
+    "-addr",
+    "127.0.0.1:19000",
+    "-auth",
+    "alice:pwd",
+    "-auth-challenge=true"
+  ]
+}

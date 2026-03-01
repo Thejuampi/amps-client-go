@@ -1,0 +1,17 @@
+{
+  "id": "single_tcp",
+  "description": "Single fake server over tcp with no auth challenge",
+  "transport": "tcp",
+  "auth": "none",
+  "topology": "single",
+  "queue_mode": "none",
+  "filter_mode": "scalar",
+  "payload_profile": "1KB",
+  "fakeamps_flags": [
+    "-addr",
+    "127.0.0.1:19000",
+    "-fanout=true",
+    "-journal=true",
+    "-queue=true"
+  ]
+}

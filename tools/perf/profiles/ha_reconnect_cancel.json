@@ -1,0 +1,15 @@
+{
+  "id": "ha_reconnect_cancel",
+  "description": "HA reconnect cancellation profile for stop latency measurement",
+  "transport": "tcp",
+  "auth": "none",
+  "topology": "multi",
+  "queue_mode": "none",
+  "filter_mode": "scalar",
+  "payload_profile": "1KB",
+  "fakeamps_flags": [
+    "-addr",
+    "127.0.0.1:19000",
+    "-latency=20ms"
+  ]
+}

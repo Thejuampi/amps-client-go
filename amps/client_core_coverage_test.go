@@ -459,6 +459,150 @@ func TestClientRouteHelpersCoverage(t *testing.T) {
 	}
 }
 
+func TestClientAddSubscribeRouteDirectCoverage(t *testing.T) {
+	var client = NewClient("route-direct")
+
+	var handlerCalls int
+	var baseHandler = func(*Message) error {
+		handlerCalls++
+		return nil
+	}
+
+	var err = client.addSubscribeRouteDirect("route-direct", baseHandler, AckTypeProcessed, false)
+	if err != nil {
+		t.Fatalf("addSubscribeRouteDirect failed: %v", err)
+	}
+
+	err = client.addSubscribeRouteDirect("route-direct", baseHandler, AckTypeProcessed, false)
+	if err == nil {
+		t.Fatalf("expected duplicate subscribe route error")
+	}
+
+	err = client.addSubscribeRouteDirect("route-direct", nil, AckTypeProcessed, true)
+	if err != nil {
+		t.Fatalf("replace direct subscribe route should succeed: %v", err)
+	}
+
+	var routeValue, exists = client.routes.Load("route-direct")
+	if !exists {
+		t.Fatalf("expected direct route to be stored")
+	}
+
+	var ackType = AckTypeProcessed
+	var ackMessage = &Message{header: &_Header{command: CommandAck, ackType: &ackType, status: []byte("success")}}
+	var publishMessage = &Message{header: &_Header{command: CommandPublish}}
+
+	err = routeValue.(func(*Message) error)(ackMessage)
+	if err != nil {
+		t.Fatalf("direct route ack callback failed: %v", err)
+	}
+
+	err = routeValue.(func(*Message) error)(ackMessage)
+	if err != nil {
+		t.Fatalf("second direct route ack callback failed: %v", err)
+	}
+
+	err = routeValue.(func(*Message) error)(publishMessage)
+	if err != nil {
+		t.Fatalf("direct route publish callback failed: %v", err)
+	}
+
+	if handlerCalls != 3 {
+		t.Fatalf("expected handler calls for both processed acks and publish, got %d", handlerCalls)
+	}
+
+	handlerCalls = 0
+	err = client.addSubscribeRouteDirect("route-direct-filtered", baseHandler, AckTypeProcessed|AckTypeCompleted, false)
+	if err != nil {
+		t.Fatalf("filtered direct subscribe route add failed: %v", err)
+	}
+
+	var filteredRouteValue, filteredExists = client.routes.Load("route-direct-filtered")
+	if !filteredExists {
+		t.Fatalf("expected filtered direct route to be stored")
+	}
+
+	err = filteredRouteValue.(func(*Message) error)(ackMessage)
+	if err != nil {
+		t.Fatalf("filtered direct route first ack failed: %v", err)
+	}
+	err = filteredRouteValue.(func(*Message) error)(ackMessage)
+	if err != nil {
+		t.Fatalf("filtered direct route duplicate ack failed: %v", err)
+	}
+
+	var completedAckType = AckTypeCompleted
+	var completedAckMessage = &Message{header: &_Header{command: CommandAck, ackType: &completedAckType, status: []byte("success")}}
+	err = filteredRouteValue.(func(*Message) error)(completedAckMessage)
+	if err != nil {
+		t.Fatalf("filtered direct route completed ack failed: %v", err)
+	}
+
+	err = filteredRouteValue.(func(*Message) error)(publishMessage)
+	if err != nil {
+		t.Fatalf("filtered direct route publish callback failed: %v", err)
+	}
+
+	if handlerCalls != 3 {
+		t.Fatalf("expected filtered direct handler calls for first processed ack, completed ack, and publish, got %d", handlerCalls)
+	}
+}
+
+func TestClientAddCommandRouteDirectCoverage(t *testing.T) {
+	var client = NewClient("route-command-direct")
+
+	var handlerCalls int
+	var handler = func(*Message) error {
+		handlerCalls++
+		return nil
+	}
+
+	var err = client.addCommandRouteDirect("cmd-direct", handler, AckTypeProcessed)
+	if err != nil {
+		t.Fatalf("addCommandRouteDirect failed: %v", err)
+	}
+
+	err = client.addCommandRouteDirect("cmd-direct", handler, AckTypeProcessed)
+	if err == nil {
+		t.Fatalf("expected duplicate command route error")
+	}
+
+	var routeValue, exists = client.routes.Load("cmd-direct")
+	if !exists {
+		t.Fatalf("expected command direct route to be stored")
+	}
+
+	var ackType = AckTypeProcessed
+	var ackMessage = &Message{header: &_Header{command: CommandAck, ackType: &ackType, status: []byte("success")}}
+	err = routeValue.(func(*Message) error)(ackMessage)
+	if err != nil {
+		t.Fatalf("command direct route ack callback failed: %v", err)
+	}
+
+	if handlerCalls != 1 {
+		t.Fatalf("expected one handler callback, got %d", handlerCalls)
+	}
+
+	if _, routeStillExists := client.routes.Load("cmd-direct"); routeStillExists {
+		t.Fatalf("expected command direct route removal after ack")
+	}
+
+	err = client.addCommandRouteDirect("cmd-direct-none", handler, AckTypeNone)
+	if err != nil {
+		t.Fatalf("addCommandRouteDirect AckTypeNone failed: %v", err)
+	}
+
+	var noneRouteValue, noneExists = client.routes.Load("cmd-direct-none")
+	if !noneExists {
+		t.Fatalf("expected ack-none command direct route")
+	}
+
+	err = noneRouteValue.(func(*Message) error)(&Message{header: &_Header{command: CommandPublish}})
+	if err != nil {
+		t.Fatalf("command direct non-ack callback failed: %v", err)
+	}
+}
+
 func TestClientOnErrorAndConnectionErrorCoverage(t *testing.T) {
 	client := NewClient("error-paths")
 	conn := newTestConn()

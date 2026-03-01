@@ -35,6 +35,7 @@ type tailBenchmarkStats struct {
 type tailFile struct {
 	GeneratedAtUTC   string                        `json:"generated_at_utc"`
 	SourceCommand    string                        `json:"source_command"`
+	ScenarioProfile  string                        `json:"scenario_profile,omitempty"`
 	PercentileMethod string                        `json:"percentile_method"`
 	SamplesPerBench  int                           `json:"samples_per_benchmark"`
 	Benchmarks       map[string]tailBenchmarkStats `json:"benchmarks"`
@@ -453,6 +454,7 @@ func commandCaptureGo(arguments []string) error {
 	var packagePath = flagSet.String("package", "./amps", "package path to benchmark")
 	var benchPattern = flagSet.String("bench", ".", "go benchmark regex")
 	var benchtime = flagSet.String("benchtime", "1s", "go benchmark benchtime")
+	var profile = flagSet.String("profile", "", "scenario profile identifier")
 	var extraBenchPattern = flagSet.String("extra-bench", "", "optional second go benchmark regex")
 	var extraBenchtime = flagSet.String("extra-benchtime", "1x", "go benchmark benchtime for extra bench")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
@@ -510,6 +512,7 @@ func commandCaptureGo(arguments []string) error {
 	var file tailFile
 	file.GeneratedAtUTC = time.Now().UTC().Format(time.RFC3339)
 	file.SourceCommand = sourceCommand
+	file.ScenarioProfile = strings.TrimSpace(*profile)
 	file.PercentileMethod = "nearest-rank"
 	file.SamplesPerBench = *samples
 	file.Benchmarks = map[string]tailBenchmarkStats{}
@@ -524,6 +527,7 @@ func commandCaptureC(arguments []string) error {
 	var flagSet = flag.NewFlagSet("capture-c", flag.ContinueOnError)
 	var executable = flagSet.String("exe", "./official_c_parity_benchmark.exe", "C benchmark executable path")
 	var extraExecutables = flagSet.String("extra-exe", "", "comma-separated extra C benchmark executables")
+	var profile = flagSet.String("profile", "", "scenario profile identifier")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
 	var timeout = flagSet.Duration("timeout", defaultCaptureTimeout, "maximum capture runtime")
 	var progressInterval = flagSet.Duration("progress-interval", defaultProgressInterval, "progress log interval")
@@ -586,6 +590,7 @@ func commandCaptureC(arguments []string) error {
 	var file tailFile
 	file.GeneratedAtUTC = time.Now().UTC().Format(time.RFC3339)
 	file.SourceCommand = strings.Join(executables, " ; ")
+	file.ScenarioProfile = strings.TrimSpace(*profile)
 	file.PercentileMethod = "nearest-rank"
 	file.SamplesPerBench = *samples
 	file.Benchmarks = map[string]tailBenchmarkStats{}
@@ -659,6 +664,8 @@ func commandMerge(arguments []string) error {
 	var cPath = flagSet.String("c", "tools/perf_tail_c_current.json", "C tail metrics JSON")
 	var outJSON = flagSet.String("out-json", "tools/perf_side_by_side_current.json", "merged output JSON")
 	var outMarkdown = flagSet.String("out-md", "tools/perf_side_by_side_report.md", "merged output markdown")
+	var requireComplete = flagSet.Bool("require-complete", false, "require all enabled rows to have both Go and C metrics")
+	var requireIntegrationComplete = flagSet.Bool("require-integration-complete", false, "require enabled integration rows to have both Go and C metrics")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}
@@ -704,6 +711,9 @@ func commandMerge(arguments []string) error {
 	markdownLines = append(markdownLines, "")
 	markdownLines = append(markdownLines, "| Benchmark ID | Tier | HA | C++ Symbol | Parity Mapped | Go p50/p95/p99 (ns/op) | C p50/p95/p99 (ns/op) | Winner (p95) | Delta p95 (Go-C) | Enabled |")
 	markdownLines = append(markdownLines, "|---|---|---:|---|---:|---|---|---|---:|---:|")
+
+	var missingEnabled []string
+	var missingEnabledIntegration []string
 
 	for _, benchmark := range manifest.Benchmarks {
 		var goStats, hasGo = lookupStats(goFile, benchmark.GoBenchmark)
@@ -779,7 +789,23 @@ func commandMerge(arguments []string) error {
 			}
 		} else {
 			output.Summary.Unavailable++
+			if benchmark.Enabled {
+				missingEnabled = append(missingEnabled, benchmark.BenchmarkID)
+				if benchmark.Tier == "integration" {
+					missingEnabledIntegration = append(missingEnabledIntegration, benchmark.BenchmarkID)
+				}
+			}
 		}
+	}
+
+	if *requireIntegrationComplete && len(missingEnabledIntegration) > 0 {
+		sort.Strings(missingEnabledIntegration)
+		return fmt.Errorf("missing Go/C metrics for enabled integration rows: %s", strings.Join(missingEnabledIntegration, ", "))
+	}
+
+	if *requireComplete && len(missingEnabled) > 0 {
+		sort.Strings(missingEnabled)
+		return fmt.Errorf("missing Go/C metrics for enabled rows: %s", strings.Join(missingEnabled, ", "))
 	}
 
 	markdownLines = append(markdownLines, "")

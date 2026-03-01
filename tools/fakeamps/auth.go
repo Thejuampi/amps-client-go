@@ -224,13 +224,26 @@ func configureAuth(userPassPairs string) {
 	auth.defaultAllow = false
 	// Format: "user1:pass1,user2:pass2" or "user1:pass1:/owner='user1'"
 	for _, pair := range strings.Split(userPassPairs, ",") {
-		var parts = strings.SplitN(pair, ":", 3)
-		if len(parts) >= 2 {
-			auth.addUser(parts[0], parts[1], nil)
-			if len(parts) == 3 {
-				auth.setRequiredFilter(parts[0], parts[2])
-			}
-			log.Printf("fakeamps: auth user registered: %s", parts[0])
+		var userAndRest = strings.SplitN(pair, ":", 2)
+		if len(userAndRest) != 2 {
+			continue
 		}
+
+		var username = userAndRest[0]
+		var rest = userAndRest[1]
+		var password = rest
+		var requiredFilter string
+
+		var filterSplit = strings.LastIndex(rest, ":/")
+		if filterSplit > 0 {
+			password = rest[:filterSplit]
+			requiredFilter = rest[filterSplit+1:]
+		}
+
+		auth.addUser(username, password, nil)
+		if requiredFilter != "" {
+			auth.setRequiredFilter(username, requiredFilter)
+		}
+		log.Printf("fakeamps: auth user registered: %s", username)
 	}
 }

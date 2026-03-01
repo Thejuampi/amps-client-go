@@ -2,9 +2,7 @@ package amps
 
 import (
 	"os"
-	"runtime"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -47,11 +45,23 @@ func perfAPIConnectAndLogon(b *testing.B, clientName string, uri string) *Client
 }
 
 type perfAPIAckWaiter struct {
-	state atomic.Int32
+	result chan int32
+	timer  *time.Timer
 }
 
 func newPerfAPIAckWaiter() *perfAPIAckWaiter {
-	var waiter = &perfAPIAckWaiter{}
+	var timer = time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+
+	var waiter = &perfAPIAckWaiter{
+		result: make(chan int32, 1),
+		timer:  timer,
+	}
 	return waiter
 }
 
@@ -59,7 +69,59 @@ func (waiter *perfAPIAckWaiter) reset() {
 	if waiter == nil {
 		return
 	}
-	waiter.state.Store(0)
+	for {
+		select {
+		case <-waiter.result:
+		default:
+			return
+		}
+	}
+}
+
+func (waiter *perfAPIAckWaiter) signal(state int32) {
+	if waiter == nil {
+		return
+	}
+
+	select {
+	case waiter.result <- state:
+	default:
+	}
+}
+
+func (waiter *perfAPIAckWaiter) await(timeout time.Duration) (int32, bool) {
+	if waiter == nil {
+		return 0, false
+	}
+
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+
+	if waiter.timer == nil {
+		waiter.timer = time.NewTimer(timeout)
+	} else {
+		if !waiter.timer.Stop() {
+			select {
+			case <-waiter.timer.C:
+			default:
+			}
+		}
+		waiter.timer.Reset(timeout)
+	}
+
+	select {
+	case state := <-waiter.result:
+		if !waiter.timer.Stop() {
+			select {
+			case <-waiter.timer.C:
+			default:
+			}
+		}
+		return state, true
+	case <-waiter.timer.C:
+		return 0, false
+	}
 }
 
 func (waiter *perfAPIAckWaiter) handler(message *Message) error {
@@ -73,11 +135,11 @@ func (waiter *perfAPIAckWaiter) handler(message *Message) error {
 	}
 
 	if status == "success" {
-		waiter.state.CompareAndSwap(0, 1)
+		waiter.signal(1)
 		return nil
 	}
 
-	waiter.state.CompareAndSwap(0, -1)
+	waiter.signal(-1)
 	return nil
 }
 
@@ -87,20 +149,72 @@ func perfAPIWaitForProcessedAck(b *testing.B, waiter *perfAPIAckWaiter, operatio
 		b.Fatalf("nil ack waiter for %s", operation)
 	}
 
-	var deadline = time.Now().Add(2 * time.Second)
-	for {
-		var state = waiter.state.Load()
-		if state == 1 {
-			return
-		}
-		if state == -1 {
-			b.Fatalf("%s failed", operation)
-		}
-		if time.Now().After(deadline) {
-			b.Fatalf("timed out waiting for %s processed ack", operation)
-		}
-		runtime.Gosched()
+	var state, ok = waiter.await(2 * time.Second)
+	if !ok {
+		b.Fatalf("timed out waiting for %s processed ack", operation)
 	}
+	if state == 1 {
+		return
+	}
+	b.Fatalf("%s failed", operation)
+}
+
+func TestPerfAPIAckWaiterCoverage(t *testing.T) {
+	var waiter = newPerfAPIAckWaiter()
+
+	t.Run("success signal", func(t *testing.T) {
+		waiter.reset()
+		var err = waiter.handler(&Message{header: &_Header{status: []byte("success")}})
+		if err != nil {
+			t.Fatalf("unexpected waiter handler error: %v", err)
+		}
+
+		select {
+		case state := <-waiter.result:
+			if state != 1 {
+				t.Fatalf("expected success state 1, got %d", state)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatalf("timed out waiting for success state")
+		}
+	})
+
+	t.Run("failure signal", func(t *testing.T) {
+		waiter.reset()
+		var err = waiter.handler(&Message{header: &_Header{status: []byte("failure")}})
+		if err != nil {
+			t.Fatalf("unexpected waiter handler error: %v", err)
+		}
+
+		select {
+		case state := <-waiter.result:
+			if state != -1 {
+				t.Fatalf("expected failure state -1, got %d", state)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatalf("timed out waiting for failure state")
+		}
+	})
+
+	t.Run("reset clears pending state", func(t *testing.T) {
+		waiter.reset()
+		_ = waiter.handler(&Message{header: &_Header{status: []byte("success")}})
+		waiter.reset()
+
+		select {
+		case <-waiter.result:
+			t.Fatalf("expected reset to clear pending state")
+		default:
+		}
+	})
+
+	t.Run("await timeout", func(t *testing.T) {
+		waiter.reset()
+		var _, ok = waiter.await(5 * time.Millisecond)
+		if ok {
+			t.Fatalf("expected await timeout with no signal")
+		}
+	})
 }
 
 func BenchmarkAPIIntegrationClientConnectLogon(b *testing.B) {
@@ -134,6 +248,7 @@ func BenchmarkAPIIntegrationClientConnectLogon(b *testing.B) {
 		if closeErr != nil {
 			b.Fatalf("close failed: %v", closeErr)
 		}
+		time.Sleep(time.Millisecond)
 		b.StartTimer()
 	}
 	b.StopTimer()
@@ -180,6 +295,7 @@ func BenchmarkAPIIntegrationClientSubscribe(b *testing.B) {
 	var topic = "amps.perf.integration.subscribe"
 	var waiter = newPerfAPIAckWaiter()
 	var command = NewCommand("subscribe").SetTopic(topic).AddAckType(AckTypeProcessed)
+	var unsubscribeCommand = NewCommand("unsubscribe")
 	var handler = waiter.handler
 
 	b.ReportAllocs()
@@ -188,8 +304,6 @@ func BenchmarkAPIIntegrationClientSubscribe(b *testing.B) {
 	var index int
 	for index = 0; index < b.N; index++ {
 		waiter.reset()
-		// ExecuteAsync auto-populates sub_id from command_id when sub_id is nil.
-		// Reset between iterations so reused command values keep route correlation.
 		command.header.subID = nil
 		var subID, executeErr = client.ExecuteAsync(command, handler)
 		if executeErr != nil {
@@ -198,7 +312,8 @@ func BenchmarkAPIIntegrationClientSubscribe(b *testing.B) {
 		perfAPIWaitForProcessedAck(b, waiter, "subscribe")
 
 		b.StopTimer()
-		var unsubscribeErr = client.Unsubscribe(subID)
+		unsubscribeCommand.SetSubID(subID)
+		var _, unsubscribeErr = client.ExecuteAsync(unsubscribeCommand, nil)
 		if unsubscribeErr != nil {
 			b.Fatalf("unsubscribe failed: %v", unsubscribeErr)
 		}
@@ -234,6 +349,7 @@ func BenchmarkAPIIntegrationHAConnectAndLogon(b *testing.B) {
 		if disconnectErr != nil {
 			b.Fatalf("HA disconnect failed: %v", disconnectErr)
 		}
+		time.Sleep(time.Millisecond)
 		b.StartTimer()
 	}
 	b.StopTimer()

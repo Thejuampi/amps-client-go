@@ -1,2 +1,27 @@
 release.local.ps1
 coverage.out
+.notes.local.md
+
+# Local workspace/editor artifacts
+.vscode/
+.opencode/plans/
+
+# Local scratch sources
+.tmp_*.cpp
+amps-c-benchmark.c
+amps-cpp-benchmark.cpp
+official_smoke.c
+
+# Local build outputs
+*.exe
+*.test.exe
+fakeamps.exe
+
+# Local logs and profiling captures
+*.log
+tools/perf_subscribe_*
+*.pprof
+
+# Local coverage artifacts
+tools/*.cover.out
+tools/all.cover.out

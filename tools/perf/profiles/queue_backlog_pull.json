@@ -1,0 +1,16 @@
+{
+  "id": "queue_backlog_pull",
+  "description": "Queue benchmark profile for max_backlog and pull delivery",
+  "transport": "tcp",
+  "auth": "none",
+  "topology": "single",
+  "queue_mode": "pull,max_backlog",
+  "filter_mode": "scalar",
+  "payload_profile": "1KB",
+  "fakeamps_flags": [
+    "-addr",
+    "127.0.0.1:19000",
+    "-queue=true",
+    "-lease=30s"
+  ]
+}
