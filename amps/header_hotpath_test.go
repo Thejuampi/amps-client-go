@@ -176,3 +176,24 @@ func TestHeaderParseTopicOnlyUnquotedFastPath(t *testing.T) {
 		t.Fatalf("unexpected topic: has=%v value=%q", hasTopic, topic)
 	}
 }
+
+func TestHeaderWriteStrictParityFixtureExactOutput(t *testing.T) {
+	var header = strictParityHeaderWriteBenchmarkHeader()
+	var buffer = bytes.NewBuffer(nil)
+	if err := header.write(buffer); err != nil {
+		t.Fatalf("header write failed: %v", err)
+	}
+
+	var expected = `{"c":"p","cid":"cmd-1","t":"orders","e":42,"filter":"/id > 10","opts":"replace","query_id":"qry-1","s":123456789,"sub_id":"sub-1"}`
+	if buffer.String() != expected {
+		t.Fatalf("unexpected strict parity header output: got %q want %q", buffer.String(), expected)
+	}
+}
+
+func TestHeaderWriteStrictParityFastPathNilReceiver(t *testing.T) {
+	var header *_Header
+	var buffer = bytes.NewBuffer(nil)
+	if header.writeStrictParityFastPath(buffer) {
+		t.Fatalf("expected nil receiver strict parity fast path to return false")
+	}
+}

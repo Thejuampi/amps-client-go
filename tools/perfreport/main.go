@@ -152,6 +152,64 @@ type mergedFile struct {
 	Rows             []mergedRow   `json:"rows"`
 }
 
+func requiredGoBenchmarksForProfile(profile string) []string {
+	if strings.TrimSpace(profile) != "all-comparable" {
+		return nil
+	}
+
+	return []string{
+		"BenchmarkHeaderHotWrite",
+		"BenchmarkStrictParityHeaderHotParse",
+		"BenchmarkStrictParitySOWBatchParse",
+		"BenchmarkAPIIntegrationClientConnectLogon",
+		"BenchmarkAPIIntegrationClientPublish",
+		"BenchmarkAPIIntegrationClientSubscribe",
+		"BenchmarkAPIIntegrationHAConnectAndLogon",
+	}
+}
+
+func requiredCBenchmarksForProfile(profile string) []string {
+	if strings.TrimSpace(profile) != "all-comparable" {
+		return nil
+	}
+
+	return []string{
+		"OfficialCParityHeaderHotWrite",
+		"OfficialCParityHeaderHotParse",
+		"OfficialCParitySOWBatchParse",
+		"OfficialCIntegrationConnectLogon",
+		"OfficialCIntegrationPublish",
+		"OfficialCIntegrationSubscribe",
+		"OfficialCIntegrationHAConnectAndLogon",
+	}
+}
+
+func missingRequiredBenchmarks(file tailFile, required []string) []string {
+	if len(required) == 0 {
+		return nil
+	}
+
+	var missing []string
+	for _, benchmark := range required {
+		if _, ok := file.Benchmarks[benchmark]; !ok {
+			missing = append(missing, benchmark)
+		}
+	}
+
+	return missing
+}
+
+func validateComparableFloor(summary mergedSummary, minComparable int) error {
+	if minComparable <= 0 {
+		return nil
+	}
+	if summary.Comparable >= minComparable {
+		return nil
+	}
+
+	return fmt.Errorf("comparable rows %d below required minimum %d", summary.Comparable, minComparable)
+}
+
 func normalizeBenchmarkName(name string) string {
 	var dash = strings.LastIndex(name, "-")
 	if dash <= 0 {
@@ -455,6 +513,7 @@ func commandCaptureGo(arguments []string) error {
 	var benchPattern = flagSet.String("bench", ".", "go benchmark regex")
 	var benchtime = flagSet.String("benchtime", "1s", "go benchmark benchtime")
 	var profile = flagSet.String("profile", "", "scenario profile identifier")
+	var requiredBenchmarks = flagSet.String("require-benchmarks", "", "comma-separated benchmark names required in capture output")
 	var extraBenchPattern = flagSet.String("extra-bench", "", "optional second go benchmark regex")
 	var extraBenchtime = flagSet.String("extra-benchtime", "1x", "go benchmark benchtime for extra bench")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
@@ -509,6 +568,29 @@ func commandCaptureGo(arguments []string) error {
 		return errors.New("no go benchmark samples parsed")
 	}
 
+	var required []string
+	for _, name := range strings.Split(strings.TrimSpace(*requiredBenchmarks), ",") {
+		var trimmed = strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		required = append(required, trimmed)
+	}
+	if len(required) == 0 {
+		required = requiredGoBenchmarksForProfile(strings.TrimSpace(*profile))
+	}
+
+	var parsedTailFile tailFile
+	parsedTailFile.Benchmarks = map[string]tailBenchmarkStats{}
+	for name := range parsed {
+		parsedTailFile.Benchmarks[name] = tailBenchmarkStats{}
+	}
+	var missing = missingRequiredBenchmarks(parsedTailFile, required)
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("capture-go missing required benchmarks: %s", strings.Join(missing, ", "))
+	}
+
 	var file tailFile
 	file.GeneratedAtUTC = time.Now().UTC().Format(time.RFC3339)
 	file.SourceCommand = sourceCommand
@@ -528,6 +610,7 @@ func commandCaptureC(arguments []string) error {
 	var executable = flagSet.String("exe", "./official_c_parity_benchmark.exe", "C benchmark executable path")
 	var extraExecutables = flagSet.String("extra-exe", "", "comma-separated extra C benchmark executables")
 	var profile = flagSet.String("profile", "", "scenario profile identifier")
+	var requiredBenchmarks = flagSet.String("require-benchmarks", "", "comma-separated benchmark names required in capture output")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
 	var timeout = flagSet.Duration("timeout", defaultCaptureTimeout, "maximum capture runtime")
 	var progressInterval = flagSet.Duration("progress-interval", defaultProgressInterval, "progress log interval")
@@ -598,6 +681,24 @@ func commandCaptureC(arguments []string) error {
 		file.Benchmarks[name] = summarizeSamples(samples)
 	}
 
+	var required []string
+	for _, name := range strings.Split(strings.TrimSpace(*requiredBenchmarks), ",") {
+		var trimmed = strings.TrimSpace(name)
+		if trimmed == "" {
+			continue
+		}
+		required = append(required, trimmed)
+	}
+	if len(required) == 0 {
+		required = requiredCBenchmarksForProfile(strings.TrimSpace(*profile))
+	}
+
+	var missing = missingRequiredBenchmarks(file, required)
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("capture-c missing required benchmarks: %s", strings.Join(missing, ", "))
+	}
+
 	return writeJSON(*outPath, file)
 }
 
@@ -666,6 +767,7 @@ func commandMerge(arguments []string) error {
 	var outMarkdown = flagSet.String("out-md", "tools/perf_side_by_side_report.md", "merged output markdown")
 	var requireComplete = flagSet.Bool("require-complete", false, "require all enabled rows to have both Go and C metrics")
 	var requireIntegrationComplete = flagSet.Bool("require-integration-complete", false, "require enabled integration rows to have both Go and C metrics")
+	var minComparable = flagSet.Int("min-comparable", 0, "minimum comparable Go/C rows required")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}
@@ -806,6 +908,10 @@ func commandMerge(arguments []string) error {
 	if *requireComplete && len(missingEnabled) > 0 {
 		sort.Strings(missingEnabled)
 		return fmt.Errorf("missing Go/C metrics for enabled rows: %s", strings.Join(missingEnabled, ", "))
+	}
+
+	if err = validateComparableFloor(output.Summary, *minComparable); err != nil {
+		return err
 	}
 
 	markdownLines = append(markdownLines, "")
