@@ -1,0 +1,616 @@
+{
+  "generated_at_utc": "2026-03-01T00:38:23Z",
+  "percentile_method": "nearest-rank",
+  "manifest_version": 1,
+  "summary": {
+    "rows": 27,
+    "comparable": 7,
+    "go_wins_p95": 2,
+    "c_wins_p95": 5,
+    "ties_p95": 0,
+    "unavailable": 20,
+    "offline_rows": 23,
+    "integration_rows": 4,
+    "parity_mapped_rows": 27,
+    "parity_unmapped_rows": 0
+  },
+  "rows": [
+    {
+      "benchmark_id": "client.parse.header.strict",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::execute",
+      "go_target": "amps:method:Client.Execute",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkStrictParityHeaderHotParse",
+      "c_benchmark": "OfficialCParityHeaderHotParse",
+      "enabled": true,
+      "notes": "Strict parity parser workload using canonical header frame",
+      "go": {
+        "p50_ns_op": 19.29,
+        "p95_ns_op": 19.86,
+        "p99_ns_op": 19.92
+      },
+      "c": {
+        "p50_ns_op": 22.01,
+        "p95_ns_op": 22.18,
+        "p99_ns_op": 22.25
+      },
+      "delta_go_vs_c": {
+        "p50_ns": -2.7200000000000024,
+        "p50_pct": -12.358019082235359,
+        "p95_ns": -2.3200000000000003,
+        "p95_pct": -10.459873760144275,
+        "p99_ns": -2.3299999999999983,
+        "p99_pct": -10.471910112359543
+      },
+      "winner_p95": "go"
+    },
+    {
+      "benchmark_id": "client.parse.sow_batch.strict",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::sow",
+      "go_target": "amps:method:Client.Sow",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkStrictParitySOWBatchParse",
+      "c_benchmark": "OfficialCParitySOWBatchParse",
+      "enabled": true,
+      "notes": "Strict parity 5x parse loop workload",
+      "go": {
+        "p50_ns_op": 95.89,
+        "p95_ns_op": 97.21,
+        "p99_ns_op": 97.23
+      },
+      "c": {
+        "p50_ns_op": 120.37,
+        "p95_ns_op": 121.29,
+        "p99_ns_op": 121.37
+      },
+      "delta_go_vs_c": {
+        "p50_ns": -24.480000000000004,
+        "p50_pct": -20.33729334551799,
+        "p95_ns": -24.080000000000013,
+        "p95_pct": -19.853244290543334,
+        "p99_ns": -24.14,
+        "p99_pct": -19.8895938040702
+      },
+      "winner_p95": "go"
+    },
+    {
+      "benchmark_id": "client.serialize.header.strict",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::send",
+      "go_target": "amps:method:Client.Send",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkHeaderHotWrite",
+      "c_benchmark": "OfficialCParityHeaderHotWrite",
+      "enabled": true,
+      "notes": "Header serialization comparable workload",
+      "go": {
+        "p50_ns_op": 147.6,
+        "p95_ns_op": 149.3,
+        "p99_ns_op": 150.7
+      },
+      "c": {
+        "p50_ns_op": 68.43,
+        "p95_ns_op": 69.54,
+        "p99_ns_op": 69.61
+      },
+      "delta_go_vs_c": {
+        "p50_ns": 79.16999999999999,
+        "p50_pct": 115.6948706707584,
+        "p95_ns": 79.76,
+        "p95_pct": 114.69657750934714,
+        "p99_ns": 81.08999999999999,
+        "p99_pct": 116.49188335009337
+      },
+      "winner_p95": "c"
+    },
+    {
+      "benchmark_id": "client.route.single",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::addMessageHandler",
+      "go_target": "amps:method:Client.AddMessageHandler",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkRouteHotSingle",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Go-only benchmark currently; no C harness equivalent yet",
+      "go": {
+        "p50_ns_op": 139.9,
+        "p95_ns_op": 141.3,
+        "p99_ns_op": 145.3
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.route.multi_sids",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::addMessageHandler",
+      "go_target": "amps:method:Client.AddMessageHandler",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkRouteHotMultiSIDs",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Go-only benchmark currently; no C harness equivalent yet",
+      "go": {
+        "p50_ns_op": 177.7,
+        "p95_ns_op": 189.9,
+        "p99_ns_op": 195.9
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.read.decode.dispatch",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::executeAsync",
+      "go_target": "amps:method:Client.ExecuteAsync",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkReadHotFrameDecodeDispatch",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Go-only combined decode+route benchmark",
+      "go": {
+        "p50_ns_op": 174.5,
+        "p95_ns_op": 181.8,
+        "p99_ns_op": 184.1
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.set_name",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::setName",
+      "go_target": "amps:method:Client.SetName",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIClientSetName",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Client control-plane setter",
+      "go": {
+        "p50_ns_op": 0.4878,
+        "p95_ns_op": 0.5115,
+        "p99_ns_op": 0.5187
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_name",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::getName",
+      "go_target": "amps:method:Client.Name",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIClientName",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Client control-plane getter",
+      "go": {
+        "p50_ns_op": 0.4356,
+        "p95_ns_op": 0.4607,
+        "p99_ns_op": 0.4674
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_name_hash",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::getNameHash",
+      "go_target": "amps:method:Client.GetNameHash",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIClientGetNameHash",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Client hash getter",
+      "go": {
+        "p50_ns_op": 0.9866,
+        "p95_ns_op": 1.018,
+        "p99_ns_op": 1.062
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.set_logon_correlation_data",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::setLogonCorrelationData",
+      "go_target": "amps:method:Client.SetLogonCorrelationData",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIClientSetLogonCorrelationData",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Client logon correlation setter",
+      "go": {
+        "p50_ns_op": 0.5251,
+        "p95_ns_op": 0.533,
+        "p99_ns_op": 0.5336
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_logon_correlation_data",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::getLogonCorrelationData",
+      "go_target": "amps:method:Client.GetLogonCorrelationData",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIClientGetLogonCorrelationData",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Client logon correlation getter",
+      "go": {
+        "p50_ns_op": 0.5239,
+        "p95_ns_op": 0.543,
+        "p99_ns_op": 0.5951
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.set_auto_ack",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::setAutoAck",
+      "go_target": "amps:method:Client.SetAutoAck",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIClientSetAutoAck",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Auto-ack policy setter",
+      "go": {
+        "p50_ns_op": 17.72,
+        "p95_ns_op": 18.37,
+        "p99_ns_op": 18.82
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.get_auto_ack",
+      "tier": "offline",
+      "ha": false,
+      "cpp_symbol": "Client::getAutoAck",
+      "go_target": "amps:method:Client.GetAutoAck",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIClientGetAutoAck",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "Auto-ack policy getter",
+      "go": {
+        "p50_ns_op": 17.04,
+        "p95_ns_op": 17.74,
+        "p99_ns_op": 17.76
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_timeout",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::setTimeout",
+      "go_target": "amps:method:HAClient.SetTimeout",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHASetTimeout",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA control-plane setter",
+      "go": {
+        "p50_ns_op": 11.2,
+        "p95_ns_op": 12.04,
+        "p99_ns_op": 12.07
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_timeout",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::getTimeout",
+      "go_target": "amps:method:HAClient.Timeout",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHATimeout",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA control-plane getter",
+      "go": {
+        "p50_ns_op": 11.11,
+        "p95_ns_op": 11.31,
+        "p99_ns_op": 11.72
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_reconnect_delay",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::setReconnectDelay",
+      "go_target": "amps:method:HAClient.SetReconnectDelay",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHASetReconnectDelay",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA reconnect delay setter",
+      "go": {
+        "p50_ns_op": 17.8,
+        "p95_ns_op": 18.78,
+        "p99_ns_op": 19.3
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_reconnect_delay",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::getReconnectDelay",
+      "go_target": "amps:method:HAClient.ReconnectDelay",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHAReconnectDelay",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA reconnect delay getter",
+      "go": {
+        "p50_ns_op": 11.22,
+        "p95_ns_op": 11.64,
+        "p99_ns_op": 15.48
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_reconnect_delay_strategy",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::setReconnectDelayStrategy",
+      "go_target": "amps:method:HAClient.SetReconnectDelayStrategy",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHASetReconnectDelayStrategy",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA reconnect strategy setter",
+      "go": {
+        "p50_ns_op": 11.25,
+        "p95_ns_op": 11.36,
+        "p99_ns_op": 11.39
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_logon_options",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::setLogonOptions",
+      "go_target": "amps:method:HAClient.SetLogonOptions",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHASetLogonOptions",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA logon options setter",
+      "go": {
+        "p50_ns_op": 12,
+        "p95_ns_op": 12.51,
+        "p99_ns_op": 13.13
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_logon_options",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::getLogonOptions",
+      "go_target": "amps:method:HAClient.LogonOptions",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHALogonOptions",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA logon options getter",
+      "go": {
+        "p50_ns_op": 16.07,
+        "p95_ns_op": 16.31,
+        "p99_ns_op": 16.39
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.set_server_chooser",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::setServerChooser",
+      "go_target": "amps:method:HAClient.SetServerChooser",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHASetServerChooser",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA server chooser setter",
+      "go": {
+        "p50_ns_op": 11.36,
+        "p95_ns_op": 11.56,
+        "p99_ns_op": 11.63
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.get_server_chooser",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::getServerChooser",
+      "go_target": "amps:method:HAClient.ServerChooser",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHAServerChooser",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA server chooser getter",
+      "go": {
+        "p50_ns_op": 11.28,
+        "p95_ns_op": 11.41,
+        "p99_ns_op": 11.44
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "ha.disconnected",
+      "tier": "offline",
+      "ha": true,
+      "cpp_symbol": "HAClient::disconnected",
+      "go_target": "amps:method:HAClient.Disconnected",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIHADisconnected",
+      "c_benchmark": "",
+      "enabled": true,
+      "notes": "HA disconnected-state check",
+      "go": {
+        "p50_ns_op": 0.4427,
+        "p95_ns_op": 0.4513,
+        "p99_ns_op": 0.4824
+      },
+      "c": {},
+      "winner_p95": "n/a"
+    },
+    {
+      "benchmark_id": "client.connect_logon.integration",
+      "tier": "integration",
+      "ha": false,
+      "cpp_symbol": "Client::connect",
+      "go_target": "amps:method:Client.Connect",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIIntegrationClientConnectLogon",
+      "c_benchmark": "OfficialCIntegrationConnectLogon",
+      "enabled": true,
+      "notes": "Synthetic integration round-trip against fake AMPS responder",
+      "go": {
+        "p50_ns_op": 263000,
+        "p95_ns_op": 464700,
+        "p99_ns_op": 557600
+      },
+      "c": {
+        "p50_ns_op": 187976.67,
+        "p95_ns_op": 230508,
+        "p99_ns_op": 255249.33
+      },
+      "delta_go_vs_c": {
+        "p50_ns": 75023.32999999999,
+        "p50_pct": 39.910979378451586,
+        "p95_ns": 234192,
+        "p95_pct": 101.5982091727836,
+        "p99_ns": 302350.67000000004,
+        "p99_pct": 118.45307096398649
+      },
+      "winner_p95": "c"
+    },
+    {
+      "benchmark_id": "client.publish.integration",
+      "tier": "integration",
+      "ha": false,
+      "cpp_symbol": "Client::publish",
+      "go_target": "amps:method:Client.PublishWithSequence",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIIntegrationClientPublish",
+      "c_benchmark": "OfficialCIntegrationPublish",
+      "enabled": true,
+      "notes": "Synthetic publish processed-ack loop against fake AMPS responder",
+      "go": {
+        "p50_ns_op": 88100,
+        "p95_ns_op": 132100,
+        "p99_ns_op": 138300
+      },
+      "c": {
+        "p50_ns_op": 25678.83,
+        "p95_ns_op": 29874.5,
+        "p99_ns_op": 30062.67
+      },
+      "delta_go_vs_c": {
+        "p50_ns": 62421.17,
+        "p50_pct": 243.08416699670502,
+        "p95_ns": 102225.5,
+        "p95_pct": 342.1831327720966,
+        "p99_ns": 108237.33,
+        "p99_pct": 360.03897857375944
+      },
+      "winner_p95": "c"
+    },
+    {
+      "benchmark_id": "client.subscribe.integration",
+      "tier": "integration",
+      "ha": false,
+      "cpp_symbol": "Client::subscribe",
+      "go_target": "amps:method:Client.Subscribe",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIIntegrationClientSubscribe",
+      "c_benchmark": "OfficialCIntegrationSubscribe",
+      "enabled": true,
+      "notes": "Synthetic subscribe processed-ack loop against fake AMPS responder",
+      "go": {
+        "p50_ns_op": 121200,
+        "p95_ns_op": 153800,
+        "p99_ns_op": 159500
+      },
+      "c": {
+        "p50_ns_op": 26403.1,
+        "p95_ns_op": 28563,
+        "p99_ns_op": 31622.3
+      },
+      "delta_go_vs_c": {
+        "p50_ns": 94796.9,
+        "p50_pct": 359.0370070181153,
+        "p95_ns": 125237,
+        "p95_pct": 438.45884535938103,
+        "p99_ns": 127877.7,
+        "p99_pct": 404.390888708285
+      },
+      "winner_p95": "c"
+    },
+    {
+      "benchmark_id": "ha.connect_and_logon.integration",
+      "tier": "integration",
+      "ha": true,
+      "cpp_symbol": "HAClient::connectAndLogon",
+      "go_target": "amps:method:HAClient.ConnectAndLogon",
+      "parity_mapped": true,
+      "go_benchmark": "BenchmarkAPIIntegrationHAConnectAndLogon",
+      "c_benchmark": "OfficialCIntegrationHAConnectAndLogon",
+      "enabled": true,
+      "notes": "Synthetic HA failover connect/logon loop against fake AMPS responder",
+      "go": {
+        "p50_ns_op": 337800,
+        "p95_ns_op": 468700,
+        "p99_ns_op": 551000
+      },
+      "c": {
+        "p50_ns_op": 185640,
+        "p95_ns_op": 216978.75,
+        "p99_ns_op": 220268.75
+      },
+      "delta_go_vs_c": {
+        "p50_ns": 152160,
+        "p50_pct": 81.9650937297996,
+        "p95_ns": 251721.25,
+        "p95_pct": 116.01193665278282,
+        "p99_ns": 330731.25,
+        "p99_pct": 150.14896575206424
+      },
+      "winner_p95": "c"
+    }
+  ]
+}

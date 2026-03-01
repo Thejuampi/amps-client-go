@@ -1,0 +1,215 @@
+{
+  "generated_at_utc": "2026-02-28T21:33:33Z",
+  "source_command": "go test ./amps -run ^$ -bench Benchmark(StrictParityHeaderHotParse|StrictParitySOWBatchParse|HeaderHotWrite|RouteHotSingle|RouteHotMultiSIDs|ReadHotFrameDecodeDispatch|API.*) -benchmem -benchtime=1s -count=20",
+  "percentile_method": "nearest-rank",
+  "samples_per_benchmark": 20,
+  "benchmarks": {
+    "BenchmarkAPIClientGetAutoAck": {
+      "n": 20,
+      "min_ns_op": 16.81,
+      "p50_ns_op": 17.04,
+      "p95_ns_op": 18.23,
+      "p99_ns_op": 18.8,
+      "max_ns_op": 18.8,
+      "mean_ns_op": 17.2915
+    },
+    "BenchmarkAPIClientGetLogonCorrelationData": {
+      "n": 20,
+      "min_ns_op": 0.5155,
+      "p50_ns_op": 0.5326,
+      "p95_ns_op": 0.784,
+      "p99_ns_op": 0.7986,
+      "max_ns_op": 0.7986,
+      "mean_ns_op": 0.569
+    },
+    "BenchmarkAPIClientGetNameHash": {
+      "n": 20,
+      "min_ns_op": 0.9712,
+      "p50_ns_op": 0.9777,
+      "p95_ns_op": 0.9928,
+      "p99_ns_op": 0.9942,
+      "max_ns_op": 0.9942,
+      "mean_ns_op": 0.9797
+    },
+    "BenchmarkAPIClientName": {
+      "n": 20,
+      "min_ns_op": 0.4329,
+      "p50_ns_op": 0.4404,
+      "p95_ns_op": 0.512,
+      "p99_ns_op": 0.5325,
+      "max_ns_op": 0.5325,
+      "mean_ns_op": 0.4495
+    },
+    "BenchmarkAPIClientSetAutoAck": {
+      "n": 20,
+      "min_ns_op": 17.75,
+      "p50_ns_op": 18.48,
+      "p95_ns_op": 20.7,
+      "p99_ns_op": 23.43,
+      "max_ns_op": 23.43,
+      "mean_ns_op": 18.7375
+    },
+    "BenchmarkAPIClientSetLogonCorrelationData": {
+      "n": 20,
+      "min_ns_op": 0.5201,
+      "p50_ns_op": 0.5485,
+      "p95_ns_op": 0.6258,
+      "p99_ns_op": 0.6345,
+      "max_ns_op": 0.6345,
+      "mean_ns_op": 0.5666
+    },
+    "BenchmarkAPIClientSetName": {
+      "n": 20,
+      "min_ns_op": 0.4683,
+      "p50_ns_op": 0.4821,
+      "p95_ns_op": 0.5023,
+      "p99_ns_op": 0.5367,
+      "max_ns_op": 0.5367,
+      "mean_ns_op": 0.4853
+    },
+    "BenchmarkAPIHADisconnected": {
+      "n": 20,
+      "min_ns_op": 0.4339,
+      "p50_ns_op": 0.4463,
+      "p95_ns_op": 0.4687,
+      "p99_ns_op": 0.5355,
+      "max_ns_op": 0.5355,
+      "mean_ns_op": 0.4527
+    },
+    "BenchmarkAPIHALogonOptions": {
+      "n": 20,
+      "min_ns_op": 15.72,
+      "p50_ns_op": 15.92,
+      "p95_ns_op": 16.58,
+      "p99_ns_op": 16.69,
+      "max_ns_op": 16.69,
+      "mean_ns_op": 16.0085
+    },
+    "BenchmarkAPIHAReconnectDelay": {
+      "n": 20,
+      "min_ns_op": 10.98,
+      "p50_ns_op": 11.17,
+      "p95_ns_op": 11.3,
+      "p99_ns_op": 12.12,
+      "max_ns_op": 12.12,
+      "mean_ns_op": 11.209
+    },
+    "BenchmarkAPIHAServerChooser": {
+      "n": 20,
+      "min_ns_op": 11.01,
+      "p50_ns_op": 11.2,
+      "p95_ns_op": 11.96,
+      "p99_ns_op": 12.01,
+      "max_ns_op": 12.01,
+      "mean_ns_op": 11.2995
+    },
+    "BenchmarkAPIHASetLogonOptions": {
+      "n": 20,
+      "min_ns_op": 11.76,
+      "p50_ns_op": 11.9,
+      "p95_ns_op": 12.43,
+      "p99_ns_op": 12.59,
+      "max_ns_op": 12.59,
+      "mean_ns_op": 11.9875
+    },
+    "BenchmarkAPIHASetReconnectDelay": {
+      "n": 20,
+      "min_ns_op": 18.32,
+      "p50_ns_op": 19.54,
+      "p95_ns_op": 21.76,
+      "p99_ns_op": 21.94,
+      "max_ns_op": 21.94,
+      "mean_ns_op": 19.846
+    },
+    "BenchmarkAPIHASetReconnectDelayStrategy": {
+      "n": 20,
+      "min_ns_op": 11.02,
+      "p50_ns_op": 11.22,
+      "p95_ns_op": 11.36,
+      "p99_ns_op": 11.91,
+      "max_ns_op": 11.91,
+      "mean_ns_op": 11.237
+    },
+    "BenchmarkAPIHASetServerChooser": {
+      "n": 20,
+      "min_ns_op": 11.06,
+      "p50_ns_op": 11.27,
+      "p95_ns_op": 11.38,
+      "p99_ns_op": 11.65,
+      "max_ns_op": 11.65,
+      "mean_ns_op": 11.2615
+    },
+    "BenchmarkAPIHASetTimeout": {
+      "n": 20,
+      "min_ns_op": 11.1,
+      "p50_ns_op": 11.21,
+      "p95_ns_op": 11.98,
+      "p99_ns_op": 12,
+      "max_ns_op": 12,
+      "mean_ns_op": 11.3715
+    },
+    "BenchmarkAPIHATimeout": {
+      "n": 20,
+      "min_ns_op": 11.11,
+      "p50_ns_op": 11.3,
+      "p95_ns_op": 11.6,
+      "p99_ns_op": 11.7,
+      "max_ns_op": 11.7,
+      "mean_ns_op": 11.3275
+    },
+    "BenchmarkHeaderHotWrite": {
+      "n": 20,
+      "min_ns_op": 168.6,
+      "p50_ns_op": 172.4,
+      "p95_ns_op": 174.1,
+      "p99_ns_op": 185.3,
+      "max_ns_op": 185.3,
+      "mean_ns_op": 172.625
+    },
+    "BenchmarkReadHotFrameDecodeDispatch": {
+      "n": 20,
+      "min_ns_op": 168.4,
+      "p50_ns_op": 171.6,
+      "p95_ns_op": 175.7,
+      "p99_ns_op": 177.8,
+      "max_ns_op": 177.8,
+      "mean_ns_op": 171.855
+    },
+    "BenchmarkRouteHotMultiSIDs": {
+      "n": 20,
+      "min_ns_op": 174.4,
+      "p50_ns_op": 177.4,
+      "p95_ns_op": 181.5,
+      "p99_ns_op": 190.4,
+      "max_ns_op": 190.4,
+      "mean_ns_op": 178.505
+    },
+    "BenchmarkRouteHotSingle": {
+      "n": 20,
+      "min_ns_op": 137.2,
+      "p50_ns_op": 139.9,
+      "p95_ns_op": 148.9,
+      "p99_ns_op": 149.3,
+      "max_ns_op": 149.3,
+      "mean_ns_op": 140.91
+    },
+    "BenchmarkStrictParityHeaderHotParse": {
+      "n": 20,
+      "min_ns_op": 19.14,
+      "p50_ns_op": 19.41,
+      "p95_ns_op": 20.59,
+      "p99_ns_op": 21.02,
+      "max_ns_op": 21.02,
+      "mean_ns_op": 19.5445
+    },
+    "BenchmarkStrictParitySOWBatchParse": {
+      "n": 20,
+      "min_ns_op": 95.76,
+      "p50_ns_op": 97.19,
+      "p95_ns_op": 98.59,
+      "p99_ns_op": 101.8,
+      "max_ns_op": 101.8,
+      "mean_ns_op": 97.231
+    }
+  }
+}

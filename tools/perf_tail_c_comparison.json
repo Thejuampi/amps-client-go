@@ -1,0 +1,78 @@
+{
+  "baseline_generated_at_utc": "2026-02-28T22:39:35Z",
+  "current_generated_at_utc": "2026-03-01T00:38:22Z",
+  "metric": "ns/op (lower is better)",
+  "percentile_method": "nearest-rank",
+  "benchmarks": {
+    "OfficialCIntegrationConnectLogon": {
+      "p95_before": 252962,
+      "p95_after": 230508,
+      "p95_delta": -22454,
+      "p95_delta_pct": -8.87643203326982,
+      "p99_before": 302878.67,
+      "p99_after": 255249.33,
+      "p99_delta": -47629.34,
+      "p99_delta_pct": -15.725551092785766
+    },
+    "OfficialCIntegrationHAConnectAndLogon": {
+      "p95_before": 248715,
+      "p95_after": 216978.75,
+      "p95_delta": -31736.25,
+      "p95_delta_pct": -12.760086846390447,
+      "p99_before": 425472.5,
+      "p99_after": 220268.75,
+      "p99_delta": -205203.75,
+      "p99_delta_pct": -48.229615310037666
+    },
+    "OfficialCIntegrationPublish": {
+      "p95_before": 37558.08,
+      "p95_after": 29874.5,
+      "p95_delta": -7683.580000000002,
+      "p95_delta_pct": -20.45786153072788,
+      "p99_before": 37888.92,
+      "p99_after": 30062.67,
+      "p99_delta": -7826.25,
+      "p99_delta_pct": -20.655774828102782
+    },
+    "OfficialCIntegrationSubscribe": {
+      "p95_before": 30241.8,
+      "p95_after": 28563,
+      "p95_delta": -1678.7999999999993,
+      "p95_delta_pct": -5.551256869630774,
+      "p99_before": 36901.9,
+      "p99_after": 31622.3,
+      "p99_delta": -5279.600000000002,
+      "p99_delta_pct": -14.307122397491733
+    },
+    "OfficialCParityHeaderHotParse": {
+      "p95_before": 22.41,
+      "p95_after": 22.18,
+      "p95_delta": -0.23000000000000043,
+      "p95_delta_pct": -1.0263275323516305,
+      "p99_before": 22.47,
+      "p99_after": 22.25,
+      "p99_delta": -0.21999999999999886,
+      "p99_delta_pct": -0.9790832220738713
+    },
+    "OfficialCParityHeaderHotWrite": {
+      "p95_before": 70.16,
+      "p95_after": 69.54,
+      "p95_delta": -0.6199999999999903,
+      "p95_delta_pct": -0.8836944127707959,
+      "p99_before": 72.35,
+      "p99_after": 69.61,
+      "p99_delta": -2.739999999999995,
+      "p99_delta_pct": -3.787145818935722
+    },
+    "OfficialCParitySOWBatchParse": {
+      "p95_before": 125.56,
+      "p95_after": 121.29,
+      "p95_delta": -4.269999999999996,
+      "p95_delta_pct": -3.4007645747053172,
+      "p99_before": 126.13,
+      "p99_after": 121.37,
+      "p99_delta": -4.759999999999991,
+      "p99_delta_pct": -3.7738840878458664
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "generated_at_utc": "2026-02-28T22:39:35Z",
+  "source_command": "./official_c_parity_benchmark.exe ; ./tools/cperf/fakeamps_c_integration_benchmark.exe",
+  "percentile_method": "nearest-rank",
+  "samples_per_benchmark": 20,
+  "benchmarks": {
+    "OfficialCIntegrationConnectLogon": {
+      "n": 20,
+      "min_ns_op": 203653.33,
+      "p50_ns_op": 234654,
+      "p95_ns_op": 252962,
+      "p99_ns_op": 302878.67,
+      "max_ns_op": 302878.67,
+      "mean_ns_op": 236999.1325
+    },
+    "OfficialCIntegrationHAConnectAndLogon": {
+      "n": 20,
+      "min_ns_op": 201618.75,
+      "p50_ns_op": 220371.25,
+      "p95_ns_op": 248715,
+      "p99_ns_op": 425472.5,
+      "max_ns_op": 425472.5,
+      "mean_ns_op": 231635.9375
+    },
+    "OfficialCIntegrationPublish": {
+      "n": 20,
+      "min_ns_op": 24689,
+      "p50_ns_op": 25976.25,
+      "p95_ns_op": 37558.08,
+      "p99_ns_op": 37888.92,
+      "max_ns_op": 37888.92,
+      "mean_ns_op": 27978.0125
+    },
+    "OfficialCIntegrationSubscribe": {
+      "n": 20,
+      "min_ns_op": 24023,
+      "p50_ns_op": 26453,
+      "p95_ns_op": 30241.8,
+      "p99_ns_op": 36901.9,
+      "max_ns_op": 36901.9,
+      "mean_ns_op": 27211.045
+    },
+    "OfficialCParityHeaderHotParse": {
+      "n": 20,
+      "min_ns_op": 22.06,
+      "p50_ns_op": 22.2,
+      "p95_ns_op": 22.41,
+      "p99_ns_op": 22.47,
+      "max_ns_op": 22.47,
+      "mean_ns_op": 22.213
+    },
+    "OfficialCParityHeaderHotWrite": {
+      "n": 20,
+      "min_ns_op": 67.68,
+      "p50_ns_op": 68.56,
+      "p95_ns_op": 70.16,
+      "p99_ns_op": 72.35,
+      "max_ns_op": 72.35,
+      "mean_ns_op": 68.786
+    },
+    "OfficialCParitySOWBatchParse": {
+      "n": 20,
+      "min_ns_op": 120.89,
+      "p50_ns_op": 121.97,
+      "p95_ns_op": 125.56,
+      "p99_ns_op": 126.13,
+      "max_ns_op": 126.13,
+      "mean_ns_op": 122.508
+    }
+  }
+}
