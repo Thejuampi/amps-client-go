@@ -318,6 +318,73 @@ func runCommand(command []string, timeout time.Duration, progressInterval time.D
 	}
 }
 
+func isTransientCaptureGoError(output string) bool {
+	var lowered = strings.ToLower(output)
+	if strings.Contains(lowered, "only one usage of each socket address") {
+		return true
+	}
+	if strings.Contains(lowered, "connectionrefusederror") {
+		return true
+	}
+	if strings.Contains(lowered, "connection refused") {
+		return true
+	}
+	if strings.Contains(lowered, "connectex") {
+		return true
+	}
+	return false
+}
+
+type commandRunner func(command []string, timeout time.Duration, progressInterval time.Duration, progressLabel string) (string, error)
+
+func runCommandWithRetryUsingRunner(runner commandRunner, command []string, deadline time.Time, progressInterval time.Duration, progressLabel string, retryAttempts int, retryDelay time.Duration) (string, error) {
+	if retryAttempts <= 0 {
+		retryAttempts = 1
+	}
+	if retryDelay < 0 {
+		retryDelay = 0
+	}
+
+	var output string
+	var err error
+	var attempt int
+	for attempt = 1; attempt <= retryAttempts; attempt++ {
+		var remaining = time.Until(deadline)
+		if remaining <= 0 {
+			if err != nil {
+				return output, err
+			}
+			return "", fmt.Errorf("capture-go timed out before execution")
+		}
+
+		output, err = runner(command, remaining, progressInterval, progressLabel)
+		if err == nil {
+			return output, nil
+		}
+		if attempt >= retryAttempts || !isTransientCaptureGoError(output) {
+			return output, err
+		}
+
+		if retryDelay > 0 {
+			var sleep = retryDelay
+			var untilDeadline = time.Until(deadline)
+			if untilDeadline <= 0 {
+				return output, err
+			}
+			if sleep > untilDeadline {
+				sleep = untilDeadline
+			}
+			time.Sleep(sleep)
+		}
+	}
+
+	return output, err
+}
+
+func runCommandWithRetry(command []string, deadline time.Time, progressInterval time.Duration, progressLabel string, retryAttempts int, retryDelay time.Duration) (string, error) {
+	return runCommandWithRetryUsingRunner(runCommand, command, deadline, progressInterval, progressLabel, retryAttempts, retryDelay)
+}
+
 func parseGoBenchSamples(output string) map[string][]float64 {
 	var result = map[string][]float64{}
 	var scanner = bufio.NewScanner(strings.NewReader(output))
@@ -514,6 +581,8 @@ func commandCaptureGo(arguments []string) error {
 	var benchtime = flagSet.String("benchtime", "1s", "go benchmark benchtime")
 	var profile = flagSet.String("profile", "", "scenario profile identifier")
 	var requiredBenchmarks = flagSet.String("require-benchmarks", "", "comma-separated benchmark names required in capture output")
+	var retryAttempts = flagSet.Int("retry-attempts", 1, "maximum attempts for capture-go command on transient network failures")
+	var retryDelay = flagSet.Duration("retry-delay", 2*time.Second, "delay between retry attempts")
 	var extraBenchPattern = flagSet.String("extra-bench", "", "optional second go benchmark regex")
 	var extraBenchtime = flagSet.String("extra-benchtime", "1x", "go benchmark benchtime for extra bench")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
@@ -532,14 +601,15 @@ func commandCaptureGo(arguments []string) error {
 
 	var startedAt = time.Now()
 	var deadline = startedAt.Add(*timeout)
-
-	var remaining = time.Until(deadline)
-	if remaining <= 0 {
-		return fmt.Errorf("capture-go timed out before execution (%s)", *timeout)
+	if *retryAttempts <= 0 {
+		*retryAttempts = 1
+	}
+	if *retryDelay < 0 {
+		*retryDelay = 0
 	}
 
 	var command = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *benchPattern, "-benchmem", "-benchtime=" + *benchtime, "-count=" + strconv.Itoa(*samples)}
-	var output, err = runCommand(command, remaining, *progressInterval, "capture-go primary benchmarks")
+	var output, err = runCommandWithRetry(command, deadline, *progressInterval, "capture-go primary benchmarks", *retryAttempts, *retryDelay)
 	if err != nil {
 		return err
 	}
@@ -548,12 +618,11 @@ func commandCaptureGo(arguments []string) error {
 	var sourceCommand = strings.Join(command, " ")
 
 	if strings.TrimSpace(*extraBenchPattern) != "" {
-		remaining = time.Until(deadline)
-		if remaining <= 0 {
+		if time.Until(deadline) <= 0 {
 			return fmt.Errorf("capture-go timed out before extra benchmarks (%s)", *timeout)
 		}
 		var extraCommand = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *extraBenchPattern, "-benchmem", "-benchtime=" + *extraBenchtime, "-count=" + strconv.Itoa(*samples)}
-		var extraOutput, extraErr = runCommand(extraCommand, remaining, *progressInterval, "capture-go extra benchmarks")
+		var extraOutput, extraErr = runCommandWithRetry(extraCommand, deadline, *progressInterval, "capture-go extra benchmarks", *retryAttempts, *retryDelay)
 		if extraErr != nil {
 			return extraErr
 		}

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRequiredGoBenchmarksForAllComparableProfile(t *testing.T) {
@@ -94,5 +96,62 @@ func TestValidateComparableFloor(t *testing.T) {
 	err = validateComparableFloor(mergedSummary{Comparable: 8}, 7)
 	if err != nil {
 		t.Fatalf("unexpected comparable floor error for satisfied summary: %v", err)
+	}
+}
+
+func TestIsTransientCaptureGoErrorTrue(t *testing.T) {
+	if !isTransientCaptureGoError("ConnectionRefusedError: dial tcp4 127.0.0.1:19000: connectex: Only one usage of each socket address") {
+		t.Fatalf("expected transient socket exhaustion error to be retryable")
+	}
+}
+
+func TestIsTransientCaptureGoErrorFalse(t *testing.T) {
+	if isTransientCaptureGoError("syntax error in benchmark output") {
+		t.Fatalf("expected non-network parse error to be non-retryable")
+	}
+}
+
+func TestRunCommandWithRetryUsingRunnerRetriesTransientFailure(t *testing.T) {
+	var attempts int
+	var runner = func(command []string, timeout time.Duration, progressInterval time.Duration, progressLabel string) (string, error) {
+		attempts++
+		if attempts == 1 {
+			return "connectex: Only one usage of each socket address", errors.New("transient")
+		}
+		return "ok", nil
+	}
+
+	var output, err = runCommandWithRetryUsingRunner(
+		runner,
+		[]string{"go", "test"},
+		time.Now().Add(time.Second),
+		10*time.Millisecond,
+		"capture-go",
+		2,
+		0,
+	)
+	if err != nil || output != "ok" {
+		t.Fatalf("expected retry to succeed, got output=%q err=%v", output, err)
+	}
+}
+
+func TestRunCommandWithRetryUsingRunnerDoesNotRetryNonTransient(t *testing.T) {
+	var attempts int
+	var runner = func(command []string, timeout time.Duration, progressInterval time.Duration, progressLabel string) (string, error) {
+		attempts++
+		return "malformed benchmark output", errors.New("fatal")
+	}
+
+	_, err := runCommandWithRetryUsingRunner(
+		runner,
+		[]string{"go", "test"},
+		time.Now().Add(time.Second),
+		10*time.Millisecond,
+		"capture-go",
+		3,
+		0,
+	)
+	if err == nil || attempts != 1 {
+		t.Fatalf("expected immediate failure without retry, attempts=%d err=%v", attempts, err)
 	}
 }

@@ -59,6 +59,9 @@ var (
 	flagLease       = flag.Duration("lease", 30*time.Second, "default queue lease period")
 	flagEcho        = flag.Bool("echo", false, "echo publishes back to same connection")
 	flagOutDepth    = flag.Int("out-depth", 65536, "per-connection outbound channel depth")
+	flagSOWGCIvl    = flag.Duration("sow-gc-interval", 30*time.Second, "interval for SOW expiration sweep (0 disables sweep)")
+	flagLeaseIvl    = flag.Duration("queue-lease-interval", 5*time.Second, "interval for queue lease expiration checks (0 disables watcher)")
+	flagBenchStable = flag.Bool("benchmark-stability", false, "apply low-noise benchmark defaults without changing protocol semantics")
 
 	// Authentication
 	flagAuth          = flag.String("auth", "", "enable auth with user:pass pairs (e.g. 'user1:pass1,user2:pass2')")
@@ -96,6 +99,76 @@ var (
 	sow     *sowCache
 )
 
+type benchmarkStabilitySettings struct {
+	logConn            bool
+	logStats           bool
+	sowGCInterval      time.Duration
+	queueLeaseInterval time.Duration
+}
+
+type benchmarkStabilityOverrides struct {
+	logConnSet            bool
+	logStatsSet           bool
+	sowGCIntervalSet      bool
+	queueLeaseIntervalSet bool
+}
+
+func flagSetByUser(flagSet *flag.FlagSet, name string) bool {
+	if flagSet == nil {
+		return false
+	}
+
+	var found bool
+	flagSet.Visit(func(current *flag.Flag) {
+		if current != nil && current.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+func applyBenchmarkStabilitySettings(enabled bool, settings benchmarkStabilitySettings, overrides benchmarkStabilityOverrides) benchmarkStabilitySettings {
+	if !enabled {
+		return settings
+	}
+
+	if !overrides.logConnSet {
+		settings.logConn = false
+	}
+	if !overrides.logStatsSet {
+		settings.logStats = false
+	}
+	if !overrides.sowGCIntervalSet {
+		settings.sowGCInterval = 5 * time.Minute
+	}
+	if !overrides.queueLeaseIntervalSet {
+		settings.queueLeaseInterval = 30 * time.Second
+	}
+
+	return settings
+}
+
+func applyBenchmarkStabilityDefaults(flagSet *flag.FlagSet) {
+	var settings = benchmarkStabilitySettings{
+		logConn:            *flagLogConn,
+		logStats:           *flagLogStats,
+		sowGCInterval:      *flagSOWGCIvl,
+		queueLeaseInterval: *flagLeaseIvl,
+	}
+	var overrides = benchmarkStabilityOverrides{
+		logConnSet:            flagSetByUser(flagSet, "log-conn"),
+		logStatsSet:           flagSetByUser(flagSet, "stats"),
+		sowGCIntervalSet:      flagSetByUser(flagSet, "sow-gc-interval"),
+		queueLeaseIntervalSet: flagSetByUser(flagSet, "queue-lease-interval"),
+	}
+
+	var updated = applyBenchmarkStabilitySettings(*flagBenchStable, settings, overrides)
+	*flagLogConn = updated.logConn
+	*flagLogStats = updated.logStats
+	*flagSOWGCIvl = updated.sowGCInterval
+	*flagLeaseIvl = updated.queueLeaseInterval
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -104,6 +177,7 @@ func main() {
 	flag.Var(&flagViews, "view", "register a view: 'name:source:filter:aggregates:groupBy' (repeatable)")
 	flag.Var(&flagActions, "action", "register an action: 'trigger:topic:type:target' (repeatable)")
 	flag.Parse()
+	applyBenchmarkStabilityDefaults(flag.CommandLine)
 
 	// Initialize server-global state.
 	if *flagJournal {
@@ -175,9 +249,9 @@ func main() {
 	}
 
 	// SOW expiration GC — periodically sweep expired records.
-	if *flagSOWEnabled {
+	if *flagSOWEnabled && *flagSOWGCIvl > 0 {
 		go func() {
-			ticker := time.NewTicker(30 * time.Second)
+			ticker := time.NewTicker(*flagSOWGCIvl)
 			defer ticker.Stop()
 			var stats connStats
 			for range ticker.C {
@@ -195,8 +269,8 @@ func main() {
 	}
 
 	// Queue lease watcher — requeue messages on lease timeout.
-	if *flagQueue {
-		StartLeaseWatcher(5 * time.Second)
+	if *flagQueue && *flagLeaseIvl > 0 {
+		StartLeaseWatcher(*flagLeaseIvl)
 	}
 
 	// Graceful shutdown.
