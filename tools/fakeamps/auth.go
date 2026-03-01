@@ -2,8 +2,10 @@ package main
 
 import (
 	"log"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,10 +32,11 @@ func init() {
 
 // authStore holds the server's authentication and entitlement state.
 type authStore struct {
-	mu           sync.RWMutex
-	users        map[string]string            // username → password
-	entitlements map[string]*topicEntitlement // username → entitlements
-	defaultAllow bool                         // when true, unknown users are allowed
+	mu              sync.RWMutex
+	users           map[string]string            // username → password
+	entitlements    map[string]*topicEntitlement // username → entitlements
+	requiredFilters map[string]string            // username → mandatory filter clause
+	defaultAllow    bool                         // when true, unknown users are allowed
 }
 
 type topicEntitlement struct {
@@ -46,9 +49,10 @@ type topicEntitlement struct {
 }
 
 var auth = &authStore{
-	users:        make(map[string]string),
-	entitlements: make(map[string]*topicEntitlement),
-	defaultAllow: true, // permissive by default
+	users:           make(map[string]string),
+	entitlements:    make(map[string]*topicEntitlement),
+	requiredFilters: make(map[string]string),
+	defaultAllow:    true, // permissive by default
 }
 
 // addUser registers a user with password and optional entitlements.
@@ -59,6 +63,59 @@ func (a *authStore) addUser(username, password string, ent *topicEntitlement) {
 		a.entitlements[username] = ent
 	}
 	a.mu.Unlock()
+}
+
+func (a *authStore) setRequiredFilter(username, filter string) {
+	a.mu.Lock()
+	if a.requiredFilters == nil {
+		a.requiredFilters = make(map[string]string)
+	}
+	if filter != "" {
+		a.requiredFilters[username] = filter
+	}
+	a.mu.Unlock()
+}
+
+func (a *authStore) requiredFilter(username string) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.requiredFilters == nil {
+		return ""
+	}
+	return strings.TrimSpace(a.requiredFilters[username])
+}
+
+func (a *authStore) userPassword(username string) (string, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	var password, ok = a.users[username]
+	return password, ok
+}
+
+func (a *authStore) verifyChallengeResponse(username, challenge, response string) bool {
+	if challenge == "" || response == "" {
+		return false
+	}
+
+	var expectedPassword, ok = a.userPassword(username)
+	if !ok {
+		return false
+	}
+
+	if !strings.HasPrefix(response, challenge+":") {
+		return false
+	}
+
+	var suppliedPassword = strings.TrimPrefix(response, challenge+":")
+	return suppliedPassword == expectedPassword
+}
+
+func issueAuthChallengeNonce() string {
+	var now = time.Now().UTC().UnixNano()
+	var seq = globalBookmarkSeq.Add(1)
+	var nowPart = strconv.FormatInt(now, 10)
+	var seqPart = strconv.FormatUint(seq, 10)
+	return nowPart + "-" + seqPart
 }
 
 // authenticate checks username/password. Returns true if auth succeeds.
@@ -144,6 +201,17 @@ func authorizeCommand(userID, command, topic string) bool {
 	return auth.authorize(userID, command, topic)
 }
 
+func applyEntitlementFilter(userID, filter string) string {
+	var required = auth.requiredFilter(userID)
+	if required == "" {
+		return filter
+	}
+	if strings.TrimSpace(filter) == "" {
+		return required
+	}
+	return "(" + filter + ") AND (" + required + ")"
+}
+
 // ---------------------------------------------------------------------------
 // configureAuth sets up authentication from flag values.
 // Called from main if -auth is enabled.
@@ -154,11 +222,14 @@ func configureAuth(userPassPairs string) {
 		return
 	}
 	auth.defaultAllow = false
-	// Format: "user1:pass1,user2:pass2"
+	// Format: "user1:pass1,user2:pass2" or "user1:pass1:/owner='user1'"
 	for _, pair := range strings.Split(userPassPairs, ",") {
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) == 2 {
+		var parts = strings.SplitN(pair, ":", 3)
+		if len(parts) >= 2 {
 			auth.addUser(parts[0], parts[1], nil)
+			if len(parts) == 3 {
+				auth.setRequiredFilter(parts[0], parts[2])
+			}
 			log.Printf("fakeamps: auth user registered: %s", parts[0])
 		}
 	}

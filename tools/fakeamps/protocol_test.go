@@ -53,6 +53,18 @@ func TestParseAMPSHeaderReplicationAndAckFields(t *testing.T) {
 	}
 }
 
+func TestParseAMPSHeaderRedirectURIField(t *testing.T) {
+	var frame = []byte(`{"c":"redirect","cid":"r2","uri":"tcp://127.0.0.1:19001/amps/json"}`)
+	var h, payload = parseAMPSHeader(frame)
+
+	if h.c != "redirect" || h.cid != "r2" || h.uri != "tcp://127.0.0.1:19001/amps/json" {
+		t.Fatalf("unexpected redirect header fields: %+v", h)
+	}
+	if len(payload) != 0 {
+		t.Fatalf("expected empty payload for header-only frame")
+	}
+}
+
 func TestFinalizeFrameAndStartFrame(t *testing.T) {
 	buf := bytes.NewBuffer(nil)
 	startFrame(buf)
@@ -84,9 +96,9 @@ func TestBuildAckVariants(t *testing.T) {
 		t.Fatalf("unexpected persisted ack body: %s", pBody)
 	}
 
-	sowDelete := buildSOWDeleteAck(buf, "stats", "cid-3", 4)
+	sowDelete := buildSOWDeleteAck(buf, "stats", "cid-3", 4, 8)
 	dBody := string(sowDelete[4:])
-	if !strings.Contains(dBody, `"records_deleted":4`) {
+	if !strings.Contains(dBody, `"records_deleted":4`) || !strings.Contains(dBody, `"topic_matches":8`) {
 		t.Fatalf("unexpected sow delete ack body: %s", dBody)
 	}
 }
@@ -110,6 +122,22 @@ func TestBuildPublishAndSOWFrames(t *testing.T) {
 	oofBody := string(oof[4:])
 	if !strings.Contains(oofBody, `"c":"oof"`) {
 		t.Fatalf("unexpected oof body: %s", oofBody)
+	}
+
+	oofWithReason := buildOOFDeliveryWithReason(buf, "orders", "sub-1", "k1", "bm", "evicted")
+	oofReasonBody := string(oofWithReason[4:])
+	if !strings.Contains(oofReasonBody, `"reason":"evicted"`) {
+		t.Fatalf("unexpected oof-with-reason body: %s", oofReasonBody)
+	}
+}
+
+func TestBuildRedirectFrame(t *testing.T) {
+	var buf = bytes.NewBuffer(nil)
+	var frame = buildRedirectFrame(buf, "cid-redirect", "tcp://127.0.0.1:19001/amps/json")
+	var body = string(frame[4:])
+
+	if !strings.Contains(body, `"c":"redirect"`) || !strings.Contains(body, `"cid":"cid-redirect"`) || !strings.Contains(body, `"uri":"tcp://127.0.0.1:19001/amps/json"`) {
+		t.Fatalf("unexpected redirect frame body: %s", body)
 	}
 }
 

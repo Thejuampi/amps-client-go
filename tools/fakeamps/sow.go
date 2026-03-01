@@ -378,6 +378,11 @@ func (t *topicSOW) evictIfNeeded() *sowRecord {
 
 // upsert inserts or updates a SOW record. Returns (isInsert, isUpdate, previousPayload).
 func (c *sowCache) upsert(topic, sowKey string, payload []byte, bookmark, timestamp string, seqNum uint64, expiration time.Duration) (inserted bool, updated bool, previousPayload []byte) {
+	inserted, updated, previousPayload, _ = c.upsertWithEvicted(topic, sowKey, payload, bookmark, timestamp, seqNum, expiration)
+	return
+}
+
+func (c *sowCache) upsertWithEvicted(topic, sowKey string, payload []byte, bookmark, timestamp string, seqNum uint64, expiration time.Duration) (inserted bool, updated bool, previousPayload []byte, evicted *sowRecord) {
 	if sowKey == "" {
 		sowKey = "auto-" + strconv.FormatUint(seqNum, 10)
 	}
@@ -395,7 +400,7 @@ func (c *sowCache) upsert(topic, sowKey string, payload []byte, bookmark, timest
 	existing := t.records[sowKey]
 	if existing == nil {
 		// Evict if needed before inserting.
-		evicted := t.evictIfNeeded()
+		evicted = t.evictIfNeeded()
 		if evicted != nil {
 			log.Printf("fakeamps: sow evicted key=%s topic=%s (policy=%d)", evicted.sowKey, topic, t.eviction)
 		}
@@ -592,6 +597,115 @@ func (c *sowCache) query(topic, filter string, topN int, orderBy string) queryRe
 	return queryResult{records: matching, totalCount: totalCount}
 }
 
+func querySOWWithBookmark(topic, filter string, topN int, orderBy, bookmark string) queryResult {
+	if sow == nil {
+		return queryResult{}
+	}
+
+	if bookmark == "" {
+		return sow.query(topic, filter, topN, orderBy)
+	}
+
+	if bookmark == "0" {
+		return queryResult{}
+	}
+
+	if journal == nil {
+		return sow.query(topic, filter, topN, orderBy)
+	}
+
+	var maxSeq = parseBookmarkSeq(bookmark)
+	if maxSeq == 0 {
+		return sow.query(topic, filter, topN, orderBy)
+	}
+
+	var snapshotByKey = make(map[string]sowRecord)
+	var entries = journal.replayAll(0)
+	var firstSeqForTopic uint64
+	for _, entry := range entries {
+		if entry.topic != topic {
+			continue
+		}
+		if firstSeqForTopic == 0 || entry.seqNum < firstSeqForTopic {
+			firstSeqForTopic = entry.seqNum
+		}
+	}
+
+	var effectiveMaxSeq = maxSeq
+	if firstSeqForTopic > 0 && maxSeq < firstSeqForTopic {
+		effectiveMaxSeq = firstSeqForTopic - 1 + maxSeq
+	}
+
+	for _, entry := range entries {
+		if entry.topic != topic {
+			continue
+		}
+		if entry.seqNum > effectiveMaxSeq {
+			continue
+		}
+
+		var key = entry.sowKey
+		if key == "" {
+			key = makeSowKey(topic, entry.seqNum)
+		}
+
+		snapshotByKey[key] = sowRecord{
+			topic:     entry.topic,
+			sowKey:    key,
+			payload:   entry.payload,
+			bookmark:  entry.bookmark,
+			timestamp: entry.timestamp,
+			seqNum:    entry.seqNum,
+		}
+	}
+
+	var matching []sowRecord
+	for _, record := range snapshotByKey {
+		if filter != "" && !evaluateFilter(filter, record.payload) {
+			continue
+		}
+		matching = append(matching, record)
+	}
+
+	var totalCount = len(matching)
+
+	if orderBy != "" {
+		var desc = false
+		var field = orderBy
+		if strings.HasPrefix(orderBy, "-") {
+			desc = true
+			field = orderBy[1:]
+		} else if strings.HasSuffix(strings.ToUpper(orderBy), " DESC") {
+			desc = true
+			field = strings.TrimSuffix(strings.TrimSuffix(orderBy, " DESC"), " desc")
+			field = strings.TrimSpace(field)
+		}
+
+		sort.Slice(matching, func(i, j int) bool {
+			var vi = extractJSONStringField(matching[i].payload, field)
+			var vj = extractJSONStringField(matching[j].payload, field)
+			if desc {
+				return vi > vj
+			}
+			return vi < vj
+		})
+	} else {
+		sort.Slice(matching, func(i, j int) bool {
+			return matching[i].seqNum < matching[j].seqNum
+		})
+	}
+
+	if topN == 0 {
+		return queryResult{records: nil, totalCount: totalCount}
+	}
+
+	if topN > 0 && topN < len(matching) {
+		matching = matching[:topN]
+	}
+
+	return queryResult{records: matching, totalCount: totalCount}
+}
+
 // count returns the number of non-expired SOW records for a topic.
 func (c *sowCache) count(topic string) int {
 	raw, ok := c.topics.Load(topic)
@@ -612,14 +726,19 @@ func (c *sowCache) count(topic string) int {
 
 // gcExpired removes expired records from all topics. Returns count removed.
 func (c *sowCache) gcExpired() int {
-	removed := 0
-	c.topics.Range(func(key, value interface{}) bool {
-		t := value.(*topicSOW)
+	var removed = c.gcExpiredRecords()
+	return len(removed)
+}
+
+func (c *sowCache) gcExpiredRecords() []sowRecord {
+	var removed []sowRecord
+	c.topics.Range(func(_ interface{}, value interface{}) bool {
+		var t = value.(*topicSOW)
 		t.mu.Lock()
-		for k, r := range t.records {
-			if r.isExpired() {
-				delete(t.records, k)
-				removed++
+		for key, record := range t.records {
+			if record.isExpired() {
+				removed = append(removed, *record)
+				delete(t.records, key)
 			}
 		}
 		t.mu.Unlock()

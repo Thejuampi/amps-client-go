@@ -88,18 +88,30 @@ func getTopicMessageType(topic string) string {
 
 func handleConnection(conn net.Conn) {
 	remoteAddr := conn.RemoteAddr().String()
+	baseConn := conn
 	if *flagLogConn {
 		log.Printf("fakeamps: connected  %s  (total=%d active=%d)",
 			remoteAddr, globalConnectionsAccepted.Load(), globalConnectionsCurrent.Load())
 	}
 
 	// TCP tuning.
-	if tc, ok := conn.(*net.TCPConn); ok {
+	if tc, ok := baseConn.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(*flagNoDelay)
 		_ = tc.SetWriteBuffer(*flagWriteBuf)
 		_ = tc.SetReadBuffer(*flagReadBuf)
 		_ = tc.SetKeepAlive(true)
 		_ = tc.SetKeepAlivePeriod(30 * time.Second)
+	}
+
+	var protocolErr error
+	conn, protocolErr = prepareProtocolConn(conn)
+	if protocolErr != nil {
+		if !isClosedError(protocolErr) {
+			log.Printf("fakeamps: %s protocol negotiation failed: %v", remoteAddr, protocolErr)
+		}
+		_ = baseConn.Close()
+		globalConnectionsCurrent.Add(-1)
+		return
 	}
 
 	var stats connStats
@@ -114,12 +126,23 @@ func handleConnection(conn net.Conn) {
 	// Per-connection state.
 	localSubs := make(map[string]*localSub)
 	conflationBuffers := make(map[string]*conflationBuffer) // subID → conflation buffer
-	var connUserID string                                   // set on logon
-	var connClientName string                               // set on logon
-	var heartbeatWatchdog *time.Timer                       // liveness check
+	timerStops := make(map[string]chan struct{})
+	var timerMu sync.Mutex
+	var connUserID string             // set on logon
+	var connClientName string         // set on logon
+	var heartbeatWatchdog *time.Timer // liveness check
 	var heartbeatTimeout time.Duration
+	var pendingChallengeUser string
+	var pendingChallengeNonce string
 
 	defer func() {
+		timerMu.Lock()
+		for timerID, stop := range timerStops {
+			close(stop)
+			delete(timerStops, timerID)
+		}
+		timerMu.Unlock()
+
 		// Stop all conflation timers.
 		for _, cb := range conflationBuffers {
 			cb.stop()
@@ -241,9 +264,19 @@ func handleConnection(conn net.Conn) {
 		// Parse aggregation/projection from options.
 		aggQ := parseAggQuery(options)
 
+		var queueMaxBacklog = parseQueueMaxBacklog(options)
+		var queuePullMode = containsToken(options, "pull")
+
 		// ---- Received ack ----
 		if wantReceived {
 			writer.send(buildAck(buf, "received", commandID, "success"))
+		}
+
+		if sow != nil && *flagFanout {
+			var expired = sow.gcExpiredRecords()
+			for _, record := range expired {
+				fanoutOOFWithReason(conn, record.topic, record.sowKey, record.bookmark, "expire", &stats)
+			}
 		}
 
 		switch command {
@@ -256,17 +289,47 @@ func handleConnection(conn net.Conn) {
 
 			// Authentication check.
 			if *flagAuth != "" {
-				result := authenticateLogon(header.userID, header.pw)
-				if !result.success {
-					writer.send(buildAck(buf, "processed", commandID, "failure",
-						kv{k: "reason", v: result.reason}))
-					return // disconnect on auth failure
+				if *flagAuthChallenge {
+					if pendingChallengeNonce == "" || pendingChallengeUser != header.userID {
+						if _, ok := auth.userPassword(header.userID); !ok {
+							writer.send(buildAck(buf, "processed", commandID, "failure",
+								kv{k: "reason", v: "authentication failed"}))
+							return
+						}
+
+						pendingChallengeUser = header.userID
+						pendingChallengeNonce = issueAuthChallengeNonce()
+						writer.send(buildAck(buf, "processed", commandID, "retry",
+							kv{k: "reason", v: "challenge:" + pendingChallengeNonce}))
+						continue
+					}
+
+					if !auth.verifyChallengeResponse(header.userID, pendingChallengeNonce, header.pw) {
+						writer.send(buildAck(buf, "processed", commandID, "failure",
+							kv{k: "reason", v: "authentication failed"}))
+						return
+					}
+
+					pendingChallengeUser = ""
+					pendingChallengeNonce = ""
+				} else {
+					result := authenticateLogon(header.userID, header.pw)
+					if !result.success {
+						writer.send(buildAck(buf, "processed", commandID, "failure",
+							kv{k: "reason", v: result.reason}))
+						return // disconnect on auth failure
+					}
 				}
 			}
 
 			// Enable compression if client requests it.
 			if strings.Contains(options, "c") || strings.Contains(options, "compress") {
 				writer.EnableCompression()
+			}
+
+			if *flagRedirectURI != "" {
+				writer.send(buildRedirectFrame(buf, commandID, *flagRedirectURI))
+				return
 			}
 
 			writer.send(buildLogonAck(buf, commandID, header.clientName, header.x))
@@ -282,6 +345,7 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 
+			filter = applyEntitlementFilter(connUserID, filter)
 			effectiveSubID := firstNonEmpty(subID, commandID)
 
 			if *flagFanout && topic != "" {
@@ -306,9 +370,14 @@ func handleConnection(conn net.Conn) {
 					isQueue:    isQueueTopic,
 					isBookmark: isBookmarkSub,
 					isDelta:    isDelta,
+					maxBacklog: queueMaxBacklog,
+					pullMode:   queuePullMode,
 				}
 				registerSubscription(topic, sub)
 				localSubs[effectiveSubID] = &localSub{topic: topic, sub: sub}
+				if isQueueTopic && !sub.pullMode {
+					dispatchPendingQueueTopic(topic)
+				}
 
 				// Set up conflation buffer if configured.
 				if conflationInterval > 0 {
@@ -352,6 +421,7 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 
+			filter = applyEntitlementFilter(connUserID, filter)
 			queryID := firstNonEmpty(header.queryID, subID, commandID)
 
 			if wantProcessed {
@@ -361,7 +431,7 @@ func handleConnection(conn net.Conn) {
 			recordCount := 0
 			totalCount := 0
 			if sow != nil {
-				result := sow.query(topic, filter, topN, header.orderBy)
+				result := querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
 				totalCount = result.totalCount
 				mt := getTopicMessageType(topic)
 
@@ -409,6 +479,7 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 
+			filter = applyEntitlementFilter(connUserID, filter)
 			effectiveSubID := firstNonEmpty(subID, commandID)
 			queryID := firstNonEmpty(header.queryID, effectiveSubID, commandID)
 
@@ -435,9 +506,14 @@ func handleConnection(conn net.Conn) {
 					isQueue:    isQueueTopic,
 					isBookmark: isBookmarkSub,
 					isDelta:    isDelta,
+					maxBacklog: queueMaxBacklog,
+					pullMode:   queuePullMode,
 				}
 				registerSubscription(topic, sub)
 				localSubs[effectiveSubID] = &localSub{topic: topic, sub: sub}
+				if isQueueTopic && !sub.pullMode {
+					dispatchPendingQueueTopic(topic)
+				}
 
 				if conflationInterval > 0 {
 					var cb *conflationBuffer
@@ -452,6 +528,23 @@ func handleConnection(conn net.Conn) {
 
 			if wantProcessed {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
+			}
+
+			if isQueueTopic && queuePullMode {
+				var pullLimit = topN
+				if pullLimit <= 0 {
+					pullLimit = 1
+				}
+
+				var pulled = 0
+				if local, ok := localSubs[effectiveSubID]; ok && local != nil {
+					pulled = pullQueueMessagesForSubscription(topic, local.sub, pullLimit)
+				}
+
+				if wantCompleted {
+					writer.send(buildSOWCompletedAck(buf, commandID, queryID, pulled, 0, 0, 0, pulled))
+				}
+				continue
 			}
 
 			// Send SOW snapshot.
@@ -550,12 +643,13 @@ func handleConnection(conn net.Conn) {
 			var needsPostApplyProcessedAck = isReplicatedCommand && (header.replSync == "1" || strings.EqualFold(header.replSync, "true"))
 			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
 			var isDuplicateCommand = commandDedupe.seenBefore(dedupeClientID, commandID)
+			var isDuplicateSequence = publishSequenceDedupe.seenBefore(dedupeClientID, seqID)
 
 			if wantProcessed && !needsPostApplyProcessedAck {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
 			}
 
-			if isDuplicateCommand {
+			if isDuplicateCommand || isDuplicateSequence {
 				if wantProcessed && needsPostApplyProcessedAck {
 					writer.send(buildAck(buf, "processed", commandID, "success"))
 				}
@@ -583,6 +677,7 @@ func handleConnection(conn net.Conn) {
 			}
 
 			// SOW cache.
+			var evictedRecord *sowRecord
 			if sow != nil && topic != "" {
 				if effectiveSowKey == "" {
 					effectiveSowKey = makeSowKey(topic, seq)
@@ -591,7 +686,7 @@ func handleConnection(conn net.Conn) {
 				if isDelta {
 					sow.deltaUpsert(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				} else {
-					sow.upsert(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
+					_, _, _, evictedRecord = sow.upsertWithEvicted(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				}
 			}
 
@@ -624,16 +719,16 @@ func handleConnection(conn net.Conn) {
 			if *flagFanout && topic != "" {
 				ts := makeTimestamp()
 				fanoutPublishWithConflation(conn, topic, payload, bm, ts, effectiveSowKey, mt, isQueueTopic, &stats, conflationBuffers)
+				if evictedRecord != nil {
+					fanoutOOFWithReason(conn, topic, evictedRecord.sowKey, evictedRecord.bookmark, "evicted", &stats)
+				}
 
 				// OOF-on-filter-mismatch: for delta subscribers whose topic
 				// matches but content filter no longer matches, send OOF.
 				if effectiveSowKey != "" {
 					forEachOOFCandidate(topic, payload, func(sub *subscription) {
-						if !*flagEcho && sub.conn == conn {
-							return
-						}
 						oofBuf := getWriteBuf()
-						frame := buildOOFDelivery(oofBuf, topic, sub.subID, effectiveSowKey, bm)
+						frame := buildOOFDeliveryWithReason(oofBuf, topic, sub.subID, effectiveSowKey, bm, "match")
 						sub.writer.send(frame)
 						putWriteBuf(oofBuf)
 					})
@@ -656,8 +751,13 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 
+			filter = applyEntitlementFilter(connUserID, filter)
 			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
 			var isDuplicateCommand = commandDedupe.seenBefore(dedupeClientID, commandID)
+			var topicMatches = 0
+			if sow != nil {
+				topicMatches = sow.count(topic)
+			}
 
 			deleted := 0
 			var deletedKeys []string
@@ -687,10 +787,10 @@ func handleConnection(conn net.Conn) {
 			}
 
 			if wantProcessed {
-				writer.send(buildSOWDeleteAck(buf, "processed", commandID, deleted))
+				writer.send(buildSOWDeleteAck(buf, "processed", commandID, deleted, topicMatches))
 			}
 			if wantStats {
-				writer.send(buildSOWDeleteAck(buf, "stats", commandID, deleted))
+				writer.send(buildSOWDeleteAck(buf, "stats", commandID, deleted, topicMatches))
 			}
 			if wantPersisted {
 				writer.send(buildPersistedAck(buf, commandID, seqID))
@@ -701,7 +801,7 @@ func handleConnection(conn net.Conn) {
 				for _, key := range deletedKeys {
 					seq := globalBookmarkSeq.Add(1)
 					bm := makeBookmark(seq)
-					fanoutOOF(conn, topic, key, bm, &stats)
+					fanoutOOFWithReason(conn, topic, key, bm, "delete", &stats)
 				}
 			}
 
@@ -746,8 +846,14 @@ func handleConnection(conn net.Conn) {
 		// ---------------------------------------------------------------
 		case "ack":
 			// Queue acknowledgment from client.
+			var released *queueLease
 			if sowKey != "" {
-				handleQueueAck(sowKey)
+				released = handleQueueAck(sowKey)
+			} else if bookmark != "" {
+				released = handleQueueAckByBookmark(bookmark)
+			}
+			if released != nil {
+				dispatchPendingQueueTopic(released.topic)
 			}
 
 		// ---------------------------------------------------------------
@@ -762,6 +868,51 @@ func handleConnection(conn net.Conn) {
 		// START_TIMER / STOP_TIMER
 		// ---------------------------------------------------------------
 		case "start_timer", "stop_timer":
+			timerID := firstNonEmpty(topic, commandID)
+			if command == "start_timer" {
+				interval := parseTimerInterval(options)
+				if interval <= 0 {
+					interval = time.Second
+				}
+
+				timerMu.Lock()
+				if existing, ok := timerStops[timerID]; ok {
+					close(existing)
+					delete(timerStops, timerID)
+				}
+				stop := make(chan struct{})
+				timerStops[timerID] = stop
+				timerMu.Unlock()
+
+				go func(stop <-chan struct{}, period time.Duration) {
+					ticker := time.NewTicker(period)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-stop:
+							return
+						case <-ticker.C:
+							timerBuf := getWriteBuf()
+							frame := buildHeartbeatFrame(timerBuf)
+							writer.send(frame)
+							putWriteBuf(timerBuf)
+						}
+					}
+				}(stop, interval)
+			} else {
+				timerMu.Lock()
+				if timerID == "" || timerID == "all" {
+					for id, stop := range timerStops {
+						close(stop)
+						delete(timerStops, id)
+					}
+				} else if stop, ok := timerStops[timerID]; ok {
+					close(stop)
+					delete(timerStops, timerID)
+				}
+				timerMu.Unlock()
+			}
+
 			if wantProcessed {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
 			}
@@ -809,6 +960,35 @@ func handleConnection(conn net.Conn) {
 // ---------------------------------------------------------------------------
 
 func fanoutPublishWithConflation(publisher net.Conn, topic string, payload []byte, bookmark, timestamp, sowKey, messageType string, isQueue bool, stats *connStats, conflationBufs map[string]*conflationBuffer) {
+	if isQueue {
+		var queueSowKey = sowKey
+		if queueSowKey == "" {
+			queueSowKey = bookmark
+		}
+
+		var target = selectQueuePublishTarget(topic, payload, publisher)
+		if target == nil {
+			enqueuePendingQueueMessage(topic, queueSowKey, bookmark, payload, timestamp, messageType)
+			return
+		}
+
+		var message = &queuePendingMessage{
+			topic:       topic,
+			sowKey:      queueSowKey,
+			bookmark:    bookmark,
+			payload:     payload,
+			timestamp:   timestamp,
+			messageType: messageType,
+		}
+		if deliverQueueMessageToSubscription(message, target) {
+			stats.publishOut.Add(1)
+			return
+		}
+
+		enqueuePendingQueueMessage(topic, queueSowKey, bookmark, payload, timestamp, messageType)
+		return
+	}
+
 	buf := getWriteBuf()
 	defer putWriteBuf(buf)
 
@@ -850,6 +1030,10 @@ func fanoutPublishWithConflation(publisher net.Conn, topic string, payload []byt
 // ---------------------------------------------------------------------------
 
 func fanoutOOF(publisher net.Conn, topic, sowKey, bookmark string, stats *connStats) {
+	fanoutOOFWithReason(publisher, topic, sowKey, bookmark, "", stats)
+}
+
+func fanoutOOFWithReason(publisher net.Conn, topic, sowKey, bookmark, reason string, stats *connStats) {
 	buf := getWriteBuf()
 	defer putWriteBuf(buf)
 
@@ -863,11 +1047,65 @@ func fanoutOOF(publisher net.Conn, topic, sowKey, bookmark string, stats *connSt
 			if !topicMatches(topic, sub.topic) {
 				continue
 			}
-			frame := buildOOFDelivery(buf, topic, sub.subID, sowKey, bookmark)
+			frame := buildOOFDeliveryWithReason(buf, topic, sub.subID, sowKey, bookmark, reason)
 			sub.writer.send(frame)
 			stats.messagesOut.Add(1)
 		}
 		ss.mu.RUnlock()
 		return true
 	})
+}
+
+func parseQueueMaxBacklog(options string) int {
+	if options == "" {
+		return 0
+	}
+
+	for _, token := range strings.Split(options, ",") {
+		var part = strings.TrimSpace(token)
+		if !strings.HasPrefix(part, "max_backlog=") {
+			continue
+		}
+
+		var raw = strings.TrimSpace(strings.TrimPrefix(part, "max_backlog="))
+		if raw == "" {
+			continue
+		}
+
+		var value, err = strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			continue
+		}
+		return value
+	}
+
+	return 0
+}
+
+func parseTimerInterval(options string) time.Duration {
+	if options == "" {
+		return time.Second
+	}
+
+	for _, token := range strings.Split(options, ",") {
+		var part = strings.TrimSpace(token)
+		if !strings.HasPrefix(part, "interval=") {
+			continue
+		}
+
+		var raw = strings.TrimSpace(strings.TrimPrefix(part, "interval="))
+		if raw == "" {
+			continue
+		}
+
+		if duration, err := time.ParseDuration(raw); err == nil && duration > 0 {
+			return duration
+		}
+
+		if millis, err := strconv.Atoi(raw); err == nil && millis > 0 {
+			return time.Duration(millis) * time.Millisecond
+		}
+	}
+
+	return time.Second
 }
