@@ -26,6 +26,7 @@ package main
 // ---------------------------------------------------------------------------
 
 import (
+	"bytes"
 	"math"
 	"regexp"
 	"strconv"
@@ -76,6 +77,10 @@ func evaluateFilter(filter string, payload []byte) bool {
 	// Always-false filter.
 	if filter == "0=1" || filter == "false" {
 		return false
+	}
+
+	if quantifiedResult, handled := evaluateArrayQuantifierFilter(filter, payload); handled {
+		return quantifiedResult
 	}
 
 	// Check for string functions first (before logical ops).
@@ -132,6 +137,168 @@ func evaluateFilter(filter string, payload []byte) bool {
 
 	// Unknown filter — be permissive.
 	return true
+}
+
+func evaluateArrayQuantifierFilter(filter string, payload []byte) (bool, bool) {
+	var trimmed = strings.TrimSpace(filter)
+	var upper = strings.ToUpper(trimmed)
+
+	var requireAll bool
+	if strings.HasPrefix(upper, "[ANY] ") {
+		requireAll = false
+		trimmed = strings.TrimSpace(trimmed[6:])
+	} else if strings.HasPrefix(upper, "[ALL] ") {
+		requireAll = true
+		trimmed = strings.TrimSpace(trimmed[6:])
+	} else {
+		return false, false
+	}
+
+	var arrayField, elementExpr, ok = splitArrayPathExpression(trimmed)
+	if !ok {
+		return false, true
+	}
+
+	var elements = extractJSONArrayElements(payload, arrayField)
+	if len(elements) == 0 {
+		return false, true
+	}
+
+	if requireAll {
+		for _, element := range elements {
+			if !evaluateFilter(elementExpr, element) {
+				return false, true
+			}
+		}
+		return true, true
+	}
+
+	for _, element := range elements {
+		if evaluateFilter(elementExpr, element) {
+			return true, true
+		}
+	}
+
+	return false, true
+}
+
+func splitArrayPathExpression(expr string) (string, string, bool) {
+	var trimmed = strings.TrimSpace(expr)
+	if !strings.HasPrefix(trimmed, "/") {
+		return "", "", false
+	}
+
+	var end = 1
+	for end < len(trimmed) {
+		var ch = trimmed[end]
+		var isAlphaNumeric = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+		if isAlphaNumeric || ch == '_' || ch == '/' || ch == '-' {
+			end++
+			continue
+		}
+		break
+	}
+
+	var path = trimmed[:end]
+	var pathParts = strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(pathParts) < 2 {
+		return "", "", false
+	}
+
+	var arrayField = pathParts[0]
+	if arrayField == "" {
+		return "", "", false
+	}
+
+	var elementPath = "/" + strings.Join(pathParts[1:], "/")
+	var elementExpr = elementPath + trimmed[end:]
+	return arrayField, strings.TrimSpace(elementExpr), true
+}
+
+func extractJSONArrayElements(payload []byte, field string) [][]byte {
+	var raw = extractJSONRawValue(payload, field)
+	raw = bytes.TrimSpace(raw)
+	if len(raw) < 2 || raw[0] != '[' || raw[len(raw)-1] != ']' {
+		return nil
+	}
+
+	var content = raw[1 : len(raw)-1]
+	var elements [][]byte
+	var start = -1
+	var depth int
+	var inQuote bool
+	var escaped bool
+	var index int
+
+	for index = 0; index < len(content); index++ {
+		var ch = content[index]
+
+		if inQuote {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inQuote = false
+			}
+			continue
+		}
+
+		if ch == '"' {
+			if start == -1 {
+				start = index
+			}
+			inQuote = true
+			continue
+		}
+
+		if ch == '{' || ch == '[' {
+			if start == -1 {
+				start = index
+			}
+			depth++
+			continue
+		}
+
+		if ch == '}' || ch == ']' {
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+
+		if ch == ',' && depth == 0 {
+			if start >= 0 {
+				var element = bytes.TrimSpace(content[start:index])
+				if len(element) > 0 {
+					var copied = make([]byte, len(element))
+					copy(copied, element)
+					elements = append(elements, copied)
+				}
+				start = -1
+			}
+			continue
+		}
+
+		if start == -1 && ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r' {
+			start = index
+		}
+	}
+
+	if start >= 0 {
+		var element = bytes.TrimSpace(content[start:])
+		if len(element) > 0 {
+			var copied = make([]byte, len(element))
+			copy(copied, element)
+			elements = append(elements, copied)
+		}
+	}
+
+	return elements
 }
 
 // stripOuterParens removes a single layer of balanced outer parentheses.

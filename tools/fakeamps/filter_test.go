@@ -138,6 +138,29 @@ func TestEvaluateFilterMath(t *testing.T) {
 	}
 }
 
+func TestEvaluateFilterArrayQuantifiers(t *testing.T) {
+	var cases = []struct {
+		name     string
+		filter   string
+		payload  string
+		expected bool
+	}{
+		{name: "any true", filter: "[ANY] /items/price > 100", payload: `{"items":[{"price":90},{"price":120}]}`, expected: true},
+		{name: "any false", filter: "[ANY] /items/price > 200", payload: `{"items":[{"price":90},{"price":120}]}`, expected: false},
+		{name: "all true", filter: "[ALL] /items/price >= 100", payload: `{"items":[{"price":100},{"price":120}]}`, expected: true},
+		{name: "all false", filter: "[ALL] /items/price >= 100", payload: `{"items":[{"price":90},{"price":120}]}`, expected: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var result = evaluateFilter(tc.filter, []byte(tc.payload))
+			if result != tc.expected {
+				t.Fatalf("evaluateFilter(%q, %s) = %v, want %v", tc.filter, tc.payload, result, tc.expected)
+			}
+		})
+	}
+}
+
 func TestFilterInternalHelpersCoverage(t *testing.T) {
 	payload := []byte(`{"name":"John","text":"alphabet","num":5}`)
 

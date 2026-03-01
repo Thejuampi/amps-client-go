@@ -3,7 +3,7 @@
 `fakeamps` is a deterministic, stateful AMPS-protocol TCP responder for integration and performance testing of custom AMPS client implementations against the 60East AMPS wire protocol.
 
 - Isolated under `tools/` — **not** part of the exported `amps-client-go` client API.
-- Models real AMPS server behavior including stateful message journal, SOW cache, content filtering, topic wildcards, delta merge, queue topics, per-topic message types, views, actions, replication, authentication, and administration.
+- Models real AMPS server behavior including stateful message journal, SOW cache, content filtering, topic wildcards, delta merge, queue topics, per-topic message types, views, actions, replication exercises, authentication, and administration.
 
 ## Architecture
 
@@ -90,6 +90,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 - **AND / OR** logical operators with precedence-aware parsing
 - **Math operations**: `+`, `-`, `*`, `/`, `%`, `NaN`, `INF` in expressions
 - **String functions**: `BEGINS WITH`, `ENDS WITH`, `CONTAINS`, `UPPER()`, `LOWER()`, `LEN()`, `INSTR()`, `SUBSTR()`
+- **Array quantifiers**: `[ANY] /items/field ...` and `[ALL] /items/field ...`
 
 ### Topic Matching
 - Exact match: `orders` matches only `orders`
@@ -129,7 +130,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 | **SOW Delete** | By key, sow_keys, filter, or payload data; records_deleted count; OOF to delta subs |
 | **Flush** | Processed + completed acks |
 | **Heartbeat** | Processed ack + beat echo; server-side liveness watchdog |
-| **Queue Topics** | `queue://` prefix adds `lease_period` on deliveries; automatic requeue on lease timeout |
+| **Queue Topics** | `queue://` prefix adds `lease_period`; supports `max_backlog=<n>` backpressure and `pull` delivery mode via `sow_and_subscribe` + `top_n` |
 | **Client Ack** | Accepted silently |
 | **Group Begin/End** | SOW batch markers + accepted as commands |
 | **Start/Stop Timer** | Processed ack |
@@ -147,6 +148,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 | **Eviction** | LRU, oldest, capacity-based SOW eviction policies |
 | **Disk Persistence** | Journal and SOW can be backed by disk files |
 | **Compression** | zlib compression enabled via logon options (`c` or `compress`) |
+| **Challenge Logon** | Optional two-step challenge-response flow with `-auth-challenge` |
 
 ## Flags
 
@@ -165,6 +167,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 -queue           enable queue:// support (default true)
 -lease           default queue lease period (default 30s)
 -auth            enable auth with user:pass pairs (default "")
+-auth-challenge  require two-step challenge-response logon when auth is enabled (default false)
 -peers           comma-separated peer addresses for HA replication (default "")
 -repl-id         unique replication instance ID (default "instance-1")
 -admin           admin REST API listen address (default "")
@@ -221,12 +224,17 @@ When started with `-admin :8085`, provides:
 
 ## Scope & Limitations
 
-This is a **test harness**, not a production AMPS replacement. Not yet implemented:
+This is a **test harness**, not a production AMPS replacement.
 
-- Full XPath/SQL filter functions (array expressions, advanced regex)
-- Composite message types and deep multi-format parsing (nvfix, fix, xml, bflat, protobuf)
-- Pluggable authentication (PAM/LDAP/Kerberos)
-- Fine-grained field-level entitlements
-- Time-travel historical queries
-- Distributed consensus and sync replication
-- Replication filters and sync/catch-up phases
+Out of scope for this project (intentional non-goals):
+
+- Distributed deployment semantics (cluster leadership, quorum, consensus)
+- Enterprise durability guarantees across nodes (synchronous replicated commit semantics)
+- Production-grade HA orchestration and failover coordination
+
+Still intentionally limited (single-process parity harness focus):
+
+- Full XPath/SQL filter surface beyond currently supported operators/functions
+- Deep multi-format server-side parsing/validation (FIX/XML/BSON/Protobuf)
+- Pluggable enterprise identity providers (PAM/LDAP/Kerberos)
+- Field-level/row-level security policies beyond configured topic/filter entitlements

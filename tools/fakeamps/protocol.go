@@ -20,6 +20,7 @@ type headerFields struct {
 	cid        string // command ID
 	status     string // ack status
 	reason     string // ack reason
+	uri        string // redirect URI
 	t          string // topic
 	subID      string // sub_id
 	a          string // ack types requested
@@ -166,6 +167,8 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 		case 3:
 			if frame[keyStart] == 'c' && frame[keyStart+1] == 'i' && frame[keyStart+2] == 'd' {
 				h.cid = string(frame[valueStart:valueEnd])
+			} else if frame[keyStart] == 'u' && frame[keyStart+1] == 'r' && frame[keyStart+2] == 'i' {
+				h.uri = string(frame[valueStart:valueEnd])
 			}
 		case 4:
 			switch {
@@ -270,6 +273,15 @@ func buildLogonAck(buf *bytes.Buffer, commandID, clientName, correlationID strin
 	return finalizeFrame(buf)
 }
 
+func buildRedirectFrame(buf *bytes.Buffer, commandID, uri string) []byte {
+	startFrame(buf)
+	buf.WriteString(`{"c":"redirect","status":"redirect"`)
+	writeField(buf, "cid", commandID)
+	writeField(buf, "uri", uri)
+	buf.WriteByte('}')
+	return finalizeFrame(buf)
+}
+
 // ---- Generic Ack ----
 
 func buildAck(buf *bytes.Buffer, ackType, commandID, status string, extras ...kv) []byte {
@@ -332,9 +344,12 @@ func buildSOWCompletedAck(buf *bytes.Buffer, commandID, queryID string, returned
 
 // ---- SOW Delete Ack ----
 
-func buildSOWDeleteAck(buf *bytes.Buffer, ackType, commandID string, deleted int) []byte {
+func buildSOWDeleteAck(buf *bytes.Buffer, ackType, commandID string, deleted int, topicMatches int) []byte {
 	return buildAck(buf, ackType, commandID, "success",
-		kv{k: "records_deleted", v: strconv.Itoa(deleted), numeric: true})
+		kv{k: "records_deleted", v: strconv.Itoa(deleted), numeric: true},
+		kv{k: "records_returned", v: strconv.Itoa(deleted), numeric: true},
+		kv{k: "matches", v: strconv.Itoa(deleted), numeric: true},
+		kv{k: "topic_matches", v: strconv.Itoa(topicMatches), numeric: true})
 }
 
 // ---- Stats Ack ----
@@ -405,6 +420,10 @@ func buildSOWRecord(buf *bytes.Buffer, topic, queryID, sowKey, bookmark, message
 // ---- OOF (Out-of-Focus) Delivery ----
 
 func buildOOFDelivery(buf *bytes.Buffer, topic, subID, sowKey, bookmark string) []byte {
+	return buildOOFDeliveryWithReason(buf, topic, subID, sowKey, bookmark, "")
+}
+
+func buildOOFDeliveryWithReason(buf *bytes.Buffer, topic, subID, sowKey, bookmark, reason string) []byte {
 	startFrame(buf)
 	buf.WriteString(`{"c":"oof","t":"`)
 	buf.WriteString(topic)
@@ -412,6 +431,7 @@ func buildOOFDelivery(buf *bytes.Buffer, topic, subID, sowKey, bookmark string) 
 	writeField(buf, "sub_id", subID)
 	writeField(buf, "k", sowKey)
 	writeField(buf, "bm", bookmark)
+	writeField(buf, "reason", reason)
 	buf.WriteByte('}')
 	return finalizeFrame(buf)
 }

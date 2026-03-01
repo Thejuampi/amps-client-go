@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/binary"
+	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -188,6 +191,167 @@ func TestStartLeaseWatcher(t *testing.T) {
 	if getQueueLease("watch-key") != nil {
 		t.Fatal("expected watcher to clear expired lease")
 	}
+}
+
+func TestHandleQueueAckByBookmarkRemovesLease(t *testing.T) {
+	addQueueLease("orders", "sub1", "ack-bm-key", "bm-ack", []byte(`{"id":1}`), "ts1", "json", time.Second)
+	handleQueueAckByBookmark("bm-ack")
+	if getQueueLease("ack-bm-key") != nil {
+		t.Fatal("expected queue lease to be removed by bookmark ack")
+	}
+}
+
+func TestRequeueMessagePrefersDifferentQueueSubscriber(t *testing.T) {
+	var topic = "queue://orders.requeue"
+
+	var connA, peerA = net.Pipe()
+	var connB, peerB = net.Pipe()
+	defer connA.Close()
+	defer peerA.Close()
+	defer connB.Close()
+	defer peerB.Close()
+
+	var stats connStats
+	var writerA = newConnWriter(connA, &stats)
+	var writerB = newConnWriter(connB, &stats)
+	defer writerA.close()
+	defer writerB.close()
+
+	var subA = &subscription{subID: "subA", topic: topic, writer: writerA, isQueue: true}
+	var subB = &subscription{subID: "subB", topic: topic, writer: writerB, isQueue: true}
+	registerSubscription(topic, subA)
+	registerSubscription(topic, subB)
+	defer unregisterSubscription(topic, subA)
+	defer unregisterSubscription(topic, subB)
+
+	var lease = &queueLease{
+		topic:       topic,
+		subID:       "subA",
+		sowKey:      "requeue-key",
+		bookmark:    "bm1",
+		payload:     []byte(`{"id":1}`),
+		timestamp:   "ts1",
+		messageType: "json",
+		leasePeriod: time.Second,
+	}
+	requeueMessage(lease)
+
+	var body = readFrameBody(t, peerB, 500*time.Millisecond)
+	if !strings.Contains(body, `"c":"p"`) || !strings.Contains(body, `"sub_id":"subB"`) {
+		t.Fatalf("expected requeued delivery to alternate queue subscriber, got %s", body)
+	}
+
+	var tracked = getQueueLease("requeue-key")
+	if tracked == nil || tracked.subID != "subB" {
+		t.Fatalf("expected lease to be tracked against alternate subscriber")
+	}
+
+	removeQueueLease("requeue-key")
+}
+
+func TestRequeueMessageRoundRobinAcrossQueueSubscribers(t *testing.T) {
+	var topic = "queue://orders.roundrobin"
+
+	var connA, peerA = net.Pipe()
+	var connB, peerB = net.Pipe()
+	var connC, peerC = net.Pipe()
+	defer connA.Close()
+	defer peerA.Close()
+	defer connB.Close()
+	defer peerB.Close()
+	defer connC.Close()
+	defer peerC.Close()
+
+	var stats connStats
+	var writerA = newConnWriter(connA, &stats)
+	var writerB = newConnWriter(connB, &stats)
+	var writerC = newConnWriter(connC, &stats)
+	defer writerA.close()
+	defer writerB.close()
+	defer writerC.close()
+
+	var subA = &subscription{subID: "subA", topic: topic, writer: writerA, isQueue: true}
+	var subB = &subscription{subID: "subB", topic: topic, writer: writerB, isQueue: true}
+	var subC = &subscription{subID: "subC", topic: topic, writer: writerC, isQueue: true}
+	registerSubscription(topic, subA)
+	registerSubscription(topic, subB)
+	registerSubscription(topic, subC)
+	defer unregisterSubscription(topic, subA)
+	defer unregisterSubscription(topic, subB)
+	defer unregisterSubscription(topic, subC)
+
+	var leaseOne = &queueLease{
+		topic:       topic,
+		subID:       "subA",
+		sowKey:      "rr-key-1",
+		bookmark:    "bm-1",
+		payload:     []byte(`{"id":1}`),
+		timestamp:   "ts1",
+		messageType: "json",
+		leasePeriod: time.Second,
+	}
+
+	requeueMessage(leaseOne)
+	var firstBody, okFirst = tryReadFrameBodyFromConn(peerB, 100*time.Millisecond)
+	if !okFirst {
+		firstBody, okFirst = tryReadFrameBodyFromConn(peerC, 200*time.Millisecond)
+	}
+	if !okFirst {
+		t.Fatal("expected first round-robin redelivery")
+	}
+	if !strings.Contains(firstBody, `"sub_id":"subB"`) {
+		t.Fatalf("expected first redelivery on subB, got %s", firstBody)
+	}
+	removeQueueLease("rr-key-1")
+
+	var leaseTwo = &queueLease{
+		topic:       topic,
+		subID:       "subA",
+		sowKey:      "rr-key-2",
+		bookmark:    "bm-2",
+		payload:     []byte(`{"id":2}`),
+		timestamp:   "ts2",
+		messageType: "json",
+		leasePeriod: time.Second,
+	}
+
+	requeueMessage(leaseTwo)
+	var secondBody, okSecond = tryReadFrameBodyFromConn(peerB, 100*time.Millisecond)
+	if !okSecond {
+		secondBody, okSecond = tryReadFrameBodyFromConn(peerC, 200*time.Millisecond)
+	}
+	if !okSecond {
+		t.Fatal("expected second round-robin redelivery")
+	}
+	if !strings.Contains(secondBody, `"sub_id":"subC"`) {
+		t.Fatalf("expected second redelivery on subC, got %s", secondBody)
+	}
+	removeQueueLease("rr-key-2")
+}
+
+func tryReadFrameBodyFromConn(conn net.Conn, timeout time.Duration) (string, bool) {
+	var err = conn.SetReadDeadline(time.Now().Add(timeout))
+	if err != nil {
+		return "", false
+	}
+
+	var lenBuf [4]byte
+	_, err = io.ReadFull(conn, lenBuf[:])
+	if err != nil {
+		_ = conn.SetReadDeadline(time.Time{})
+		return "", false
+	}
+
+	var frameLen = binary.BigEndian.Uint32(lenBuf[:])
+	var frame = make([]byte, frameLen)
+	_, err = io.ReadFull(conn, frame)
+	if err != nil {
+		_ = conn.SetReadDeadline(time.Time{})
+		return "", false
+	}
+
+	_ = conn.SetReadDeadline(time.Time{})
+	return string(frame), true
 }
 
 func TestOOFCandidatesAndUnregisterAll(t *testing.T) {
