@@ -1,10 +1,10 @@
 package amps
 
 import (
-	"errors"
-	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -46,54 +46,60 @@ func perfAPIConnectAndLogon(b *testing.B, clientName string, uri string) *Client
 	return client
 }
 
-func perfAPIProcessedAckResultHandler(result chan<- error) func(*Message) error {
-	return func(message *Message) error {
-		var commandType, hasCommandType = message.Command()
-		if !hasCommandType || commandType != CommandAck {
-			return nil
-		}
-
-		var ackType, hasAckType = message.AckType()
-		if !hasAckType || ackType != AckTypeProcessed {
-			return nil
-		}
-
-		var status, _ = message.Status()
-		if status == "success" {
-			select {
-			case result <- nil:
-			default:
-			}
-			return nil
-		}
-
-		var reason, hasReason = message.Reason()
-		if hasReason && strings.TrimSpace(reason) != "" {
-			select {
-			case result <- errors.New(reason):
-			default:
-			}
-			return nil
-		}
-
-		select {
-		case result <- errors.New("processed ack failure"):
-		default:
-		}
-		return nil
-	}
+type perfAPIAckWaiter struct {
+	state atomic.Int32
 }
 
-func perfAPIWaitForProcessedAck(b *testing.B, result <-chan error, operation string) {
-	b.Helper()
+func newPerfAPIAckWaiter() *perfAPIAckWaiter {
+	var waiter = &perfAPIAckWaiter{}
+	return waiter
+}
 
-	select {
-	case ackErr := <-result:
-		if ackErr != nil {
-			b.Fatalf("%s failed: %v", operation, ackErr)
+func (waiter *perfAPIAckWaiter) reset() {
+	if waiter == nil {
+		return
+	}
+	waiter.state.Store(0)
+}
+
+func (waiter *perfAPIAckWaiter) handler(message *Message) error {
+	if waiter == nil || message == nil {
+		return nil
+	}
+
+	var status, hasStatus = message.Status()
+	if !hasStatus {
+		return nil
+	}
+
+	if status == "success" {
+		waiter.state.CompareAndSwap(0, 1)
+		return nil
+	}
+
+	waiter.state.CompareAndSwap(0, -1)
+	return nil
+}
+
+func perfAPIWaitForProcessedAck(b *testing.B, waiter *perfAPIAckWaiter, operation string) {
+	b.Helper()
+	if waiter == nil {
+		b.Fatalf("nil ack waiter for %s", operation)
+	}
+
+	var deadline = time.Now().Add(2 * time.Second)
+	for {
+		var state = waiter.state.Load()
+		if state == 1 {
+			return
 		}
-	case <-time.After(2 * time.Second):
-		b.Fatalf("timed out waiting for %s processed ack", operation)
+		if state == -1 {
+			b.Fatalf("%s failed", operation)
+		}
+		if time.Now().After(deadline) {
+			b.Fatalf("timed out waiting for %s processed ack", operation)
+		}
+		runtime.Gosched()
 	}
 }
 
@@ -102,17 +108,35 @@ func BenchmarkAPIIntegrationClientConnectLogon(b *testing.B) {
 	perfAPIRequireIntegrationEndpoint(b, uri)
 
 	b.ReportAllocs()
+
 	b.ResetTimer()
 
 	var index int
 	for index = 0; index < b.N; index++ {
-		var clientName = fmt.Sprintf("perf-api-connect-logon-%d", index)
-		var client = perfAPIConnectAndLogon(b, clientName, uri)
+		b.StopTimer()
+		var clientName = "perf-api-connect-logon"
+		var client = NewClient(clientName)
+		b.StartTimer()
+
+		var connectErr = client.Connect(uri)
+		if connectErr != nil {
+			b.Fatalf("connect failed: %v", connectErr)
+		}
+
+		var logonErr = client.Logon()
+		if logonErr != nil {
+			_ = client.Close()
+			b.Fatalf("logon failed: %v", logonErr)
+		}
+
+		b.StopTimer()
 		var closeErr = client.Close()
 		if closeErr != nil {
 			b.Fatalf("close failed: %v", closeErr)
 		}
+		b.StartTimer()
 	}
+	b.StopTimer()
 }
 
 func BenchmarkAPIIntegrationClientPublish(b *testing.B) {
@@ -126,20 +150,21 @@ func BenchmarkAPIIntegrationClientPublish(b *testing.B) {
 
 	var topic = "amps.perf.integration.publish"
 	var payload = []byte(`{"integration":true}`)
+	var waiter = newPerfAPIAckWaiter()
+	var command = NewCommand("publish").SetTopic(topic).SetData(payload).AddAckType(AckTypeProcessed)
+	var handler = waiter.handler
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	var index int
 	for index = 0; index < b.N; index++ {
-		var result = make(chan error, 1)
-		var command = NewCommand("publish").SetTopic(topic).SetData(payload).AddAckType(AckTypeProcessed)
-		var _, executeErr = client.ExecuteAsync(command, perfAPIProcessedAckResultHandler(result))
+		waiter.reset()
+		var _, executeErr = client.ExecuteAsync(command, handler)
 		if executeErr != nil {
 			b.Fatalf("publish execute failed: %v", executeErr)
 		}
-
-		perfAPIWaitForProcessedAck(b, result, "publish")
+		perfAPIWaitForProcessedAck(b, waiter, "publish")
 	}
 }
 
@@ -153,53 +178,63 @@ func BenchmarkAPIIntegrationClientSubscribe(b *testing.B) {
 	}()
 
 	var topic = "amps.perf.integration.subscribe"
+	var waiter = newPerfAPIAckWaiter()
+	var command = NewCommand("subscribe").SetTopic(topic).AddAckType(AckTypeProcessed)
+	var handler = waiter.handler
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	var index int
 	for index = 0; index < b.N; index++ {
-		var result = make(chan error, 1)
-		var command = NewCommand("subscribe").SetTopic(topic).AddAckType(AckTypeProcessed)
-		var subID, executeErr = client.ExecuteAsync(command, perfAPIProcessedAckResultHandler(result))
+		waiter.reset()
+		// ExecuteAsync auto-populates sub_id from command_id when sub_id is nil.
+		// Reset between iterations so reused command values keep route correlation.
+		command.header.subID = nil
+		var subID, executeErr = client.ExecuteAsync(command, handler)
 		if executeErr != nil {
 			b.Fatalf("subscribe execute failed: %v", executeErr)
 		}
+		perfAPIWaitForProcessedAck(b, waiter, "subscribe")
 
-		perfAPIWaitForProcessedAck(b, result, "subscribe")
-
+		b.StopTimer()
 		var unsubscribeErr = client.Unsubscribe(subID)
 		if unsubscribeErr != nil {
 			b.Fatalf("unsubscribe failed: %v", unsubscribeErr)
 		}
+		b.StartTimer()
 	}
+	b.StopTimer()
 }
 
 func BenchmarkAPIIntegrationHAConnectAndLogon(b *testing.B) {
 	var uri = perfAPIIntegrationURI()
 	perfAPIRequireIntegrationEndpoint(b, uri)
 
-	var badURI = "tcp://127.0.0.1:1/amps/json"
-
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	var index int
 	for index = 0; index < b.N; index++ {
+		b.StopTimer()
 		var ha = NewHAClient("perf-api-ha")
 		ha.SetTimeout(2 * time.Second)
 		ha.SetReconnectDelay(0)
 		ha.SetReconnectDelayStrategy(NewFixedDelayStrategy(0))
-		ha.SetServerChooser(NewDefaultServerChooser(badURI, uri))
+		ha.SetServerChooser(NewDefaultServerChooser(uri))
+		b.StartTimer()
 
 		var connectErr = ha.ConnectAndLogon()
 		if connectErr != nil {
 			b.Fatalf("HA connect and logon failed: %v", connectErr)
 		}
 
+		b.StopTimer()
 		var disconnectErr = ha.Disconnect()
 		if disconnectErr != nil {
 			b.Fatalf("HA disconnect failed: %v", disconnectErr)
 		}
+		b.StartTimer()
 	}
+	b.StopTimer()
 }

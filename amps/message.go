@@ -17,15 +17,16 @@ func init() {
 
 // Message stores exported state used by AMPS client APIs.
 type Message struct {
-	header              *_Header
-	data                []byte
-	client              *Client
-	valid               bool
-	ignoreAutoAck       bool
-	bookmarkSeqNo       uint64
-	subscriptionHandle  string
-	rawTransmissionTime string
-	disowned            bool
+	header                  *_Header
+	data                    []byte
+	client                  *Client
+	valid                   bool
+	ignoreAutoAck           bool
+	bookmarkSeqNo           uint64
+	subscriptionHandle      string
+	rawTransmissionTime     string
+	rawTransmissionUnixNano int64
+	disowned                bool
 }
 
 // Constants in this block define protocol and client behavior values.
@@ -45,7 +46,8 @@ func (msg *Message) reset() {
 	msg.ignoreAutoAck = false
 	msg.bookmarkSeqNo = 0
 	msg.subscriptionHandle = ""
-	msg.rawTransmissionTime = time.Now().UTC().Format(time.RFC3339Nano)
+	msg.rawTransmissionTime = ""
+	msg.rawTransmissionUnixNano = time.Now().UTC().UnixNano()
 	msg.disowned = false
 	msg.valid = true
 }
@@ -58,6 +60,8 @@ func (msg *Message) resetForParse() {
 	msg.ignoreAutoAck = false
 	msg.bookmarkSeqNo = 0
 	msg.subscriptionHandle = ""
+	msg.rawTransmissionTime = ""
+	msg.rawTransmissionUnixNano = 0
 	msg.disowned = false
 	msg.valid = true
 }
@@ -454,6 +458,7 @@ func (msg *Message) Copy() *Message {
 	message.bookmarkSeqNo = msg.bookmarkSeqNo
 	message.subscriptionHandle = msg.subscriptionHandle
 	message.rawTransmissionTime = msg.rawTransmissionTime
+	message.rawTransmissionUnixNano = msg.rawTransmissionUnixNano
 	message.disowned = msg.disowned
 
 	message.header.command = msg.header.command
@@ -910,6 +915,9 @@ func (msg *Message) GetRawTransmissionTime() string {
 	if msg == nil {
 		return ""
 	}
+	if msg.rawTransmissionTime == "" && msg.rawTransmissionUnixNano > 0 {
+		msg.rawTransmissionTime = time.Unix(0, msg.rawTransmissionUnixNano).UTC().Format(time.RFC3339Nano)
+	}
 	return msg.rawTransmissionTime
 }
 
@@ -960,6 +968,7 @@ func (msg *Message) Replace(other *Message) *Message {
 	msg.bookmarkSeqNo = copyMessage.bookmarkSeqNo
 	msg.subscriptionHandle = copyMessage.subscriptionHandle
 	msg.rawTransmissionTime = copyMessage.rawTransmissionTime
+	msg.rawTransmissionUnixNano = copyMessage.rawTransmissionUnixNano
 	msg.disowned = copyMessage.disowned
 	return msg
 }

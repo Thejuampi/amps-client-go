@@ -1,215 +1,251 @@
 {
-  "generated_at_utc": "2026-02-28T21:33:33Z",
-  "source_command": "go test ./amps -run ^$ -bench Benchmark(StrictParityHeaderHotParse|StrictParitySOWBatchParse|HeaderHotWrite|RouteHotSingle|RouteHotMultiSIDs|ReadHotFrameDecodeDispatch|API.*) -benchmem -benchtime=1s -count=20",
+  "generated_at_utc": "2026-03-01T04:32:50Z",
+  "source_command": "go test ./amps -run ^$ -bench Benchmark(StrictParityHeaderHotParse|StrictParitySOWBatchParse|HeaderHotWrite|RouteHotSingle|RouteHotMultiSIDs|ReadHotFrameDecodeDispatch|API(Client|HA).*) -benchmem -benchtime=300ms -count=20 ; go test ./amps -run ^$ -bench BenchmarkAPIIntegration.* -benchmem -benchtime=1x -count=20",
   "percentile_method": "nearest-rank",
   "samples_per_benchmark": 20,
   "benchmarks": {
     "BenchmarkAPIClientGetAutoAck": {
       "n": 20,
-      "min_ns_op": 16.81,
-      "p50_ns_op": 17.04,
-      "p95_ns_op": 18.23,
-      "p99_ns_op": 18.8,
-      "max_ns_op": 18.8,
-      "mean_ns_op": 17.2915
+      "min_ns_op": 16.18,
+      "p50_ns_op": 17.42,
+      "p95_ns_op": 23.48,
+      "p99_ns_op": 26.96,
+      "max_ns_op": 26.96,
+      "mean_ns_op": 18.1885
     },
     "BenchmarkAPIClientGetLogonCorrelationData": {
       "n": 20,
-      "min_ns_op": 0.5155,
-      "p50_ns_op": 0.5326,
-      "p95_ns_op": 0.784,
-      "p99_ns_op": 0.7986,
-      "max_ns_op": 0.7986,
-      "mean_ns_op": 0.569
+      "min_ns_op": 0.506,
+      "p50_ns_op": 0.5138,
+      "p95_ns_op": 0.52,
+      "p99_ns_op": 0.5227,
+      "max_ns_op": 0.5227,
+      "mean_ns_op": 0.5149
     },
     "BenchmarkAPIClientGetNameHash": {
       "n": 20,
-      "min_ns_op": 0.9712,
-      "p50_ns_op": 0.9777,
-      "p95_ns_op": 0.9928,
-      "p99_ns_op": 0.9942,
-      "max_ns_op": 0.9942,
-      "mean_ns_op": 0.9797
+      "min_ns_op": 0.9812,
+      "p50_ns_op": 1.004,
+      "p95_ns_op": 1.54,
+      "p99_ns_op": 1.543,
+      "max_ns_op": 1.543,
+      "mean_ns_op": 1.0908
     },
     "BenchmarkAPIClientName": {
       "n": 20,
-      "min_ns_op": 0.4329,
-      "p50_ns_op": 0.4404,
-      "p95_ns_op": 0.512,
-      "p99_ns_op": 0.5325,
-      "max_ns_op": 0.5325,
-      "mean_ns_op": 0.4495
+      "min_ns_op": 0.4366,
+      "p50_ns_op": 0.4825,
+      "p95_ns_op": 0.6093,
+      "p99_ns_op": 0.6152,
+      "max_ns_op": 0.6152,
+      "mean_ns_op": 0.4986
     },
     "BenchmarkAPIClientSetAutoAck": {
       "n": 20,
-      "min_ns_op": 17.75,
-      "p50_ns_op": 18.48,
-      "p95_ns_op": 20.7,
-      "p99_ns_op": 23.43,
-      "max_ns_op": 23.43,
-      "mean_ns_op": 18.7375
+      "min_ns_op": 16.77,
+      "p50_ns_op": 17.63,
+      "p95_ns_op": 19.05,
+      "p99_ns_op": 19.06,
+      "max_ns_op": 19.06,
+      "mean_ns_op": 17.757
     },
     "BenchmarkAPIClientSetLogonCorrelationData": {
       "n": 20,
-      "min_ns_op": 0.5201,
-      "p50_ns_op": 0.5485,
-      "p95_ns_op": 0.6258,
-      "p99_ns_op": 0.6345,
-      "max_ns_op": 0.6345,
-      "mean_ns_op": 0.5666
+      "min_ns_op": 0.5199,
+      "p50_ns_op": 0.5251,
+      "p95_ns_op": 0.5805,
+      "p99_ns_op": 0.6336,
+      "max_ns_op": 0.6336,
+      "mean_ns_op": 0.5342
     },
     "BenchmarkAPIClientSetName": {
       "n": 20,
-      "min_ns_op": 0.4683,
-      "p50_ns_op": 0.4821,
-      "p95_ns_op": 0.5023,
-      "p99_ns_op": 0.5367,
-      "max_ns_op": 0.5367,
-      "mean_ns_op": 0.4853
+      "min_ns_op": 0.4692,
+      "p50_ns_op": 0.4801,
+      "p95_ns_op": 0.4918,
+      "p99_ns_op": 0.5264,
+      "max_ns_op": 0.5264,
+      "mean_ns_op": 0.4842
     },
     "BenchmarkAPIHADisconnected": {
       "n": 20,
-      "min_ns_op": 0.4339,
-      "p50_ns_op": 0.4463,
-      "p95_ns_op": 0.4687,
-      "p99_ns_op": 0.5355,
-      "max_ns_op": 0.5355,
-      "mean_ns_op": 0.4527
+      "min_ns_op": 0.4344,
+      "p50_ns_op": 0.4403,
+      "p95_ns_op": 0.5972,
+      "p99_ns_op": 0.6357,
+      "max_ns_op": 0.6357,
+      "mean_ns_op": 0.4715
     },
     "BenchmarkAPIHALogonOptions": {
       "n": 20,
-      "min_ns_op": 15.72,
-      "p50_ns_op": 15.92,
-      "p95_ns_op": 16.58,
-      "p99_ns_op": 16.69,
-      "max_ns_op": 16.69,
-      "mean_ns_op": 16.0085
+      "min_ns_op": 15.78,
+      "p50_ns_op": 15.98,
+      "p95_ns_op": 18.47,
+      "p99_ns_op": 19.2,
+      "max_ns_op": 19.2,
+      "mean_ns_op": 16.5495
     },
     "BenchmarkAPIHAReconnectDelay": {
       "n": 20,
-      "min_ns_op": 10.98,
-      "p50_ns_op": 11.17,
-      "p95_ns_op": 11.3,
-      "p99_ns_op": 12.12,
-      "max_ns_op": 12.12,
-      "mean_ns_op": 11.209
+      "min_ns_op": 11.01,
+      "p50_ns_op": 11.11,
+      "p95_ns_op": 11.99,
+      "p99_ns_op": 12.52,
+      "max_ns_op": 12.52,
+      "mean_ns_op": 11.246
     },
     "BenchmarkAPIHAServerChooser": {
       "n": 20,
-      "min_ns_op": 11.01,
-      "p50_ns_op": 11.2,
-      "p95_ns_op": 11.96,
-      "p99_ns_op": 12.01,
-      "max_ns_op": 12.01,
-      "mean_ns_op": 11.2995
+      "min_ns_op": 11.13,
+      "p50_ns_op": 12.67,
+      "p95_ns_op": 13.56,
+      "p99_ns_op": 13.72,
+      "max_ns_op": 13.72,
+      "mean_ns_op": 12.4505
     },
     "BenchmarkAPIHASetLogonOptions": {
       "n": 20,
-      "min_ns_op": 11.76,
+      "min_ns_op": 11.71,
       "p50_ns_op": 11.9,
-      "p95_ns_op": 12.43,
-      "p99_ns_op": 12.59,
-      "max_ns_op": 12.59,
-      "mean_ns_op": 11.9875
+      "p95_ns_op": 14.18,
+      "p99_ns_op": 14.83,
+      "max_ns_op": 14.83,
+      "mean_ns_op": 12.3325
     },
     "BenchmarkAPIHASetReconnectDelay": {
       "n": 20,
-      "min_ns_op": 18.32,
-      "p50_ns_op": 19.54,
-      "p95_ns_op": 21.76,
-      "p99_ns_op": 21.94,
-      "max_ns_op": 21.94,
-      "mean_ns_op": 19.846
+      "min_ns_op": 17.39,
+      "p50_ns_op": 18.25,
+      "p95_ns_op": 21.94,
+      "p99_ns_op": 23.07,
+      "max_ns_op": 23.07,
+      "mean_ns_op": 18.856
     },
     "BenchmarkAPIHASetReconnectDelayStrategy": {
       "n": 20,
-      "min_ns_op": 11.02,
-      "p50_ns_op": 11.22,
-      "p95_ns_op": 11.36,
-      "p99_ns_op": 11.91,
-      "max_ns_op": 11.91,
-      "mean_ns_op": 11.237
+      "min_ns_op": 11.01,
+      "p50_ns_op": 11.18,
+      "p95_ns_op": 13.26,
+      "p99_ns_op": 13.32,
+      "max_ns_op": 13.32,
+      "mean_ns_op": 11.3705
     },
     "BenchmarkAPIHASetServerChooser": {
       "n": 20,
-      "min_ns_op": 11.06,
-      "p50_ns_op": 11.27,
-      "p95_ns_op": 11.38,
-      "p99_ns_op": 11.65,
-      "max_ns_op": 11.65,
-      "mean_ns_op": 11.2615
+      "min_ns_op": 11.12,
+      "p50_ns_op": 11.5,
+      "p95_ns_op": 13.09,
+      "p99_ns_op": 13.36,
+      "max_ns_op": 13.36,
+      "mean_ns_op": 11.8165
     },
     "BenchmarkAPIHASetTimeout": {
       "n": 20,
-      "min_ns_op": 11.1,
-      "p50_ns_op": 11.21,
-      "p95_ns_op": 11.98,
-      "p99_ns_op": 12,
-      "max_ns_op": 12,
-      "mean_ns_op": 11.3715
+      "min_ns_op": 11.02,
+      "p50_ns_op": 11.84,
+      "p95_ns_op": 12.89,
+      "p99_ns_op": 13.03,
+      "max_ns_op": 13.03,
+      "mean_ns_op": 11.924
     },
     "BenchmarkAPIHATimeout": {
       "n": 20,
-      "min_ns_op": 11.11,
-      "p50_ns_op": 11.3,
-      "p95_ns_op": 11.6,
-      "p99_ns_op": 11.7,
-      "max_ns_op": 11.7,
-      "mean_ns_op": 11.3275
+      "min_ns_op": 10.95,
+      "p50_ns_op": 11.18,
+      "p95_ns_op": 13.51,
+      "p99_ns_op": 13.68,
+      "max_ns_op": 13.68,
+      "mean_ns_op": 11.611
+    },
+    "BenchmarkAPIIntegrationClientConnectLogon": {
+      "n": 20,
+      "min_ns_op": 410300,
+      "p50_ns_op": 613600,
+      "p95_ns_op": 922400,
+      "p99_ns_op": 1199900,
+      "max_ns_op": 1199900,
+      "mean_ns_op": 673135
+    },
+    "BenchmarkAPIIntegrationClientPublish": {
+      "n": 20,
+      "min_ns_op": 98100,
+      "p50_ns_op": 131700,
+      "p95_ns_op": 214700,
+      "p99_ns_op": 233300,
+      "max_ns_op": 233300,
+      "mean_ns_op": 150360
+    },
+    "BenchmarkAPIIntegrationClientSubscribe": {
+      "n": 20,
+      "min_ns_op": 62400,
+      "p50_ns_op": 88900,
+      "p95_ns_op": 146600,
+      "p99_ns_op": 351800,
+      "max_ns_op": 351800,
+      "mean_ns_op": 108750
+    },
+    "BenchmarkAPIIntegrationHAConnectAndLogon": {
+      "n": 20,
+      "min_ns_op": 361300,
+      "p50_ns_op": 711500,
+      "p95_ns_op": 1084500,
+      "p99_ns_op": 1213600,
+      "max_ns_op": 1213600,
+      "mean_ns_op": 720335
     },
     "BenchmarkHeaderHotWrite": {
       "n": 20,
-      "min_ns_op": 168.6,
-      "p50_ns_op": 172.4,
-      "p95_ns_op": 174.1,
-      "p99_ns_op": 185.3,
-      "max_ns_op": 185.3,
-      "mean_ns_op": 172.625
+      "min_ns_op": 140.6,
+      "p50_ns_op": 145,
+      "p95_ns_op": 185.9,
+      "p99_ns_op": 186.4,
+      "max_ns_op": 186.4,
+      "mean_ns_op": 152.43
     },
     "BenchmarkReadHotFrameDecodeDispatch": {
       "n": 20,
-      "min_ns_op": 168.4,
-      "p50_ns_op": 171.6,
-      "p95_ns_op": 175.7,
-      "p99_ns_op": 177.8,
-      "max_ns_op": 177.8,
-      "mean_ns_op": 171.855
+      "min_ns_op": 93.73,
+      "p50_ns_op": 96.68,
+      "p95_ns_op": 131,
+      "p99_ns_op": 132.5,
+      "max_ns_op": 132.5,
+      "mean_ns_op": 102.8745
     },
     "BenchmarkRouteHotMultiSIDs": {
       "n": 20,
-      "min_ns_op": 174.4,
-      "p50_ns_op": 177.4,
-      "p95_ns_op": 181.5,
-      "p99_ns_op": 190.4,
-      "max_ns_op": 190.4,
-      "mean_ns_op": 178.505
+      "min_ns_op": 98.91,
+      "p50_ns_op": 107.9,
+      "p95_ns_op": 147.2,
+      "p99_ns_op": 152.2,
+      "max_ns_op": 152.2,
+      "mean_ns_op": 116.81
     },
     "BenchmarkRouteHotSingle": {
       "n": 20,
-      "min_ns_op": 137.2,
-      "p50_ns_op": 139.9,
-      "p95_ns_op": 148.9,
-      "p99_ns_op": 149.3,
-      "max_ns_op": 149.3,
-      "mean_ns_op": 140.91
+      "min_ns_op": 64.19,
+      "p50_ns_op": 65.74,
+      "p95_ns_op": 92.56,
+      "p99_ns_op": 95.93,
+      "max_ns_op": 95.93,
+      "mean_ns_op": 71.638
     },
     "BenchmarkStrictParityHeaderHotParse": {
       "n": 20,
-      "min_ns_op": 19.14,
-      "p50_ns_op": 19.41,
-      "p95_ns_op": 20.59,
-      "p99_ns_op": 21.02,
-      "max_ns_op": 21.02,
-      "mean_ns_op": 19.5445
+      "min_ns_op": 19.92,
+      "p50_ns_op": 20.24,
+      "p95_ns_op": 20.64,
+      "p99_ns_op": 20.79,
+      "max_ns_op": 20.79,
+      "mean_ns_op": 20.2685
     },
     "BenchmarkStrictParitySOWBatchParse": {
       "n": 20,
-      "min_ns_op": 95.76,
-      "p50_ns_op": 97.19,
-      "p95_ns_op": 98.59,
-      "p99_ns_op": 101.8,
-      "max_ns_op": 101.8,
-      "mean_ns_op": 97.231
+      "min_ns_op": 99.92,
+      "p50_ns_op": 100.9,
+      "p95_ns_op": 105.3,
+      "p99_ns_op": 125.1,
+      "max_ns_op": 125.1,
+      "mean_ns_op": 102.436
     }
   }
 }

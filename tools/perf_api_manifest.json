@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "description": "API-level benchmark mapping for side-by-side C vs Go comparison.",
   "percentile_method": "nearest-rank",
   "benchmarks": [
@@ -264,8 +264,15 @@
       "go_target": "amps:method:Client.Connect",
       "go_benchmark": "BenchmarkAPIIntegrationClientConnectLogon",
       "c_benchmark": "OfficialCIntegrationConnectLogon",
+      "contract": {
+        "timing_start": "Client.Connect call start",
+        "timing_end": "Client.Logon processed ack received",
+        "payload_profile": "none",
+        "ack_required": true,
+        "retry_on_disconnect": false
+      },
       "enabled": true,
-      "notes": "Synthetic integration round-trip against fake AMPS responder"
+      "notes": "Full API roundtrip: connect then logon processed ack"
     },
     {
       "benchmark_id": "client.publish.integration",
@@ -275,8 +282,15 @@
       "go_target": "amps:method:Client.PublishWithSequence",
       "go_benchmark": "BenchmarkAPIIntegrationClientPublish",
       "c_benchmark": "OfficialCIntegrationPublish",
+      "contract": {
+        "timing_start": "Publish API call start",
+        "timing_end": "processed ack callback received",
+        "payload_profile": "json:{\"integration\":true}",
+        "ack_required": true,
+        "retry_on_disconnect": false
+      },
       "enabled": true,
-      "notes": "Synthetic publish processed-ack loop against fake AMPS responder"
+      "notes": "Full API roundtrip publish with processed ack"
     },
     {
       "benchmark_id": "client.subscribe.integration",
@@ -286,8 +300,16 @@
       "go_target": "amps:method:Client.Subscribe",
       "go_benchmark": "BenchmarkAPIIntegrationClientSubscribe",
       "c_benchmark": "OfficialCIntegrationSubscribe",
+      "contract": {
+        "timing_start": "Subscribe API call start",
+        "timing_end": "processed ack received",
+        "payload_profile": "none",
+        "ack_required": true,
+        "unsubscribe_completion": "cleanup unsubscribe outside timed region",
+        "retry_on_disconnect": false
+      },
       "enabled": true,
-      "notes": "Synthetic subscribe processed-ack loop against fake AMPS responder"
+      "notes": "Full API roundtrip subscribe with processed ack"
     },
     {
       "benchmark_id": "ha.connect_and_logon.integration",
@@ -297,8 +319,16 @@
       "go_target": "amps:method:HAClient.ConnectAndLogon",
       "go_benchmark": "BenchmarkAPIIntegrationHAConnectAndLogon",
       "c_benchmark": "OfficialCIntegrationHAConnectAndLogon",
+      "contract": {
+        "timing_start": "HAClient.ConnectAndLogon call start",
+        "timing_end": "logon processed ack received on selected endpoint",
+        "payload_profile": "none",
+        "ack_required": true,
+        "ha_mode": "single_endpoint_connect_logon",
+        "retry_on_disconnect": false
+      },
       "enabled": true,
-      "notes": "Synthetic HA failover connect/logon loop against fake AMPS responder"
+      "notes": "Full API roundtrip HA connect/logon on selected endpoint"
     }
   ]
 }

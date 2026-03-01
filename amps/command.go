@@ -469,13 +469,17 @@ func (com *Command) SetBatchSize(batchSize uint) *Command {
 	return com
 }
 
+func assignStringBytes(destination *[]byte, value string) {
+	if len(value) == 0 {
+		*destination = nil
+		return
+	}
+	*destination = append((*destination)[:0], value...)
+}
+
 // SetBookmark sets bookmark on the receiver.
 func (com *Command) SetBookmark(bookmark string) *Command {
-	if len(bookmark) == 0 {
-		com.header.bookmark = nil
-	} else {
-		com.header.bookmark = []byte(bookmark)
-	}
+	assignStringBytes(&com.header.bookmark, bookmark)
 	return com
 }
 
@@ -501,21 +505,13 @@ func (com *Command) SetCommandEnum(command int) *Command {
 
 // SetCommandID sets command id on the receiver.
 func (com *Command) SetCommandID(commandID string) *Command {
-	if len(commandID) == 0 {
-		com.header.commandID = nil
-	} else {
-		com.header.commandID = []byte(commandID)
-	}
+	assignStringBytes(&com.header.commandID, commandID)
 	return com
 }
 
 // SetCorrelationID sets correlation id on the receiver.
 func (com *Command) SetCorrelationID(correlationID string) *Command {
-	if len(correlationID) == 0 {
-		com.header.correlationID = nil
-	} else {
-		com.header.correlationID = []byte(correlationID)
-	}
+	assignStringBytes(&com.header.correlationID, correlationID)
 	return com
 }
 
@@ -534,41 +530,25 @@ func (com *Command) SetExpiration(expiration uint) *Command {
 
 // SetFilter sets filter on the receiver.
 func (com *Command) SetFilter(filter string) *Command {
-	if len(filter) == 0 {
-		com.header.filter = nil
-	} else {
-		com.header.filter = []byte(filter)
-	}
+	assignStringBytes(&com.header.filter, filter)
 	return com
 }
 
 // SetOptions sets options on the receiver.
 func (com *Command) SetOptions(options string) *Command {
-	if len(options) == 0 {
-		com.header.options = nil
-	} else {
-		com.header.options = []byte(options)
-	}
+	assignStringBytes(&com.header.options, options)
 	return com
 }
 
 // SetOrderBy sets order by on the receiver.
 func (com *Command) SetOrderBy(orderBy string) *Command {
-	if len(orderBy) == 0 {
-		com.header.orderBy = nil
-	} else {
-		com.header.orderBy = []byte(orderBy)
-	}
+	assignStringBytes(&com.header.orderBy, orderBy)
 	return com
 }
 
 // SetQueryID sets query id on the receiver.
 func (com *Command) SetQueryID(queryID string) *Command {
-	if len(queryID) == 0 {
-		com.header.queryID = nil
-	} else {
-		com.header.queryID = []byte(queryID)
-	}
+	assignStringBytes(&com.header.queryID, queryID)
 	return com
 }
 
@@ -584,41 +564,25 @@ func (com *Command) SetSequenceID(sequenceID uint64) *Command {
 
 // SetSowKey sets sow key on the receiver.
 func (com *Command) SetSowKey(sowKey string) *Command {
-	if len(sowKey) == 0 {
-		com.header.sowKey = nil
-	} else {
-		com.header.sowKey = []byte(sowKey)
-	}
+	assignStringBytes(&com.header.sowKey, sowKey)
 	return com
 }
 
 // SetSowKeys sets sow keys on the receiver.
 func (com *Command) SetSowKeys(sowKeys string) *Command {
-	if len(sowKeys) == 0 {
-		com.header.sowKeys = nil
-	} else {
-		com.header.sowKeys = []byte(sowKeys)
-	}
+	assignStringBytes(&com.header.sowKeys, sowKeys)
 	return com
 }
 
 // SetSubID sets sub id on the receiver.
 func (com *Command) SetSubID(subID string) *Command {
-	if len(subID) == 0 {
-		com.header.subID = nil
-	} else {
-		com.header.subID = []byte(subID)
-	}
+	assignStringBytes(&com.header.subID, subID)
 	return com
 }
 
 // SetSubIDs sets sub ids on the receiver.
 func (com *Command) SetSubIDs(subIDs string) *Command {
-	if len(subIDs) == 0 {
-		com.header.subIDs = nil
-	} else {
-		com.header.subIDs = []byte(subIDs)
-	}
+	assignStringBytes(&com.header.subIDs, subIDs)
 	return com
 }
 
@@ -634,11 +598,7 @@ func (com *Command) SetTopN(topN uint) *Command {
 
 // SetTopic sets topic on the receiver.
 func (com *Command) SetTopic(topic string) *Command {
-	if len(topic) == 0 {
-		com.header.topic = nil
-	} else {
-		com.header.topic = []byte(topic)
-	}
+	assignStringBytes(&com.header.topic, topic)
 	return com
 }
 

@@ -1,14 +1,14 @@
 {
-  "generated_at_utc": "2026-03-01T00:38:23Z",
+  "generated_at_utc": "2026-03-01T05:51:43Z",
   "percentile_method": "nearest-rank",
-  "manifest_version": 1,
+  "manifest_version": 2,
   "summary": {
     "rows": 27,
-    "comparable": 7,
-    "go_wins_p95": 2,
-    "c_wins_p95": 5,
+    "comparable": 4,
+    "go_wins_p95": 4,
+    "c_wins_p95": 0,
     "ties_p95": 0,
-    "unavailable": 20,
+    "unavailable": 23,
     "offline_rows": 23,
     "integration_rows": 4,
     "parity_mapped_rows": 27,
@@ -26,25 +26,9 @@
       "c_benchmark": "OfficialCParityHeaderHotParse",
       "enabled": true,
       "notes": "Strict parity parser workload using canonical header frame",
-      "go": {
-        "p50_ns_op": 19.29,
-        "p95_ns_op": 19.86,
-        "p99_ns_op": 19.92
-      },
-      "c": {
-        "p50_ns_op": 22.01,
-        "p95_ns_op": 22.18,
-        "p99_ns_op": 22.25
-      },
-      "delta_go_vs_c": {
-        "p50_ns": -2.7200000000000024,
-        "p50_pct": -12.358019082235359,
-        "p95_ns": -2.3200000000000003,
-        "p95_pct": -10.459873760144275,
-        "p99_ns": -2.3299999999999983,
-        "p99_pct": -10.471910112359543
-      },
-      "winner_p95": "go"
+      "go": {},
+      "c": {},
+      "winner_p95": "n/a"
     },
     {
       "benchmark_id": "client.parse.sow_batch.strict",
@@ -57,25 +41,9 @@
       "c_benchmark": "OfficialCParitySOWBatchParse",
       "enabled": true,
       "notes": "Strict parity 5x parse loop workload",
-      "go": {
-        "p50_ns_op": 95.89,
-        "p95_ns_op": 97.21,
-        "p99_ns_op": 97.23
-      },
-      "c": {
-        "p50_ns_op": 120.37,
-        "p95_ns_op": 121.29,
-        "p99_ns_op": 121.37
-      },
-      "delta_go_vs_c": {
-        "p50_ns": -24.480000000000004,
-        "p50_pct": -20.33729334551799,
-        "p95_ns": -24.080000000000013,
-        "p95_pct": -19.853244290543334,
-        "p99_ns": -24.14,
-        "p99_pct": -19.8895938040702
-      },
-      "winner_p95": "go"
+      "go": {},
+      "c": {},
+      "winner_p95": "n/a"
     },
     {
       "benchmark_id": "client.serialize.header.strict",
@@ -88,25 +56,9 @@
       "c_benchmark": "OfficialCParityHeaderHotWrite",
       "enabled": true,
       "notes": "Header serialization comparable workload",
-      "go": {
-        "p50_ns_op": 147.6,
-        "p95_ns_op": 149.3,
-        "p99_ns_op": 150.7
-      },
-      "c": {
-        "p50_ns_op": 68.43,
-        "p95_ns_op": 69.54,
-        "p99_ns_op": 69.61
-      },
-      "delta_go_vs_c": {
-        "p50_ns": 79.16999999999999,
-        "p50_pct": 115.6948706707584,
-        "p95_ns": 79.76,
-        "p95_pct": 114.69657750934714,
-        "p99_ns": 81.08999999999999,
-        "p99_pct": 116.49188335009337
-      },
-      "winner_p95": "c"
+      "go": {},
+      "c": {},
+      "winner_p95": "n/a"
     },
     {
       "benchmark_id": "client.route.single",
@@ -119,11 +71,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Go-only benchmark currently; no C harness equivalent yet",
-      "go": {
-        "p50_ns_op": 139.9,
-        "p95_ns_op": 141.3,
-        "p99_ns_op": 145.3
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -138,11 +86,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Go-only benchmark currently; no C harness equivalent yet",
-      "go": {
-        "p50_ns_op": 177.7,
-        "p95_ns_op": 189.9,
-        "p99_ns_op": 195.9
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -157,11 +101,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Go-only combined decode+route benchmark",
-      "go": {
-        "p50_ns_op": 174.5,
-        "p95_ns_op": 181.8,
-        "p99_ns_op": 184.1
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -176,11 +116,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Client control-plane setter",
-      "go": {
-        "p50_ns_op": 0.4878,
-        "p95_ns_op": 0.5115,
-        "p99_ns_op": 0.5187
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -195,11 +131,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Client control-plane getter",
-      "go": {
-        "p50_ns_op": 0.4356,
-        "p95_ns_op": 0.4607,
-        "p99_ns_op": 0.4674
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -214,11 +146,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Client hash getter",
-      "go": {
-        "p50_ns_op": 0.9866,
-        "p95_ns_op": 1.018,
-        "p99_ns_op": 1.062
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -233,11 +161,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Client logon correlation setter",
-      "go": {
-        "p50_ns_op": 0.5251,
-        "p95_ns_op": 0.533,
-        "p99_ns_op": 0.5336
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -252,11 +176,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Client logon correlation getter",
-      "go": {
-        "p50_ns_op": 0.5239,
-        "p95_ns_op": 0.543,
-        "p99_ns_op": 0.5951
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -271,11 +191,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Auto-ack policy setter",
-      "go": {
-        "p50_ns_op": 17.72,
-        "p95_ns_op": 18.37,
-        "p99_ns_op": 18.82
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -290,11 +206,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "Auto-ack policy getter",
-      "go": {
-        "p50_ns_op": 17.04,
-        "p95_ns_op": 17.74,
-        "p99_ns_op": 17.76
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -309,11 +221,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA control-plane setter",
-      "go": {
-        "p50_ns_op": 11.2,
-        "p95_ns_op": 12.04,
-        "p99_ns_op": 12.07
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -328,11 +236,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA control-plane getter",
-      "go": {
-        "p50_ns_op": 11.11,
-        "p95_ns_op": 11.31,
-        "p99_ns_op": 11.72
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -347,11 +251,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA reconnect delay setter",
-      "go": {
-        "p50_ns_op": 17.8,
-        "p95_ns_op": 18.78,
-        "p99_ns_op": 19.3
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -366,11 +266,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA reconnect delay getter",
-      "go": {
-        "p50_ns_op": 11.22,
-        "p95_ns_op": 11.64,
-        "p99_ns_op": 15.48
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -385,11 +281,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA reconnect strategy setter",
-      "go": {
-        "p50_ns_op": 11.25,
-        "p95_ns_op": 11.36,
-        "p99_ns_op": 11.39
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -404,11 +296,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA logon options setter",
-      "go": {
-        "p50_ns_op": 12,
-        "p95_ns_op": 12.51,
-        "p99_ns_op": 13.13
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -423,11 +311,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA logon options getter",
-      "go": {
-        "p50_ns_op": 16.07,
-        "p95_ns_op": 16.31,
-        "p99_ns_op": 16.39
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -442,11 +326,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA server chooser setter",
-      "go": {
-        "p50_ns_op": 11.36,
-        "p95_ns_op": 11.56,
-        "p99_ns_op": 11.63
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -461,11 +341,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA server chooser getter",
-      "go": {
-        "p50_ns_op": 11.28,
-        "p95_ns_op": 11.41,
-        "p99_ns_op": 11.44
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -480,11 +356,7 @@
       "c_benchmark": "",
       "enabled": true,
       "notes": "HA disconnected-state check",
-      "go": {
-        "p50_ns_op": 0.4427,
-        "p95_ns_op": 0.4513,
-        "p99_ns_op": 0.4824
-      },
+      "go": {},
       "c": {},
       "winner_p95": "n/a"
     },
@@ -498,26 +370,26 @@
       "go_benchmark": "BenchmarkAPIIntegrationClientConnectLogon",
       "c_benchmark": "OfficialCIntegrationConnectLogon",
       "enabled": true,
-      "notes": "Synthetic integration round-trip against fake AMPS responder",
+      "notes": "Full API roundtrip: connect then logon processed ack",
       "go": {
-        "p50_ns_op": 263000,
-        "p95_ns_op": 464700,
-        "p99_ns_op": 557600
+        "p50_ns_op": 374640,
+        "p95_ns_op": 498040,
+        "p99_ns_op": 655580
       },
       "c": {
-        "p50_ns_op": 187976.67,
-        "p95_ns_op": 230508,
-        "p99_ns_op": 255249.33
+        "p50_ns_op": 345888,
+        "p95_ns_op": 990982,
+        "p99_ns_op": 2124850.67
       },
       "delta_go_vs_c": {
-        "p50_ns": 75023.32999999999,
-        "p50_pct": 39.910979378451586,
-        "p95_ns": 234192,
-        "p95_pct": 101.5982091727836,
-        "p99_ns": 302350.67000000004,
-        "p99_pct": 118.45307096398649
+        "p50_ns": 28752,
+        "p50_pct": 8.312517346655564,
+        "p95_ns": -492942,
+        "p95_pct": -49.742780393589385,
+        "p99_ns": -1469270.67,
+        "p99_pct": -69.1470083401202
       },
-      "winner_p95": "c"
+      "winner_p95": "go"
     },
     {
       "benchmark_id": "client.publish.integration",
@@ -529,26 +401,26 @@
       "go_benchmark": "BenchmarkAPIIntegrationClientPublish",
       "c_benchmark": "OfficialCIntegrationPublish",
       "enabled": true,
-      "notes": "Synthetic publish processed-ack loop against fake AMPS responder",
+      "notes": "Full API roundtrip publish with processed ack",
       "go": {
-        "p50_ns_op": 88100,
-        "p95_ns_op": 132100,
-        "p99_ns_op": 138300
+        "p50_ns_op": 43384,
+        "p95_ns_op": 48151,
+        "p99_ns_op": 58008
       },
       "c": {
-        "p50_ns_op": 25678.83,
-        "p95_ns_op": 29874.5,
-        "p99_ns_op": 30062.67
+        "p50_ns_op": 44995.83,
+        "p95_ns_op": 121651.58,
+        "p99_ns_op": 126046.58
       },
       "delta_go_vs_c": {
-        "p50_ns": 62421.17,
-        "p50_pct": 243.08416699670502,
-        "p95_ns": 102225.5,
-        "p95_pct": 342.1831327720966,
-        "p99_ns": 108237.33,
-        "p99_pct": 360.03897857375944
+        "p50_ns": -1611.8300000000017,
+        "p50_pct": -3.5821763927901804,
+        "p95_ns": -73500.58,
+        "p95_pct": -60.41892756345623,
+        "p99_ns": -68038.58,
+        "p99_pct": -53.97891795239506
       },
-      "winner_p95": "c"
+      "winner_p95": "go"
     },
     {
       "benchmark_id": "client.subscribe.integration",
@@ -560,26 +432,26 @@
       "go_benchmark": "BenchmarkAPIIntegrationClientSubscribe",
       "c_benchmark": "OfficialCIntegrationSubscribe",
       "enabled": true,
-      "notes": "Synthetic subscribe processed-ack loop against fake AMPS responder",
+      "notes": "Full API roundtrip subscribe with processed ack",
       "go": {
-        "p50_ns_op": 121200,
-        "p95_ns_op": 153800,
-        "p99_ns_op": 159500
+        "p50_ns_op": 34063,
+        "p95_ns_op": 40156,
+        "p99_ns_op": 40626
       },
       "c": {
-        "p50_ns_op": 26403.1,
-        "p95_ns_op": 28563,
-        "p99_ns_op": 31622.3
+        "p50_ns_op": 29324.4,
+        "p95_ns_op": 95934.8,
+        "p99_ns_op": 101912
       },
       "delta_go_vs_c": {
-        "p50_ns": 94796.9,
-        "p50_pct": 359.0370070181153,
-        "p95_ns": 125237,
-        "p95_pct": 438.45884535938103,
-        "p99_ns": 127877.7,
-        "p99_pct": 404.390888708285
+        "p50_ns": 4738.5999999999985,
+        "p50_pct": 16.1592394047278,
+        "p95_ns": -55778.8,
+        "p95_pct": -58.14240505009652,
+        "p99_ns": -61286,
+        "p99_pct": -60.13619593374676
       },
-      "winner_p95": "c"
+      "winner_p95": "go"
     },
     {
       "benchmark_id": "ha.connect_and_logon.integration",
@@ -591,26 +463,26 @@
       "go_benchmark": "BenchmarkAPIIntegrationHAConnectAndLogon",
       "c_benchmark": "OfficialCIntegrationHAConnectAndLogon",
       "enabled": true,
-      "notes": "Synthetic HA failover connect/logon loop against fake AMPS responder",
+      "notes": "Full API roundtrip HA connect/logon on selected endpoint",
       "go": {
-        "p50_ns_op": 337800,
-        "p95_ns_op": 468700,
-        "p99_ns_op": 551000
+        "p50_ns_op": 367540,
+        "p95_ns_op": 420560,
+        "p99_ns_op": 435480
       },
       "c": {
-        "p50_ns_op": 185640,
-        "p95_ns_op": 216978.75,
-        "p99_ns_op": 220268.75
+        "p50_ns_op": 360891.25,
+        "p95_ns_op": 459820,
+        "p99_ns_op": 740551.25
       },
       "delta_go_vs_c": {
-        "p50_ns": 152160,
-        "p50_pct": 81.9650937297996,
-        "p95_ns": 251721.25,
-        "p95_pct": 116.01193665278282,
-        "p99_ns": 330731.25,
-        "p99_pct": 150.14896575206424
+        "p50_ns": 6648.75,
+        "p50_pct": 1.842313993481416,
+        "p95_ns": -39260,
+        "p95_pct": -8.538123613587926,
+        "p99_ns": -305071.25,
+        "p99_pct": -41.19515698609651
       },
-      "winner_p95": "c"
+      "winner_p95": "go"
     }
   ]
 }

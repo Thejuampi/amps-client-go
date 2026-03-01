@@ -1,71 +1,44 @@
 {
-  "generated_at_utc": "2026-03-01T00:38:22Z",
-  "source_command": "./official_c_parity_benchmark.exe ; ./tools/cperf/fakeamps_c_integration_benchmark.exe",
+  "generated_at_utc": "2026-03-01T05:51:32Z",
+  "source_command": "./tools/cperf/fakeamps_c_integration_benchmark.exe",
   "percentile_method": "nearest-rank",
   "samples_per_benchmark": 20,
   "benchmarks": {
     "OfficialCIntegrationConnectLogon": {
       "n": 20,
-      "min_ns_op": 159903.33,
-      "p50_ns_op": 187976.67,
-      "p95_ns_op": 230508,
-      "p99_ns_op": 255249.33,
-      "max_ns_op": 255249.33,
-      "mean_ns_op": 195806.299
+      "min_ns_op": 224454,
+      "p50_ns_op": 345888,
+      "p95_ns_op": 990982,
+      "p99_ns_op": 2124850.67,
+      "max_ns_op": 2124850.67,
+      "mean_ns_op": 525920.0005
     },
     "OfficialCIntegrationHAConnectAndLogon": {
       "n": 20,
-      "min_ns_op": 160046.25,
-      "p50_ns_op": 185640,
-      "p95_ns_op": 216978.75,
-      "p99_ns_op": 220268.75,
-      "max_ns_op": 220268.75,
-      "mean_ns_op": 187885.125
+      "min_ns_op": 312321.26,
+      "p50_ns_op": 360891.25,
+      "p95_ns_op": 459820,
+      "p99_ns_op": 740551.25,
+      "max_ns_op": 740551.25,
+      "mean_ns_op": 384839.062
     },
     "OfficialCIntegrationPublish": {
       "n": 20,
-      "min_ns_op": 24092,
-      "p50_ns_op": 25678.83,
-      "p95_ns_op": 29874.5,
-      "p99_ns_op": 30062.67,
-      "max_ns_op": 30062.67,
-      "mean_ns_op": 26101.116
+      "min_ns_op": 43065.58,
+      "p50_ns_op": 44995.83,
+      "p95_ns_op": 121651.58,
+      "p99_ns_op": 126046.58,
+      "max_ns_op": 126046.58,
+      "mean_ns_op": 56672.6535
     },
     "OfficialCIntegrationSubscribe": {
       "n": 20,
-      "min_ns_op": 24445.6,
-      "p50_ns_op": 26403.1,
-      "p95_ns_op": 28563,
-      "p99_ns_op": 31622.3,
-      "max_ns_op": 31622.3,
-      "mean_ns_op": 26539.42
-    },
-    "OfficialCParityHeaderHotParse": {
-      "n": 20,
-      "min_ns_op": 21.74,
-      "p50_ns_op": 22.01,
-      "p95_ns_op": 22.18,
-      "p99_ns_op": 22.25,
-      "max_ns_op": 22.25,
-      "mean_ns_op": 22.003
-    },
-    "OfficialCParityHeaderHotWrite": {
-      "n": 20,
-      "min_ns_op": 67.52,
-      "p50_ns_op": 68.43,
-      "p95_ns_op": 69.54,
-      "p99_ns_op": 69.61,
-      "max_ns_op": 69.61,
-      "mean_ns_op": 68.51
-    },
-    "OfficialCParitySOWBatchParse": {
-      "n": 20,
-      "min_ns_op": 118.86,
-      "p50_ns_op": 120.37,
-      "p95_ns_op": 121.29,
-      "p99_ns_op": 121.37,
-      "max_ns_op": 121.37,
-      "mean_ns_op": 120.2875
+      "min_ns_op": 27922.7,
+      "p50_ns_op": 29324.4,
+      "p95_ns_op": 95934.8,
+      "p99_ns_op": 101912,
+      "max_ns_op": 101912,
+      "mean_ns_op": 39486.425
     }
   }
 }

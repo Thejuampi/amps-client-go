@@ -107,6 +107,10 @@ func (client *Client) registerPendingPublishCommand(commandID string, command *C
 	}
 
 	state.lock.Lock()
+	if state.failedWriteHandler == nil {
+		state.lock.Unlock()
+		return
+	}
 	state.pendingPublishByCmdID[commandID] = cloneCommand(command)
 	state.lock.Unlock()
 }

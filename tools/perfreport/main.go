@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	defaultCaptureTimeout   = 5 * time.Minute
+	defaultProgressInterval = 20 * time.Second
 )
 
 type tailBenchmarkStats struct {
@@ -54,15 +60,26 @@ type comparisonFile struct {
 }
 
 type apiBenchmark struct {
-	BenchmarkID string `json:"benchmark_id"`
-	Tier        string `json:"tier"`
-	HA          bool   `json:"ha"`
-	CPPSymbol   string `json:"cpp_symbol"`
-	GoTarget    string `json:"go_target"`
-	GoBenchmark string `json:"go_benchmark"`
-	CBenchmark  string `json:"c_benchmark"`
-	Enabled     bool   `json:"enabled"`
-	Notes       string `json:"notes"`
+	BenchmarkID string               `json:"benchmark_id"`
+	Tier        string               `json:"tier"`
+	HA          bool                 `json:"ha"`
+	CPPSymbol   string               `json:"cpp_symbol"`
+	GoTarget    string               `json:"go_target"`
+	GoBenchmark string               `json:"go_benchmark"`
+	CBenchmark  string               `json:"c_benchmark"`
+	Contract    *integrationContract `json:"contract,omitempty"`
+	Enabled     bool                 `json:"enabled"`
+	Notes       string               `json:"notes"`
+}
+
+type integrationContract struct {
+	TimingStart           string `json:"timing_start"`
+	TimingEnd             string `json:"timing_end"`
+	PayloadProfile        string `json:"payload_profile"`
+	AckRequired           *bool  `json:"ack_required"`
+	UnsubscribeCompletion string `json:"unsubscribe_completion,omitempty"`
+	HAMode                string `json:"ha_mode,omitempty"`
+	RetryOnDisconnect     *bool  `json:"retry_on_disconnect"`
 }
 
 type apiManifest struct {
@@ -187,17 +204,59 @@ func summarizeSamples(samples []float64) tailBenchmarkStats {
 	}
 }
 
-func runCommand(command []string) (string, error) {
+func runCommand(command []string, timeout time.Duration, progressInterval time.Duration, progressLabel string) (string, error) {
 	if len(command) == 0 {
 		return "", errors.New("empty command")
 	}
-	var cmd = exec.Command(command[0], command[1:]...) // #nosec G204 -- structured arguments only
-	var outputBytes, err = cmd.CombinedOutput()
-	var output = string(outputBytes)
-	if err != nil {
-		return output, fmt.Errorf("command failed: %w\n%s", err, output)
+
+	if timeout <= 0 {
+		timeout = defaultCaptureTimeout
 	}
-	return output, nil
+	if progressInterval <= 0 {
+		progressInterval = defaultProgressInterval
+	}
+
+	var label = strings.TrimSpace(progressLabel)
+	if label == "" {
+		label = strings.Join(command, " ")
+	}
+
+	var ctx, cancel = context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var cmd = exec.CommandContext(ctx, command[0], command[1:]...) // #nosec G204 -- structured arguments only
+	var done = make(chan struct{}, 1)
+	var outputBytes []byte
+	var runErr error
+	go func() {
+		outputBytes, runErr = cmd.CombinedOutput()
+		done <- struct{}{}
+	}()
+
+	var startedAt = time.Now()
+	var ticker = time.NewTicker(progressInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-done:
+			var output = string(outputBytes)
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return output, fmt.Errorf("command timed out after %s: %s\n%s", timeout, label, output)
+			}
+			if runErr != nil {
+				return output, fmt.Errorf("command failed: %w\n%s", runErr, output)
+			}
+			return output, nil
+		case <-ticker.C:
+			var elapsed = time.Since(startedAt).Round(time.Second)
+			var remaining = time.Until(startedAt.Add(timeout)).Round(time.Second)
+			if remaining < 0 {
+				remaining = 0
+			}
+			fmt.Fprintf(os.Stderr, "[perfreport] running: %s (elapsed=%s remaining=%s)\n", label, elapsed, remaining)
+		}
+	}
 }
 
 func parseGoBenchSamples(output string) map[string][]float64 {
@@ -294,6 +353,47 @@ func parityKey(cppSymbol string, goTarget string) string {
 	return strings.TrimSpace(cppSymbol) + "|" + strings.TrimSpace(goTarget)
 }
 
+func validateManifest(manifest apiManifest) error {
+	for _, benchmark := range manifest.Benchmarks {
+		if !benchmark.Enabled || benchmark.Tier != "integration" {
+			continue
+		}
+
+		if benchmark.Contract == nil {
+			return fmt.Errorf("integration benchmark %s is missing contract", benchmark.BenchmarkID)
+		}
+
+		var contract = benchmark.Contract
+		if strings.TrimSpace(contract.TimingStart) == "" {
+			return fmt.Errorf("integration benchmark %s is missing contract.timing_start", benchmark.BenchmarkID)
+		}
+		if strings.TrimSpace(contract.TimingEnd) == "" {
+			return fmt.Errorf("integration benchmark %s is missing contract.timing_end", benchmark.BenchmarkID)
+		}
+		if strings.TrimSpace(contract.PayloadProfile) == "" {
+			return fmt.Errorf("integration benchmark %s is missing contract.payload_profile", benchmark.BenchmarkID)
+		}
+		if contract.AckRequired == nil {
+			return fmt.Errorf("integration benchmark %s is missing contract.ack_required", benchmark.BenchmarkID)
+		}
+		if contract.RetryOnDisconnect == nil {
+			return fmt.Errorf("integration benchmark %s is missing contract.retry_on_disconnect", benchmark.BenchmarkID)
+		}
+
+		if strings.Contains(benchmark.BenchmarkID, "subscribe.integration") {
+			if strings.TrimSpace(contract.UnsubscribeCompletion) == "" {
+				return fmt.Errorf("integration benchmark %s is missing contract.unsubscribe_completion", benchmark.BenchmarkID)
+			}
+		}
+
+		if benchmark.HA && strings.TrimSpace(contract.HAMode) == "" {
+			return fmt.Errorf("integration benchmark %s is missing contract.ha_mode", benchmark.BenchmarkID)
+		}
+	}
+
+	return nil
+}
+
 func lookupStats(file tailFile, name string) (tailBenchmarkStats, bool) {
 	if name == "" {
 		return tailBenchmarkStats{}, false
@@ -356,13 +456,29 @@ func commandCaptureGo(arguments []string) error {
 	var extraBenchPattern = flagSet.String("extra-bench", "", "optional second go benchmark regex")
 	var extraBenchtime = flagSet.String("extra-benchtime", "1x", "go benchmark benchtime for extra bench")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
+	var timeout = flagSet.Duration("timeout", defaultCaptureTimeout, "maximum capture runtime")
+	var progressInterval = flagSet.Duration("progress-interval", defaultProgressInterval, "progress log interval")
 	var outPath = flagSet.String("out", "tools/perf_tail_current.json", "output JSON path")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}
+	if *timeout <= 0 {
+		*timeout = defaultCaptureTimeout
+	}
+	if *progressInterval <= 0 {
+		*progressInterval = defaultProgressInterval
+	}
+
+	var startedAt = time.Now()
+	var deadline = startedAt.Add(*timeout)
+
+	var remaining = time.Until(deadline)
+	if remaining <= 0 {
+		return fmt.Errorf("capture-go timed out before execution (%s)", *timeout)
+	}
 
 	var command = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *benchPattern, "-benchmem", "-benchtime=" + *benchtime, "-count=" + strconv.Itoa(*samples)}
-	var output, err = runCommand(command)
+	var output, err = runCommand(command, remaining, *progressInterval, "capture-go primary benchmarks")
 	if err != nil {
 		return err
 	}
@@ -371,8 +487,12 @@ func commandCaptureGo(arguments []string) error {
 	var sourceCommand = strings.Join(command, " ")
 
 	if strings.TrimSpace(*extraBenchPattern) != "" {
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("capture-go timed out before extra benchmarks (%s)", *timeout)
+		}
 		var extraCommand = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *extraBenchPattern, "-benchmem", "-benchtime=" + *extraBenchtime, "-count=" + strconv.Itoa(*samples)}
-		var extraOutput, extraErr = runCommand(extraCommand)
+		var extraOutput, extraErr = runCommand(extraCommand, remaining, *progressInterval, "capture-go extra benchmarks")
 		if extraErr != nil {
 			return extraErr
 		}
@@ -405,9 +525,17 @@ func commandCaptureC(arguments []string) error {
 	var executable = flagSet.String("exe", "./official_c_parity_benchmark.exe", "C benchmark executable path")
 	var extraExecutables = flagSet.String("extra-exe", "", "comma-separated extra C benchmark executables")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
+	var timeout = flagSet.Duration("timeout", defaultCaptureTimeout, "maximum capture runtime")
+	var progressInterval = flagSet.Duration("progress-interval", defaultProgressInterval, "progress log interval")
 	var outPath = flagSet.String("out", "tools/perf_tail_c_current.json", "output JSON path")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
+	}
+	if *timeout <= 0 {
+		*timeout = defaultCaptureTimeout
+	}
+	if *progressInterval <= 0 {
+		*progressInterval = defaultProgressInterval
 	}
 
 	var executables = []string{*executable}
@@ -421,10 +549,27 @@ func commandCaptureC(arguments []string) error {
 		}
 	}
 
+	var startedAt = time.Now()
+	var deadline = startedAt.Add(*timeout)
+	var nextProgress = startedAt.Add(*progressInterval)
+
 	var values = map[string][]float64{}
 	for index := 0; index < *samples; index++ {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("capture-c timed out after %s", *timeout)
+		}
+		if !time.Now().Before(nextProgress) {
+			var elapsed = time.Since(startedAt).Round(time.Second)
+			fmt.Fprintf(os.Stderr, "[perfreport] running: capture-c sample %d/%d (elapsed=%s)\n", index+1, *samples, elapsed)
+			nextProgress = time.Now().Add(*progressInterval)
+		}
 		for _, currentExecutable := range executables {
-			var output, err = runCommand([]string{currentExecutable})
+			var remaining = time.Until(deadline)
+			if remaining <= 0 {
+				return fmt.Errorf("capture-c timed out after %s", *timeout)
+			}
+			var label = fmt.Sprintf("capture-c sample %d/%d %s", index+1, *samples, currentExecutable)
+			var output, err = runCommand([]string{currentExecutable}, remaining, *progressInterval, label)
 			if err != nil {
 				return err
 			}
@@ -520,6 +665,9 @@ func commandMerge(arguments []string) error {
 
 	var manifest, err = readManifest(*manifestPath)
 	if err != nil {
+		return err
+	}
+	if err = validateManifest(manifest); err != nil {
 		return err
 	}
 	var parityManifest, errParity = readParityManifest(*parityPath)
