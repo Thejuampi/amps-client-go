@@ -4,6 +4,9 @@
 			"path": ".."
 		},
 		{
+			"path": "../../gofer"
+		},
+		{
 			"path": "../../amps-c++-client-5.3.5.1-Windows"
 		}
 	],
