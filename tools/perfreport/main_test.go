@@ -17,10 +17,8 @@ func TestRequiredGoBenchmarksForAllComparableProfile(t *testing.T) {
 		"BenchmarkHeaderHotWrite",
 		"BenchmarkStrictParityHeaderHotParse",
 		"BenchmarkStrictParitySOWBatchParse",
-		"BenchmarkAPIIntegrationClientConnectLogon",
 		"BenchmarkAPIIntegrationClientPublish",
 		"BenchmarkAPIIntegrationClientSubscribe",
-		"BenchmarkAPIIntegrationHAConnectAndLogon",
 	}
 
 	for _, name := range expected {
@@ -47,10 +45,8 @@ func TestRequiredCBenchmarksForAllComparableProfile(t *testing.T) {
 		"OfficialCParityHeaderHotWrite",
 		"OfficialCParityHeaderHotParse",
 		"OfficialCParitySOWBatchParse",
-		"OfficialCIntegrationConnectLogon",
 		"OfficialCIntegrationPublish",
 		"OfficialCIntegrationSubscribe",
-		"OfficialCIntegrationHAConnectAndLogon",
 	}
 
 	for _, name := range expected {

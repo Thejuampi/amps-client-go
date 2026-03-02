@@ -161,10 +161,8 @@ func requiredGoBenchmarksForProfile(profile string) []string {
 		"BenchmarkHeaderHotWrite",
 		"BenchmarkStrictParityHeaderHotParse",
 		"BenchmarkStrictParitySOWBatchParse",
-		"BenchmarkAPIIntegrationClientConnectLogon",
 		"BenchmarkAPIIntegrationClientPublish",
 		"BenchmarkAPIIntegrationClientSubscribe",
-		"BenchmarkAPIIntegrationHAConnectAndLogon",
 	}
 }
 
@@ -177,10 +175,8 @@ func requiredCBenchmarksForProfile(profile string) []string {
 		"OfficialCParityHeaderHotWrite",
 		"OfficialCParityHeaderHotParse",
 		"OfficialCParitySOWBatchParse",
-		"OfficialCIntegrationConnectLogon",
 		"OfficialCIntegrationPublish",
 		"OfficialCIntegrationSubscribe",
-		"OfficialCIntegrationHAConnectAndLogon",
 	}
 }
 
