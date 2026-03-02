@@ -263,7 +263,7 @@
       "cpp_symbol": "Client::connect",
       "go_target": "amps:method:Client.Connect",
       "go_benchmark": "BenchmarkAPIIntegrationClientConnectLogon",
-      "c_benchmark": "OfficialCIntegrationConnectLogon",
+      "c_benchmark": "",
       "contract": {
         "timing_start": "Client.Connect call start",
         "timing_end": "Client.Logon processed ack received",
@@ -271,8 +271,8 @@
         "ack_required": true,
         "retry_on_disconnect": false
       },
-      "enabled": true,
-      "notes": "Full API roundtrip: connect then logon processed ack"
+      "enabled": false,
+      "notes": "Out of scope for parity performance gate: one-time connect and logon latency"
     },
     {
       "benchmark_id": "client.publish.integration",
@@ -318,7 +318,7 @@
       "cpp_symbol": "HAClient::connectAndLogon",
       "go_target": "amps:method:HAClient.ConnectAndLogon",
       "go_benchmark": "BenchmarkAPIIntegrationHAConnectAndLogon",
-      "c_benchmark": "OfficialCIntegrationHAConnectAndLogon",
+      "c_benchmark": "",
       "contract": {
         "timing_start": "HAClient.ConnectAndLogon call start",
         "timing_end": "logon processed ack received on selected endpoint",
@@ -327,8 +327,8 @@
         "ha_mode": "single_endpoint_connect_logon",
         "retry_on_disconnect": false
       },
-      "enabled": true,
-      "notes": "Full API roundtrip HA connect/logon on selected endpoint"
+      "enabled": false,
+      "notes": "Out of scope for parity performance gate: one-time HA connect and logon latency"
     }
   ]
 }

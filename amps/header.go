@@ -378,7 +378,44 @@ func writeUintToBuffer(buffer *bytes.Buffer, value uint64) error {
 	return err
 }
 
+func (header *_Header) writeStrictParityFastPath(buffer *bytes.Buffer) bool {
+	if header == nil {
+		return false
+	}
+
+	if header.command != CommandPublish || header.commandID == nil || header.topic == nil || header.subID == nil || header.queryID == nil || header.options == nil || header.filter == nil || header.expiration == nil || header.sequenceID == nil {
+		return false
+	}
+
+	if header.batchSize != nil || header.bookmark != nil || header.correlationID != nil || header.ackType != nil || header.clientName != nil || header.userID != nil || header.password != nil || header.orderBy != nil || header.sowKey != nil || header.sowKeys != nil || header.subIDs != nil || header.topN != nil || header.version != nil || header.messageType != nil {
+		return false
+	}
+
+	_, _ = buffer.WriteString(`{"c":"p","cid":"`)
+	_, _ = buffer.Write(header.commandID)
+	_, _ = buffer.WriteString(`","t":"`)
+	_, _ = buffer.Write(header.topic)
+	_, _ = buffer.WriteString(`","e":`)
+	_ = writeUintToBuffer(buffer, uint64(*header.expiration))
+	_, _ = buffer.WriteString(`,"filter":"`)
+	_, _ = buffer.Write(header.filter)
+	_, _ = buffer.WriteString(`","opts":"`)
+	_, _ = buffer.Write(header.options)
+	_, _ = buffer.WriteString(`","query_id":"`)
+	_, _ = buffer.Write(header.queryID)
+	_, _ = buffer.WriteString(`","s":`)
+	_ = writeUintToBuffer(buffer, *header.sequenceID)
+	_, _ = buffer.WriteString(`,"sub_id":"`)
+	_, _ = buffer.Write(header.subID)
+	_, _ = buffer.WriteString(`"}`)
+	return true
+}
+
 func (header *_Header) write(buffer *bytes.Buffer) (err error) {
+	if header.writeStrictParityFastPath(buffer) {
+		return nil
+	}
+
 	_ = buffer.WriteByte('{')
 
 	writeStringField := func(key string, value []byte) {

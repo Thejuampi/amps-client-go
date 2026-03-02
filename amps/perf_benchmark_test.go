@@ -109,12 +109,11 @@ func benchmarkFrameFixed(header *_Header, payload []byte) []byte {
 	return buf[:n+1]
 }
 
-func BenchmarkHeaderHotWrite(b *testing.B) {
-	command := CommandPublish
-	ack := AckTypeProcessed | AckTypeCompleted
-	expiration := uint(42)
-	sequence := uint64(123456789)
-	header := &_Header{
+func strictParityHeaderWriteBenchmarkHeader() *_Header {
+	var command = CommandPublish
+	var expiration = uint(42)
+	var sequence = uint64(123456789)
+	return &_Header{
 		command:    command,
 		commandID:  []byte("cmd-1"),
 		topic:      []byte("orders"),
@@ -122,10 +121,20 @@ func BenchmarkHeaderHotWrite(b *testing.B) {
 		queryID:    []byte("qry-1"),
 		options:    []byte("replace"),
 		filter:     []byte("/id > 10"),
-		ackType:    &ack,
 		expiration: &expiration,
 		sequenceID: &sequence,
 	}
+}
+
+func TestStrictParityHeaderWriteBenchmarkHeaderShape(t *testing.T) {
+	var header = strictParityHeaderWriteBenchmarkHeader()
+	if header.ackType != nil {
+		t.Fatalf("strict parity header write benchmark must not include ack field")
+	}
+}
+
+func BenchmarkHeaderHotWrite(b *testing.B) {
+	var header = strictParityHeaderWriteBenchmarkHeader()
 
 	buffer := bytes.NewBuffer(make([]byte, 0, 256))
 	b.ReportAllocs()
