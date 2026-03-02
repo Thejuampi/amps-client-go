@@ -19,20 +19,42 @@ $fakeampsProcess = $null
 
 try {
   if ($StartFakeamps) {
+    $addrParts = $FakeampsAddr.Split(':')
+    $fakeampsPort = [int]$addrParts[$addrParts.Length - 1]
+    $listeners = Get-NetTCPConnection -LocalPort $fakeampsPort -State Listen -ErrorAction SilentlyContinue
+    foreach ($listener in $listeners) {
+      try {
+        Stop-Process -Id $listener.OwningProcess -Force -ErrorAction Stop
+      }
+      catch {
+      }
+    }
+    Start-Sleep -Milliseconds 250
+
     $fakeampsArgs = @("run", "./tools/fakeamps", "-addr", $FakeampsAddr, "-benchmark-stability")
     $fakeampsProcess = Start-Process -FilePath "go" -ArgumentList $fakeampsArgs -PassThru -RedirectStandardOutput $FakeampsStdoutLog -RedirectStandardError $FakeampsStderrLog
     Start-Sleep -Milliseconds 750
+    if ($fakeampsProcess.HasExited) {
+      throw "fakeamps failed to start; check $FakeampsStderrLog"
+    }
   }
 
-  go run ./tools/perfreport capture-c `
-    -exe $Exe `
-    -extra-exe $ExtraExe `
-    -require-benchmarks $RequireBenchmarks `
-    -samples $Samples `
-    -profile $Profile `
-    -out $Out `
-    -timeout $Timeout `
-    -progress-interval $ProgressInterval
+  $captureArgs = @(
+    "run", "./tools/perfreport", "capture-c",
+    "-exe", $Exe,
+    "-extra-exe", $ExtraExe,
+    "-samples", $Samples,
+    "-profile", $Profile,
+    "-out", $Out,
+    "-timeout", $Timeout,
+    "-progress-interval", $ProgressInterval
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($RequireBenchmarks)) {
+    $captureArgs += @("-require-benchmarks", $RequireBenchmarks)
+  }
+
+  go @captureArgs
 }
 finally {
   if ($null -ne $fakeampsProcess -and -not $fakeampsProcess.HasExited) {
