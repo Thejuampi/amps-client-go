@@ -190,6 +190,18 @@ PowerShell note: quote the coverprofile flag if needed, for example `go test -co
 
 </details>
 
+## CLI Tool
+
+**[gofer](https://github.com/Thejuampi/gofer)** is the official command-line interface built on top of this library.
+It provides `ping`, `publish`, `subscribe`, `sow`, `sow_and_subscribe`, and `sow_delete` commands as a single native binary.
+
+```bash
+go install github.com/Thejuampi/gofer@latest
+gofer ping -server tcp://localhost:9007/amps/json
+```
+
+---
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

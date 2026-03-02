@@ -401,19 +401,51 @@ func buildPublishDelivery(buf *bytes.Buffer, topic, subID string, payload []byte
 // ---- SOW Record Delivery ----
 
 func buildSOWRecord(buf *bytes.Buffer, topic, queryID, sowKey, bookmark, messageType string, payload []byte) []byte {
+	return buildBatchedSOWFrame(buf, topic, queryID, messageType, []sowRecordInput{
+		{sowKey: sowKey, bookmark: bookmark, payload: payload},
+	})
+}
+
+// sowRecordInput is a single record to batch into a SOW frame.
+type sowRecordInput struct {
+	sowKey, bookmark string
+	payload          []byte
+}
+
+// buildBatchedSOWFrame produces a frame the Go client's SOW batched parser
+// understands.  Wire format:
+//
+//	[4-byte BE length]
+//	{"c":"sow","t":"topic","query_id":"qid"}      ← batch header (NO "l")
+//	{"c":"sow","l":N1,"k":"k1","bm":"b1"}payload1 ← sub-record 1
+//	{"c":"sow","l":N2,"k":"k2","bm":"b2"}payload2 ← sub-record 2
+//	...
+//
+// The client's parseHeader(true, ...) consumes the batch header, then the
+// loop processes each sub-record via parseHeader(false, ...) which reads
+// "l", extracts the payload, and dispatches to onMessage.
+func buildBatchedSOWFrame(buf *bytes.Buffer, topic, queryID, messageType string, records []sowRecordInput) []byte {
 	startFrame(buf)
+
+	// Batch header — identifies command, topic, queryID. No "l" field.
 	buf.WriteString(`{"c":"sow","t":"`)
 	buf.WriteString(topic)
 	buf.WriteByte('"')
 	writeField(buf, "query_id", queryID)
-	writeField(buf, "k", sowKey)
-	writeField(buf, "bm", bookmark)
 	writeField(buf, "mt", messageType)
-	// message_length "l" — tells the client parser where the SOW data ends.
-	buf.WriteString(`,"l":`)
-	buf.WriteString(strconv.Itoa(len(payload)))
 	buf.WriteByte('}')
-	buf.Write(payload)
+
+	// Sub-records — each has "l" (messageLength) followed by payload bytes.
+	for _, r := range records {
+		buf.WriteString(`{"c":"sow"`)
+		writeField(buf, "k", r.sowKey)
+		writeField(buf, "bm", r.bookmark)
+		buf.WriteString(`,"l":`)
+		buf.WriteString(strconv.Itoa(len(r.payload)))
+		buf.WriteByte('}')
+		buf.Write(r.payload)
+	}
+
 	return finalizeFrame(buf)
 }
 
