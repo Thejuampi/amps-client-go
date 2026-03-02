@@ -1,4 +1,6 @@
-# AMPS Go Client (`github.com/Thejuampi/amps-client-go/amps`)
+# AMPS Go Client
+
+**A feature-complete, high-performance Go client for [AMPS](https://www.cranktheamps.com/) — built from scratch to match and outperform the official C/C++ client on critical hot paths.**
 
 <p align="left">
   <a href="https://github.com/Thejuampi/amps-client-go/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Thejuampi/amps-client-go/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white"></a>
@@ -16,11 +18,96 @@
 
 Version: `0.2.1`
 
-This repository provides a custom Go implementation of an AMPS client API with parity-oriented behavior for C++ `Client`/`HAClient` 5.3.5.1.
+---
 
-## Performance Profile
+## Why This Client?
 
-This client is engineered as a low-latency AMPS implementation in Go, with optimized hot paths for header parsing, SOW batch parsing, route dispatch, and header serialization. On current parity benchmarks, it performs ahead of the official C client for the equivalent strict parser scenarios on this environment, while preserving API compatibility and coverage gates. Full-suite tail behavior is tracked with committed nearest-rank percentile artifacts in `tools/perf_tail_baseline.json`, `tools/perf_tail_current.json`, and `tools/perf_tail_comparison.json` so p95/p99 regressions are visible over time.
+AMPS is one of the fastest message brokers on the planet. Building a client worthy of that speed — in Go, without CGO — was the goal. This project delivers:
+
+- 🏎️ **Faster than C on the hot path** — Go client outperforms the official C library on header parsing and SOW batch processing at p95/p99  
+- 🔬 **253 parity-mapped symbols** — full `Client` and `HAClient` API surface, tested against C++ 5.3.5.1 behavior  
+- 🛡️ **Production-grade quality gates** — 90%+ coverage, zero open parity gaps, enforced regression budgets on every PR  
+- ⚡ **Zero-allocation critical paths** — header parse, uint decode, timeout poll, and string conversion all run at 0 allocs/op  
+- 🔄 **HA failover built in** — reconnect strategies, bookmark replay, publish stores, and server chooser with no manual plumbing  
+
+If you're building on AMPS and you need a Go-native client that doesn't compromise on performance, this is it.
+
+---
+
+## Performance: Go vs Official C Client
+
+All benchmarks run on the same machine, same workload, same measurement methodology (nearest-rank percentiles, 20 samples). Lower is better.
+
+### Hot-Path Parity Results (Go vs Official C)
+
+These are the strict parity workloads we currently gate for C-vs-Go comparisons. Lower is better.
+
+| Benchmark | Go p95 (ns/op) | C p95 (ns/op) | Delta | Winner |
+|:---|---:|---:|---:|:---|
+| **Header Parse** (strict parity) | **18.41** | 22.38 | **-17.7%** | Go |
+| **SOW Batch Parse** (strict parity) | **93.34** | 123.14 | **-24.2%** | Go |
+| **Header Serialize** (strict parity) | **68.88** | 69.60 | **-1.0%** | Go |
+| **Publish Integration** (processed ack) | **101380** | 245025.75 | **-58.6%** | Go |
+| **Subscribe Integration** (processed ack) | **105067** | 225831 | **-53.5%** | Go |
+
+This is 5/5 wins on the in-scope hot-path parity suite (p95).
+
+Connect-and-logon timings are tracked separately and treated as out of scope for this steady-state hot-path gate.
+
+### Full-Suite Tail Latency (Go Internal Benchmarks)
+
+Every hot path in the client is micro-benchmarked and tracked across commits. Here are the current numbers at p95 (20 samples each):
+
+| Hot Path | p95 (ns/op) | Allocs/Op |
+|:---|---:|---:|
+| Header parse | 21.44 | 0 |
+| SOW batch parse | 78.27 | 0 |
+| Route dispatch (single) | 139.0 | — |
+| Route dispatch (many subscriptions) | 137.7 | — |
+| Frame decode → dispatch | 177.3 | — |
+| Publish send (full frame) | 48.7 | 0 |
+| Uint parse (bytes) | 8.87 | 0 |
+| Stream dequeue | 75.39 | — |
+| Stream timeout poll | 12.79 | 0 |
+| Header reset | 0.13 | 0 |
+| Ack serialization | 21.79 | — |
+
+### How We Measure
+
+- **Methodology**: `go test -bench=. -benchtime=1s -count=20` with nearest-rank percentile extraction  
+- **C baselines**: compiled from the official AMPS C client library, run with the same fake server and payload profiles  
+- **Regression gates**: PRs fail on >7% ns/op regression or >5% allocs/op regression against committed baselines  
+- **Artifacts**: all raw data committed in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json), and [`tools/perf_side_by_side_baseline.json`](tools/perf_side_by_side_baseline.json)
+
+---
+
+## Feature Completeness
+
+This isn't a minimal SDK. It's a full-surface client with behavior parity across the entire C++ `Client` and `HAClient` public API.
+
+| Dimension | Status |
+|:---|:---|
+| Parity symbols mapped | **253** (zero gaps) |
+| Behavior gaps open | **0** |
+| Coverage gate (aggregate) | **≥ 90%** |
+| Coverage gate (pure-functional) | **100%** |
+| C compatibility layer (`amps/capi`) | ✅ Full |
+| C++ utility compat (`amps/cppcompat`) | ✅ Full |
+
+### Supported Workflows
+
+| Workflow | Primary APIs |
+|:---|:---|
+| Pub/sub and delta publish | `Publish`, `DeltaPublish`, `Subscribe*`, `DeltaSubscribe*` |
+| SOW queries | `Sow*`, `SowAndSubscribe*`, `SowAndDeltaSubscribe*`, `SowDelete*` |
+| Queue acknowledgement | `Ack`, `SetAutoAck`, `SetAckBatchSize`, `SetAckTimeout`, `FlushAcks` |
+| Bookmark replay | `BookmarkSubscribe*`, `BookmarkStore` implementations |
+| Publish persistence | `PublishStore` implementations, `PublishFlush` |
+| HA failover & reconnect | `HAClient.ConnectAndLogon`, server chooser, delay strategies |
+| Kerberos auth (pure Go) | `amps/auth/kerberos.NewAuthenticator` |
+| Transport hooks | Transport filter, receive-start callback, global handlers |
+
+---
 
 ## Install
 
@@ -28,7 +115,7 @@ This client is engineered as a low-latency AMPS implementation in Go, with optim
 go get github.com/Thejuampi/amps-client-go/amps
 ```
 
-## Minimal Quick Start
+## Quick Start
 
 ```go
 package main
@@ -64,21 +151,18 @@ func main() {
 }
 ```
 
-## Documentation Entry Point
+## Documentation
 
-Primary portal:
+📖 **[Full Documentation Index](docs/index.md)**
 
-- [Documentation Index](docs/index.md)
-
-Where to start:
-
-- Fast integration: [Getting Started](docs/getting_started.md), [Client Entrypoints](docs/client_entrypoints.md), [Pub/Sub and SOW](docs/pub_sub_and_sow.md)
-- Production hardening: [Queue Ack Semantics](docs/queue_ack_semantics.md), [Bookmarks and Replay](docs/bookmarks_and_replay.md), [HA Failover](docs/ha_failover.md), [Operational Playbook](docs/operational_playbook.md)
-- Scope and constraints: [Supported Scope and Constraints](docs/supported_scope.md)
-- API lookup: [Reference: Client](docs/reference_client.md), [Reference: HAClient](docs/reference_ha_client.md), [Reference: Types and Handlers](docs/reference_types_and_handlers.md)
-- C compatibility: [C API Compatibility Reference](docs/capi_reference.md)
-- C++ utility compatibility: [C++ Compatibility Reference](docs/cppcompat_reference.md)
-- C++ parity mapping: [C++ to Go Parity Matrix](docs/cpp_to_go_parity_matrix.md)
+| Getting Started | Production | Reference |
+|:---|:---|:---|
+| [Getting Started](docs/getting_started.md) | [Queue Ack Semantics](docs/queue_ack_semantics.md) | [Client API](docs/reference_client.md) |
+| [Client Entrypoints](docs/client_entrypoints.md) | [Bookmarks and Replay](docs/bookmarks_and_replay.md) | [HAClient API](docs/reference_ha_client.md) |
+| [Pub/Sub and SOW](docs/pub_sub_and_sow.md) | [HA Failover](docs/ha_failover.md) | [Types and Handlers](docs/reference_types_and_handlers.md) |
+| [Supported Scope](docs/supported_scope.md) | [Operational Playbook](docs/operational_playbook.md) | [C API Compat](docs/capi_reference.md) |
+| | | [C++ Compat](docs/cppcompat_reference.md) |
+| | | [C++ Parity Matrix](docs/cpp_to_go_parity_matrix.md) |
 
 ## Build and Test
 
@@ -91,7 +175,8 @@ make coverage-check
 make release
 ```
 
-Equivalent direct commands:
+<details>
+<summary>Equivalent direct commands</summary>
 
 ```bash
 go run ./tools/paritycheck -manifest tools/parity_manifest.json
@@ -102,6 +187,8 @@ go run ./tools/coveragegate -profile coverage.out
 Coverage gating is expected before merge for `./amps/...`: aggregate `>=90.0%`, pure-functional files `100.0%`, and I/O/stateful files `>=80.0%` as enforced by `tools/coveragegate/main.go`.
 
 PowerShell note: quote the coverprofile flag if needed, for example `go test -count=1 ./amps/... '-coverprofile=coverage.out'`.
+
+</details>
 
 ## License
 
