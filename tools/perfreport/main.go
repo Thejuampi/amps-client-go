@@ -199,6 +199,25 @@ func missingRequiredBenchmarks(file tailFile, required []string) []string {
 	return missing
 }
 
+func insufficientRequiredBenchmarkSamples(file tailFile, required []string, expectedSamples int) []string {
+	if expectedSamples <= 0 || len(required) == 0 {
+		return nil
+	}
+
+	var insufficient []string
+	for _, benchmark := range required {
+		var stats, ok = file.Benchmarks[benchmark]
+		if !ok {
+			continue
+		}
+		if stats.N < expectedSamples {
+			insufficient = append(insufficient, benchmark)
+		}
+	}
+
+	return insufficient
+}
+
 func validateComparableFloor(summary mergedSummary, minComparable int) error {
 	if minComparable <= 0 {
 		return nil
@@ -585,6 +604,8 @@ func commandCaptureGo(arguments []string) error {
 	var retryDelay = flagSet.Duration("retry-delay", 2*time.Second, "delay between retry attempts")
 	var extraBenchPattern = flagSet.String("extra-bench", "", "optional second go benchmark regex")
 	var extraBenchtime = flagSet.String("extra-benchtime", "1x", "go benchmark benchtime for extra bench")
+	var extraBenchPattern2 = flagSet.String("extra-bench-2", "", "optional third go benchmark regex")
+	var extraBenchtime2 = flagSet.String("extra-benchtime-2", "1x", "go benchmark benchtime for third bench")
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
 	var timeout = flagSet.Duration("timeout", defaultCaptureTimeout, "maximum capture runtime")
 	var progressInterval = flagSet.Duration("progress-interval", defaultProgressInterval, "progress log interval")
@@ -608,35 +629,6 @@ func commandCaptureGo(arguments []string) error {
 		*retryDelay = 0
 	}
 
-	var command = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *benchPattern, "-benchmem", "-benchtime=" + *benchtime, "-count=" + strconv.Itoa(*samples)}
-	var output, err = runCommandWithRetry(command, deadline, *progressInterval, "capture-go primary benchmarks", *retryAttempts, *retryDelay)
-	if err != nil {
-		return err
-	}
-
-	var parsed = parseGoBenchSamples(output)
-	var sourceCommand = strings.Join(command, " ")
-
-	if strings.TrimSpace(*extraBenchPattern) != "" {
-		if time.Until(deadline) <= 0 {
-			return fmt.Errorf("capture-go timed out before extra benchmarks (%s)", *timeout)
-		}
-		var extraCommand = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *extraBenchPattern, "-benchmem", "-benchtime=" + *extraBenchtime, "-count=" + strconv.Itoa(*samples)}
-		var extraOutput, extraErr = runCommandWithRetry(extraCommand, deadline, *progressInterval, "capture-go extra benchmarks", *retryAttempts, *retryDelay)
-		if extraErr != nil {
-			return extraErr
-		}
-		var extraParsed = parseGoBenchSamples(extraOutput)
-		for name, values := range extraParsed {
-			parsed[name] = append(parsed[name], values...)
-		}
-		sourceCommand = sourceCommand + " ; " + strings.Join(extraCommand, " ")
-	}
-
-	if len(parsed) == 0 {
-		return errors.New("no go benchmark samples parsed")
-	}
-
 	var required []string
 	for _, name := range strings.Split(strings.TrimSpace(*requiredBenchmarks), ",") {
 		var trimmed = strings.TrimSpace(name)
@@ -649,15 +641,173 @@ func commandCaptureGo(arguments []string) error {
 		required = requiredGoBenchmarksForProfile(strings.TrimSpace(*profile))
 	}
 
-	var parsedTailFile tailFile
-	parsedTailFile.Benchmarks = map[string]tailBenchmarkStats{}
-	for name := range parsed {
-		parsedTailFile.Benchmarks[name] = tailBenchmarkStats{}
-	}
-	var missing = missingRequiredBenchmarks(parsedTailFile, required)
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		return fmt.Errorf("capture-go missing required benchmarks: %s", strings.Join(missing, ", "))
+	var parsed map[string][]float64
+	var sourceCommand string
+	var captureAttempt int
+	for captureAttempt = 1; captureAttempt <= *retryAttempts; captureAttempt++ {
+		parsed = map[string][]float64{}
+		sourceCommand = ""
+		var combinedOutput strings.Builder
+
+		var command = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *benchPattern, "-benchmem", "-benchtime=" + *benchtime, "-count=" + strconv.Itoa(*samples)}
+		var output, err = runCommandWithRetry(command, deadline, *progressInterval, "capture-go primary benchmarks", 1, 0)
+		if err != nil {
+			if captureAttempt < *retryAttempts && isTransientCaptureGoError(output) {
+				if *retryDelay > 0 {
+					var sleep = *retryDelay
+					var remaining = time.Until(deadline)
+					if remaining <= 0 {
+						return err
+					}
+					if sleep > remaining {
+						sleep = remaining
+					}
+					time.Sleep(sleep)
+				}
+				continue
+			}
+			return err
+		}
+		_, _ = combinedOutput.WriteString(output)
+		var primaryParsed = parseGoBenchSamples(output)
+		for name, values := range primaryParsed {
+			parsed[name] = append(parsed[name], values...)
+		}
+		sourceCommand = strings.Join(command, " ")
+
+		if strings.TrimSpace(*extraBenchPattern) != "" {
+			if time.Until(deadline) <= 0 {
+				return fmt.Errorf("capture-go timed out before extra benchmarks (%s)", *timeout)
+			}
+			var extraCommand = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *extraBenchPattern, "-benchmem", "-benchtime=" + *extraBenchtime, "-count=" + strconv.Itoa(*samples)}
+			var extraOutput, extraErr = runCommandWithRetry(extraCommand, deadline, *progressInterval, "capture-go extra benchmarks", 1, 0)
+			if extraErr != nil {
+				if captureAttempt < *retryAttempts && isTransientCaptureGoError(extraOutput) {
+					if *retryDelay > 0 {
+						var sleep = *retryDelay
+						var remaining = time.Until(deadline)
+						if remaining <= 0 {
+							return extraErr
+						}
+						if sleep > remaining {
+							sleep = remaining
+						}
+						time.Sleep(sleep)
+					}
+					continue
+				}
+				return extraErr
+			}
+			_, _ = combinedOutput.WriteString(extraOutput)
+			var extraParsed = parseGoBenchSamples(extraOutput)
+			for name, values := range extraParsed {
+				parsed[name] = append(parsed[name], values...)
+			}
+			sourceCommand = sourceCommand + " ; " + strings.Join(extraCommand, " ")
+		}
+
+		if strings.TrimSpace(*extraBenchPattern2) != "" {
+			if time.Until(deadline) <= 0 {
+				return fmt.Errorf("capture-go timed out before third benchmark set (%s)", *timeout)
+			}
+			var extraCommand2 = []string{"go", "test", *packagePath, "-run", "^$", "-bench", *extraBenchPattern2, "-benchmem", "-benchtime=" + *extraBenchtime2, "-count=" + strconv.Itoa(*samples)}
+			var extraOutput2, extraErr2 = runCommandWithRetry(extraCommand2, deadline, *progressInterval, "capture-go extra benchmarks (set 2)", 1, 0)
+			if extraErr2 != nil {
+				if captureAttempt < *retryAttempts && isTransientCaptureGoError(extraOutput2) {
+					if *retryDelay > 0 {
+						var sleep = *retryDelay
+						var remaining = time.Until(deadline)
+						if remaining <= 0 {
+							return extraErr2
+						}
+						if sleep > remaining {
+							sleep = remaining
+						}
+						time.Sleep(sleep)
+					}
+					continue
+				}
+				return extraErr2
+			}
+			_, _ = combinedOutput.WriteString(extraOutput2)
+			var extraParsed2 = parseGoBenchSamples(extraOutput2)
+			for name, values := range extraParsed2 {
+				parsed[name] = append(parsed[name], values...)
+			}
+			sourceCommand = sourceCommand + " ; " + strings.Join(extraCommand2, " ")
+		}
+
+		if len(parsed) == 0 {
+			var noDataErr = errors.New("no go benchmark samples parsed")
+			if captureAttempt < *retryAttempts && isTransientCaptureGoError(combinedOutput.String()) {
+				if *retryDelay > 0 {
+					var sleep = *retryDelay
+					var remaining = time.Until(deadline)
+					if remaining <= 0 {
+						return noDataErr
+					}
+					if sleep > remaining {
+						sleep = remaining
+					}
+					time.Sleep(sleep)
+				}
+				continue
+			}
+			return noDataErr
+		}
+
+		var parsedTailFile tailFile
+		parsedTailFile.Benchmarks = map[string]tailBenchmarkStats{}
+		for name := range parsed {
+			parsedTailFile.Benchmarks[name] = tailBenchmarkStats{}
+		}
+		var missing = missingRequiredBenchmarks(parsedTailFile, required)
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			var missingErr = fmt.Errorf("capture-go missing required benchmarks: %s", strings.Join(missing, ", "))
+			if captureAttempt < *retryAttempts && isTransientCaptureGoError(combinedOutput.String()) {
+				if *retryDelay > 0 {
+					var sleep = *retryDelay
+					var remaining = time.Until(deadline)
+					if remaining <= 0 {
+						return missingErr
+					}
+					if sleep > remaining {
+						sleep = remaining
+					}
+					time.Sleep(sleep)
+				}
+				continue
+			}
+			return missingErr
+		}
+
+		parsedTailFile.Benchmarks = map[string]tailBenchmarkStats{}
+		for name, values := range parsed {
+			parsedTailFile.Benchmarks[name] = summarizeSamples(values)
+		}
+		var insufficient = insufficientRequiredBenchmarkSamples(parsedTailFile, required, *samples)
+		if len(insufficient) > 0 {
+			sort.Strings(insufficient)
+			var insufficientErr = fmt.Errorf("capture-go required benchmarks have insufficient samples (<%d): %s", *samples, strings.Join(insufficient, ", "))
+			if captureAttempt < *retryAttempts && isTransientCaptureGoError(combinedOutput.String()) {
+				if *retryDelay > 0 {
+					var sleep = *retryDelay
+					var remaining = time.Until(deadline)
+					if remaining <= 0 {
+						return insufficientErr
+					}
+					if sleep > remaining {
+						sleep = remaining
+					}
+					time.Sleep(sleep)
+				}
+				continue
+			}
+			return insufficientErr
+		}
+
+		break
 	}
 
 	var file tailFile
@@ -766,6 +916,12 @@ func commandCaptureC(arguments []string) error {
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return fmt.Errorf("capture-c missing required benchmarks: %s", strings.Join(missing, ", "))
+	}
+
+	var insufficient = insufficientRequiredBenchmarkSamples(file, required, *samples)
+	if len(insufficient) > 0 {
+		sort.Strings(insufficient)
+		return fmt.Errorf("capture-c required benchmarks have insufficient samples (<%d): %s", *samples, strings.Join(insufficient, ", "))
 	}
 
 	return writeJSON(*outPath, file)

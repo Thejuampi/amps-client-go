@@ -1,11 +1,14 @@
 package amps
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+const perfAPIConnectIterationCooldown = 5 * time.Millisecond
 
 func perfAPIIntegrationURI() string {
 	var uri = strings.TrimSpace(os.Getenv("PERF_FAKEAMPS_URI"))
@@ -17,13 +20,44 @@ func perfAPIIntegrationURI() string {
 
 func perfAPIRequireIntegrationEndpoint(b *testing.B, uri string) {
 	b.Helper()
+	var connectErr = perfAPIAwaitEndpoint(uri, 20, 100*time.Millisecond, perfAPIDefaultProbe)
+	if connectErr == nil {
+		return
+	}
+	b.Skipf("integration benchmark skipped: fake AMPS endpoint unavailable at %s (%v)", uri, connectErr)
+}
 
+func perfAPIDefaultProbe(uri string) error {
 	var probe = NewClient("perf-api-integration-probe")
 	var connectErr = probe.Connect(uri)
 	if connectErr != nil {
-		b.Skipf("integration benchmark skipped: fake AMPS endpoint unavailable at %s (%v)", uri, connectErr)
+		return connectErr
 	}
 	_ = probe.Close()
+	return nil
+}
+
+func perfAPIAwaitEndpoint(uri string, attempts int, delay time.Duration, probe func(string) error) error {
+	if probe == nil {
+		return errors.New("nil probe")
+	}
+	if attempts <= 0 {
+		attempts = 1
+	}
+
+	var err error
+	var attempt int
+	for attempt = 0; attempt < attempts; attempt++ {
+		err = probe(uri)
+		if err == nil {
+			return nil
+		}
+		if attempt+1 < attempts && delay > 0 {
+			time.Sleep(delay)
+		}
+	}
+
+	return err
 }
 
 func perfAPIConnectAndLogon(b *testing.B, clientName string, uri string) *Client {
@@ -159,6 +193,46 @@ func perfAPIWaitForProcessedAck(b *testing.B, waiter *perfAPIAckWaiter, operatio
 	b.Fatalf("%s failed", operation)
 }
 
+func TestPerfAPIAwaitEndpointSucceedsAfterRetry(t *testing.T) {
+	var calls int
+	var err = perfAPIAwaitEndpoint("tcp://127.0.0.1:19000/amps/json", 3, 0, func(uri string) error {
+		_ = uri
+		calls++
+		if calls < 3 {
+			return errors.New("connect failed")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("expected endpoint retry to succeed: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("expected three probe attempts, got %d", calls)
+	}
+}
+
+func TestPerfAPIAwaitEndpointReturnsLastError(t *testing.T) {
+	var calls int
+	var err = perfAPIAwaitEndpoint("tcp://127.0.0.1:19000/amps/json", 2, 0, func(uri string) error {
+		_ = uri
+		calls++
+		return errors.New("connect failed")
+	})
+	if err == nil {
+		t.Fatalf("expected endpoint retry failure")
+	}
+	if calls != 2 {
+		t.Fatalf("expected two probe attempts, got %d", calls)
+	}
+}
+
+func TestPerfAPIAwaitEndpointNilProbe(t *testing.T) {
+	var err = perfAPIAwaitEndpoint("tcp://127.0.0.1:19000/amps/json", 1, 0, nil)
+	if err == nil {
+		t.Fatalf("expected nil probe error")
+	}
+}
+
 func TestPerfAPIAckWaiterCoverage(t *testing.T) {
 	var waiter = newPerfAPIAckWaiter()
 
@@ -248,7 +322,7 @@ func BenchmarkAPIIntegrationClientConnectLogon(b *testing.B) {
 		if closeErr != nil {
 			b.Fatalf("close failed: %v", closeErr)
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(perfAPIConnectIterationCooldown)
 		b.StartTimer()
 	}
 	b.StopTimer()
@@ -349,7 +423,7 @@ func BenchmarkAPIIntegrationHAConnectAndLogon(b *testing.B) {
 		if disconnectErr != nil {
 			b.Fatalf("HA disconnect failed: %v", disconnectErr)
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(perfAPIConnectIterationCooldown)
 		b.StartTimer()
 	}
 	b.StopTimer()

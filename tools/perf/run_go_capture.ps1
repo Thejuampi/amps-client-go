@@ -7,6 +7,8 @@ param(
   [string]$Out = "tools/perf_tail_current.json",
   [string]$ExtraBench = "",
   [string]$ExtraBenchtime = "1x",
+  [string]$ExtraBench2 = "",
+  [string]$ExtraBenchtime2 = "1x",
   [int]$RetryAttempts = 3,
   [string]$RetryDelay = "2s",
   [string]$Timeout = "5m",
@@ -42,7 +44,9 @@ try {
     -retry-attempts $RetryAttempts `
     -retry-delay $RetryDelay `
     -extra-bench $ExtraBench `
-    -extra-benchtime $ExtraBenchtime
+    -extra-benchtime $ExtraBenchtime `
+    -extra-bench-2 $ExtraBench2 `
+    -extra-benchtime-2 $ExtraBenchtime2
 }
 finally {
   if ($null -ne $fakeampsProcess -and -not $fakeampsProcess.HasExited) {

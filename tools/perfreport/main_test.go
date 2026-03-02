@@ -83,6 +83,23 @@ func TestMissingRequiredBenchmarksDetection(t *testing.T) {
 	}
 }
 
+func TestInsufficientRequiredBenchmarkSamplesDetection(t *testing.T) {
+	var file = tailFile{
+		Benchmarks: map[string]tailBenchmarkStats{
+			"BenchmarkHeaderHotWrite":                  {N: 20},
+			"BenchmarkAPIIntegrationHAConnectAndLogon": {N: 12},
+		},
+	}
+
+	var insufficient = insufficientRequiredBenchmarkSamples(file, []string{"BenchmarkHeaderHotWrite", "BenchmarkAPIIntegrationHAConnectAndLogon"}, 20)
+	if len(insufficient) != 1 {
+		t.Fatalf("expected one insufficient benchmark, got %d", len(insufficient))
+	}
+	if insufficient[0] != "BenchmarkAPIIntegrationHAConnectAndLogon" {
+		t.Fatalf("unexpected insufficient benchmark %s", insufficient[0])
+	}
+}
+
 func TestValidateComparableFloor(t *testing.T) {
 	var summary = mergedSummary{Comparable: 4}
 	var err = validateComparableFloor(summary, 7)
