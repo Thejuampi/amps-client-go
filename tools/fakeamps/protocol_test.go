@@ -117,6 +117,9 @@ func TestBuildPublishAndSOWFrames(t *testing.T) {
 	if !strings.Contains(sowBody, `"c":"sow"`) || !strings.Contains(sowBody, `"query_id":"q1"`) {
 		t.Fatalf("unexpected sow record body: %s", sowBody)
 	}
+	if !strings.Contains(sowBody, `}{"t":"orders","query_id":"q1","k":"k1","bm":"bm","mt":"json","l":8}`) {
+		t.Fatalf("unexpected sow record structure: %s", sowBody)
+	}
 
 	oof := buildOOFDelivery(buf, "orders", "sub-1", "k1", "bm")
 	oofBody := string(oof[4:])

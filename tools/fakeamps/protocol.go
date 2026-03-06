@@ -402,14 +402,18 @@ func buildPublishDelivery(buf *bytes.Buffer, topic, subID string, payload []byte
 
 func buildSOWRecord(buf *bytes.Buffer, topic, queryID, sowKey, bookmark, messageType string, payload []byte) []byte {
 	startFrame(buf)
-	buf.WriteString(`{"c":"sow","t":"`)
+	buf.WriteString(`{"c":"sow"`)
+	writeField(buf, "query_id", queryID)
+	writeField(buf, "t", topic)
+	buf.WriteByte('}')
+
+	buf.WriteString(`{"t":"`)
 	buf.WriteString(topic)
 	buf.WriteByte('"')
 	writeField(buf, "query_id", queryID)
 	writeField(buf, "k", sowKey)
 	writeField(buf, "bm", bookmark)
 	writeField(buf, "mt", messageType)
-	// message_length "l" — tells the client parser where the SOW data ends.
 	buf.WriteString(`,"l":`)
 	buf.WriteString(strconv.Itoa(len(payload)))
 	buf.WriteByte('}')
