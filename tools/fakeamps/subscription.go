@@ -36,6 +36,7 @@ type subscription struct {
 type queueLease struct {
 	topic       string
 	subID       string
+	ownerConn   net.Conn
 	sowKey      string
 	bookmark    string
 	payload     []byte
@@ -52,6 +53,7 @@ type queuePendingMessage struct {
 	payload     []byte
 	timestamp   string
 	messageType string
+	deliveryReady bool
 }
 
 var (
@@ -69,12 +71,17 @@ var (
 )
 
 func addQueueLease(topic, subID, sowKey, bookmark string, payload []byte, timestamp, messageType string, leasePeriod time.Duration) {
+	addQueueLeaseForOwner(nil, topic, subID, sowKey, bookmark, payload, timestamp, messageType, leasePeriod)
+}
+
+func addQueueLeaseForOwner(ownerConn net.Conn, topic, subID, sowKey, bookmark string, payload []byte, timestamp, messageType string, leasePeriod time.Duration) {
 	queueLeasesMu.Lock()
 	defer queueLeasesMu.Unlock()
 
 	queueLeases[sowKey] = &queueLease{
 		topic:       topic,
 		subID:       subID,
+		ownerConn:   ownerConn,
 		sowKey:      sowKey,
 		bookmark:    bookmark,
 		payload:     payload,
@@ -137,6 +144,7 @@ func requeueMessage(lease *queueLease) {
 
 	var target = selectQueueRedeliveryTarget(lease)
 	if target == nil {
+		enqueuePendingQueueMessageWithDeliveryState(lease.topic, lease.sowKey, lease.bookmark, lease.payload, lease.timestamp, lease.messageType, true)
 		return
 	}
 
@@ -146,18 +154,31 @@ func requeueMessage(lease *queueLease) {
 		lease.payload, lease.bookmark, lease.timestamp, lease.sowKey, lease.messageType, true)
 	target.writer.send(frame)
 
-	addQueueLease(lease.topic, target.subID, lease.sowKey, lease.bookmark, lease.payload, lease.timestamp, lease.messageType, lease.leasePeriod)
+	addQueueLeaseForOwner(target.conn, lease.topic, target.subID, lease.sowKey, lease.bookmark, lease.payload, lease.timestamp, lease.messageType, lease.leasePeriod)
 }
 
-func queueInFlightCountForSub(subID string) int {
-	if subID == "" {
+func queueLeaseMatchesSubscription(lease *queueLease, sub *subscription) bool {
+	if lease == nil || sub == nil {
+		return false
+	}
+	if lease.topic != sub.topic || lease.subID != sub.subID {
+		return false
+	}
+	if lease.ownerConn != nil {
+		return lease.ownerConn == sub.conn
+	}
+	return true
+}
+
+func queueInFlightCountForSub(sub *subscription) int {
+	if sub == nil || sub.subID == "" {
 		return 0
 	}
 
 	var count int
 	queueLeasesMu.RLock()
 	for _, lease := range queueLeases {
-		if lease != nil && lease.subID == subID {
+		if queueLeaseMatchesSubscription(lease, sub) {
 			count++
 		}
 	}
@@ -174,7 +195,7 @@ func queueSubCanAccept(sub *subscription) bool {
 		return true
 	}
 
-	return queueInFlightCountForSub(sub.subID) < sub.maxBacklog
+	return queueInFlightCountForSub(sub) < sub.maxBacklog
 }
 
 func selectQueuePublishTarget(topic string, payload []byte, publisher net.Conn) *subscription {
@@ -234,6 +255,10 @@ func selectQueuePublishTarget(topic string, payload []byte, publisher net.Conn) 
 }
 
 func enqueuePendingQueueMessage(topic, sowKey, bookmark string, payload []byte, timestamp, messageType string) {
+	enqueuePendingQueueMessageWithDeliveryState(topic, sowKey, bookmark, payload, timestamp, messageType, false)
+}
+
+func enqueuePendingQueueMessageWithDeliveryState(topic, sowKey, bookmark string, payload []byte, timestamp, messageType string, deliveryReady bool) {
 	if topic == "" {
 		return
 	}
@@ -242,12 +267,13 @@ func enqueuePendingQueueMessage(topic, sowKey, bookmark string, payload []byte, 
 	copy(payloadCopy, payload)
 
 	var pending = &queuePendingMessage{
-		topic:       topic,
-		sowKey:      sowKey,
-		bookmark:    bookmark,
-		payload:     payloadCopy,
-		timestamp:   timestamp,
-		messageType: messageType,
+		topic:         topic,
+		sowKey:        sowKey,
+		bookmark:      bookmark,
+		payload:       payloadCopy,
+		timestamp:     timestamp,
+		messageType:   messageType,
+		deliveryReady: deliveryReady,
 	}
 
 	queuePendingMu.Lock()
@@ -297,7 +323,10 @@ func deliverQueueMessageToSubscription(message *queuePendingMessage, sub *subscr
 		return false
 	}
 
-	var deliveryPayload = fireOnDeliver(message.topic, message.payload, sub.subID)
+	var deliveryPayload = message.payload
+	if !message.deliveryReady {
+		deliveryPayload = fireOnDeliver(message.topic, message.payload, sub.subID)
+	}
 	var buf = getWriteBuf()
 	var frame = buildPublishDelivery(buf, message.topic, sub.subID,
 		deliveryPayload, message.bookmark, message.timestamp, message.sowKey, message.messageType, true)
@@ -308,7 +337,7 @@ func deliverQueueMessageToSubscription(message *queuePendingMessage, sub *subscr
 	if sub.leaseDuration > 0 {
 		leasePeriod = sub.leaseDuration
 	}
-	addQueueLease(message.topic, sub.subID, message.sowKey, message.bookmark, deliveryPayload, message.timestamp, message.messageType, leasePeriod)
+	addQueueLeaseForOwner(sub.conn, message.topic, sub.subID, message.sowKey, message.bookmark, deliveryPayload, message.timestamp, message.messageType, leasePeriod)
 	return true
 }
 
@@ -440,6 +469,45 @@ func handleQueueAck(sowKey string) *queueLease {
 
 func handleQueueAckByBookmark(bookmark string) *queueLease {
 	return removeQueueLeaseByBookmark(bookmark)
+}
+
+func releaseQueueLeasesForSubscriptions(localSubs map[string]*localSub) []*queueLease {
+	if len(localSubs) == 0 {
+		return nil
+	}
+
+	var queueSubscriptions = make(map[string]struct{})
+	for _, local := range localSubs {
+		if local == nil || local.sub == nil || !local.sub.isQueue {
+			continue
+		}
+		queueSubscriptions[local.sub.topic+"\x00"+local.sub.subID] = struct{}{}
+	}
+	if len(queueSubscriptions) == 0 {
+		return nil
+	}
+
+	queueLeasesMu.Lock()
+	defer queueLeasesMu.Unlock()
+
+	var released []*queueLease
+	for key, lease := range queueLeases {
+		if lease == nil {
+			continue
+		}
+		if _, ok := queueSubscriptions[lease.topic+"\x00"+lease.subID]; !ok {
+			continue
+		}
+
+		var local = localSubs[lease.subID]
+		if lease.ownerConn != nil && local != nil && local.sub != nil && lease.ownerConn != local.sub.conn {
+			continue
+		}
+		released = append(released, lease)
+		delete(queueLeases, key)
+	}
+
+	return released
 }
 
 // matches returns true if a published message should be delivered to this sub.

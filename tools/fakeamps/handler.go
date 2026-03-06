@@ -147,7 +147,11 @@ func handleConnection(conn net.Conn) {
 		for _, cb := range conflationBuffers {
 			cb.stop()
 		}
+		var releasedQueueLeases = releaseQueueLeasesForSubscriptions(localSubs)
 		unregisterAll(conn)
+		for _, lease := range releasedQueueLeases {
+			requeueMessage(lease)
+		}
 		writer.close()
 		_ = conn.Close()
 		globalConnectionsCurrent.Add(-1)

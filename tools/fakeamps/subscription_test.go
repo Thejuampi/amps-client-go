@@ -201,6 +201,114 @@ func TestHandleQueueAckByBookmarkRemovesLease(t *testing.T) {
 	}
 }
 
+func TestReleaseQueueLeasesForSubscriptionsMatchesTopicAndSubID(t *testing.T) {
+	var connA, peerA = net.Pipe()
+	defer connA.Close()
+	defer peerA.Close()
+
+	var topicA = "queue://orders.a"
+	var topicB = "queue://orders.b"
+	var localSubs = map[string]*localSub{
+		"shared-sub": {
+			topic: topicA,
+			sub: &subscription{
+				conn:    connA,
+				subID:   "shared-sub",
+				topic:   topicA,
+				isQueue: true,
+			},
+		},
+	}
+
+	addQueueLease(topicA, "shared-sub", "release-a", "bm-a", []byte(`{"id":1}`), "ts-a", "json", time.Second)
+	addQueueLease(topicB, "shared-sub", "keep-b", "bm-b", []byte(`{"id":2}`), "ts-b", "json", time.Second)
+	defer removeQueueLease("release-a")
+	defer removeQueueLease("keep-b")
+
+	var released = releaseQueueLeasesForSubscriptions(localSubs)
+	if len(released) != 1 || released[0].sowKey != "release-a" {
+		t.Fatalf("expected only matching topic/sub lease to be released, got %#v", released)
+	}
+	if getQueueLease("release-a") != nil {
+		t.Fatalf("expected matching lease to be removed from tracking")
+	}
+	if getQueueLease("keep-b") == nil {
+		t.Fatalf("expected non-matching topic lease to remain tracked")
+	}
+}
+
+func TestReleaseQueueLeasesForSubscriptionsMatchesConnectionIdentity(t *testing.T) {
+	var connA, peerA = net.Pipe()
+	var connB, peerB = net.Pipe()
+	defer connA.Close()
+	defer peerA.Close()
+	defer connB.Close()
+	defer peerB.Close()
+
+	var topic = "queue://orders.shared"
+	var localSubs = map[string]*localSub{
+		"shared-sub": {
+			topic: topic,
+			sub: &subscription{
+				conn:    connA,
+				subID:   "shared-sub",
+				topic:   topic,
+				isQueue: true,
+			},
+		},
+	}
+
+	addQueueLease(topic, "shared-sub", "release-a", "bm-a", []byte(`{"id":1}`), "ts-a", "json", time.Second)
+	addQueueLease(topic, "shared-sub", "keep-b", "bm-b", []byte(`{"id":2}`), "ts-b", "json", time.Second)
+
+	var lease = getQueueLease("keep-b")
+	if lease == nil {
+		t.Fatalf("expected second lease to exist")
+	}
+	lease.ownerConn = connB
+
+	defer removeQueueLease("release-a")
+	defer removeQueueLease("keep-b")
+
+	var released = releaseQueueLeasesForSubscriptions(localSubs)
+	if len(released) != 1 || released[0].sowKey != "release-a" {
+		t.Fatalf("expected only same-connection lease to be released, got %#v", released)
+	}
+	if getQueueLease("keep-b") == nil {
+		t.Fatalf("expected different-connection lease to remain tracked")
+	}
+	if getQueueLease("release-a") != nil {
+		t.Fatalf("expected released lease to be removed from tracking")
+	}
+	_ = connB
+	_ = peerB
+}
+
+func TestQueueSubCanAcceptIgnoresOtherConnectionWithSameSubID(t *testing.T) {
+	var connA, peerA = net.Pipe()
+	var connB, peerB = net.Pipe()
+	defer connA.Close()
+	defer peerA.Close()
+	defer connB.Close()
+	defer peerB.Close()
+
+	var subA = &subscription{conn: connA, subID: "shared-sub", topic: "queue://orders.shared", isQueue: true, maxBacklog: 1}
+	var subB = &subscription{conn: connB, subID: "shared-sub", topic: "queue://orders.shared", isQueue: true, maxBacklog: 1}
+
+	addQueueLease(subA.topic, subA.subID, "shared-key", "bm-shared", []byte(`{"id":1}`), "ts1", "json", time.Second)
+	defer removeQueueLease("shared-key")
+
+	var lease = getQueueLease("shared-key")
+	if lease == nil {
+		t.Fatalf("expected shared lease to exist")
+	}
+	lease.ownerConn = connA
+
+	if queueSubCanAccept(subB) == false {
+		t.Fatalf("expected backlog accounting to ignore lease owned by another connection with same sub_id")
+	}
+}
+
 func TestRequeueMessagePrefersDifferentQueueSubscriber(t *testing.T) {
 	var topic = "queue://orders.requeue"
 
@@ -327,6 +435,104 @@ func TestRequeueMessageRoundRobinAcrossQueueSubscribers(t *testing.T) {
 		t.Fatalf("expected second redelivery on subC, got %s", secondBody)
 	}
 	removeQueueLease("rr-key-2")
+}
+
+func TestRequeueMessageQueuesPendingWhenNoSubscriberAvailable(t *testing.T) {
+	var topic = "queue://orders.pending"
+	defer func() {
+		queuePendingMu.Lock()
+		delete(queuePending, topic)
+		queuePendingMu.Unlock()
+	}()
+
+	var lease = &queueLease{
+		topic:       topic,
+		subID:       "subA",
+		sowKey:      "pending-key",
+		bookmark:    "bm-pending",
+		payload:     []byte(`{"id":1}`),
+		timestamp:   "ts1",
+		messageType: "json",
+		leasePeriod: time.Second,
+	}
+
+	requeueMessage(lease)
+
+	var pending = popPendingQueueMessage(topic)
+	if pending == nil || pending.sowKey != "pending-key" {
+		t.Fatalf("expected expired lease to be preserved as pending queue message")
+	}
+	if pending.bookmark != "bm-pending" || pending.messageType != "json" || string(pending.payload) != `{"id":1}` {
+		t.Fatalf("expected pending queue message to preserve lease delivery metadata")
+	}
+}
+
+func TestPendingRequeueDoesNotApplyOnDeliverTwice(t *testing.T) {
+	resetActionsForTest()
+	defer resetActionsForTest()
+
+	registerAction(actionDef{
+		trigger:    triggerOnDeliver,
+		topicMatch: "queue://orders.pending.transform",
+		action:     actionTransform,
+		target:     "add_timestamp",
+	})
+
+	var topic = "queue://orders.pending.transform"
+	defer func() {
+		queuePendingMu.Lock()
+		delete(queuePending, topic)
+		queuePendingMu.Unlock()
+		removeQueueLease("transform-key")
+	}()
+
+	var connA, peerA = net.Pipe()
+	var connB, peerB = net.Pipe()
+	defer connA.Close()
+	defer peerA.Close()
+	defer connB.Close()
+	defer peerB.Close()
+
+	var stats connStats
+	var writerA = newConnWriter(connA, &stats)
+	var writerB = newConnWriter(connB, &stats)
+	defer writerA.close()
+	defer writerB.close()
+
+	var subA = &subscription{subID: "subA", topic: topic, writer: writerA, isQueue: true}
+	var subB = &subscription{subID: "subB", topic: topic, writer: writerB, isQueue: true}
+
+	var delivered = deliverQueueMessageToSubscription(&queuePendingMessage{
+		topic:       topic,
+		sowKey:      "transform-key",
+		bookmark:    "bm-transform",
+		payload:     []byte(`{"id":1}`),
+		timestamp:   "ts1",
+		messageType: "json",
+	}, subA)
+	if !delivered {
+		t.Fatalf("expected initial queue delivery to succeed")
+	}
+
+	var initialBody = readFrameBody(t, peerA, 500*time.Millisecond)
+	if strings.Count(initialBody, `"_delivered_at"`) != 1 {
+		t.Fatalf("expected initial queue delivery to apply on-deliver once, got %s", initialBody)
+	}
+
+	var lease = removeQueueLease("transform-key")
+	if lease == nil {
+		t.Fatalf("expected initial delivery to create queue lease")
+	}
+
+	requeueMessage(lease)
+	registerSubscription(topic, subB)
+	defer unregisterSubscription(topic, subB)
+	dispatchPendingQueueTopic(topic)
+
+	var requeuedBody = readFrameBody(t, peerB, 500*time.Millisecond)
+	if strings.Count(requeuedBody, `"_delivered_at"`) != 1 {
+		t.Fatalf("expected pending requeue to preserve single on-deliver transform, got %s", requeuedBody)
+	}
 }
 
 func tryReadFrameBodyFromConn(conn net.Conn, timeout time.Duration) (string, bool) {

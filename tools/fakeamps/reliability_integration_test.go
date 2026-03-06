@@ -1086,6 +1086,89 @@ func TestQueuePullOnlyDeliversOnPullRequest(t *testing.T) {
 	<-serverDone
 }
 
+func TestQueueDisconnectRequeuesLeaseImmediately(t *testing.T) {
+	var oldSow = sow
+	var oldJournal = journal
+	var oldQueue = *flagQueue
+	sow = newSOWCache()
+	journal = newMessageJournal(1000)
+	*flagQueue = true
+
+	defer func() {
+		sow = oldSow
+		journal = oldJournal
+		*flagQueue = oldQueue
+	}()
+
+	var listener, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	var serverDone = make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		for {
+			var conn, acceptErr = listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go handleConnection(conn)
+		}
+	}()
+
+	var consumerA, consumerAErr = net.Dial("tcp", listener.Addr().String())
+	if consumerAErr != nil {
+		t.Fatalf("failed to dial first consumer: %v", consumerAErr)
+	}
+	defer consumerA.Close()
+
+	var consumerB, consumerBErr = net.Dial("tcp", listener.Addr().String())
+	if consumerBErr != nil {
+		t.Fatalf("failed to dial second consumer: %v", consumerBErr)
+	}
+	defer consumerB.Close()
+
+	var publisher, publisherErr = net.Dial("tcp", listener.Addr().String())
+	if publisherErr != nil {
+		t.Fatalf("failed to dial publisher: %v", publisherErr)
+	}
+	defer publisher.Close()
+
+	sendFrame(t, consumerA, buildCommandFrame(`{"c":"logon","cid":"log-a","a":"processed","client_name":"queue-disconnect-a"}`, nil))
+	_ = readFrameBody(t, consumerA, 500*time.Millisecond)
+
+	sendFrame(t, consumerA, buildCommandFrame(`{"c":"subscribe","cid":"sub-a","sub_id":"queue-sub-a","t":"queue://orders.disconnect","a":"processed","o":"max_backlog=1"}`, nil))
+	_ = readFrameBody(t, consumerA, 500*time.Millisecond)
+
+	sendFrame(t, consumerB, buildCommandFrame(`{"c":"logon","cid":"log-b","a":"processed","client_name":"queue-disconnect-b"}`, nil))
+	_ = readFrameBody(t, consumerB, 500*time.Millisecond)
+
+	sendFrame(t, consumerB, buildCommandFrame(`{"c":"subscribe","cid":"sub-b","sub_id":"queue-sub-b","t":"queue://orders.disconnect","a":"processed","o":"max_backlog=1"}`, nil))
+	_ = readFrameBody(t, consumerB, 500*time.Millisecond)
+
+	sendFrame(t, publisher, buildCommandFrame(`{"c":"logon","cid":"log-p","a":"processed","client_name":"queue-disconnect-publisher"}`, nil))
+	_ = readFrameBody(t, publisher, 500*time.Millisecond)
+
+	sendFrame(t, publisher, buildCommandFrame(`{"c":"publish","cid":"pub-1","t":"queue://orders.disconnect","a":"processed","k":"disconnect-1","mt":"json"}`, []byte(`{"id":1}`)))
+	_ = readFrameBody(t, publisher, 500*time.Millisecond)
+
+	var firstDelivery = readFrameBody(t, consumerA, 500*time.Millisecond)
+	if !strings.Contains(firstDelivery, `"sub_id":"queue-sub-a"`) {
+		t.Fatalf("expected first queue delivery on consumer A, got %s", firstDelivery)
+	}
+
+	_ = consumerA.Close()
+
+	var redelivery = readFrameBody(t, consumerB, 500*time.Millisecond)
+	if !strings.Contains(redelivery, `"sub_id":"queue-sub-b"`) || !strings.Contains(redelivery, `"k":"disconnect-1"`) {
+		t.Fatalf("expected immediate queue redelivery on consumer B after disconnect, got %s", redelivery)
+	}
+
+	_ = listener.Close()
+	<-serverDone
+}
+
 func TestLogonChallengeFlowRequiresChallengeResponse(t *testing.T) {
 	resetAuthForTest()
 	configureAuth("alice:pwd")
