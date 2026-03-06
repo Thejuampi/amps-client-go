@@ -98,6 +98,30 @@ func TestCommandHelpTextAndCommandNames(t *testing.T) {
 	}
 }
 
+func TestMessageCommandNameVariants(t *testing.T) {
+	var tests = []struct {
+		command string
+		want    string
+	}{
+		{command: "publish", want: "publish"},
+		{command: "sow", want: "sow"},
+		{command: "subscribe", want: "subscribe"},
+		{command: "sow_and_subscribe", want: "sow_and_subscribe"},
+		{command: "sow_delete", want: "sow_delete"},
+		{command: "delta_publish", want: "delta_publish"},
+		{command: "delta_subscribe", want: "delta_subscribe"},
+		{command: "sow_and_delta_subscribe", want: "sow_and_delta_subscribe"},
+		{command: "ack", want: ""},
+	}
+
+	for _, test := range tests {
+		var message = amps.NewCommand(test.command).GetMessage()
+		if got := messageCommandName(message); got != test.want {
+			t.Fatalf("messageCommandName(%s) = %q, want %q", test.command, got, test.want)
+		}
+	}
+}
+
 func TestBuildAMPSPathAndStreamCommand(t *testing.T) {
 	if got := buildAMPSPath("amps"); got != "/amps" {
 		t.Fatalf("buildAMPSPath(amps) = %q", got)
@@ -194,5 +218,64 @@ func TestParseDelimiterReadInputAndFormatErrors(t *testing.T) {
 	}
 	if got := formatRate(0, 0); got != "Infinity" {
 		t.Fatalf("formatRate(0,0) = %q", got)
+	}
+}
+
+func TestRenderMessageFormatLegacyAndBraceEdgeCases(t *testing.T) {
+	var message = amps.NewCommand("publish").
+		SetTopic("orders").
+		SetBookmark("1|2|").
+		SetSubID("sub-2").
+		SetData([]byte("payload")).
+		GetMessage()
+
+	var rendered, err = renderMessageFormat("%c|%t|%b|%s|%m|%%", message)
+	if err != nil {
+		t.Fatalf("legacy renderMessageFormat returned error: %v", err)
+	}
+	if rendered != "publish|orders|1|2||sub-2|payload|%" {
+		t.Fatalf("legacy rendered = %q", rendered)
+	}
+
+	rendered, err = renderMessageFormat("{{{topic}}}|{sub_id}|{lease_period}|{timestamp}|{user_id}", message)
+	if err != nil {
+		t.Fatalf("brace renderMessageFormat returned error: %v", err)
+	}
+	if rendered != "{orders}|sub-2|||" {
+		t.Fatalf("brace rendered = %q", rendered)
+	}
+
+	if _, err := renderMessageFormat("{unterminated", message); err == nil {
+		t.Fatalf("expected unterminated brace token error")
+	}
+	if _, err := renderMessageFormat("broken}{data}", message); err == nil {
+		t.Fatalf("expected stray brace token error")
+	}
+	if rendered, err = renderMessageFormat("{data}", nil); err != nil || rendered != "" {
+		t.Fatalf("nil message render = %q, err = %v", rendered, err)
+	}
+}
+
+func TestFlagParserAndSparkBoolHelpers(t *testing.T) {
+	if value, err := parseSparkBool("yes"); err != nil || !value {
+		t.Fatalf("parseSparkBool(yes) = %t, %v", value, err)
+	}
+	if value, err := parseSparkBool("no"); err != nil || value {
+		t.Fatalf("parseSparkBool(no) = %t, %v", value, err)
+	}
+	if _, err := parseSparkBool("maybe"); err == nil {
+		t.Fatalf("expected parseSparkBool error for maybe")
+	}
+
+	var options connectionOptions
+	if err := parseConnectionArgs("ping", []string{"-server", "localhost:9007", "-secure=yes"}, &options); err != nil {
+		t.Fatalf("parseConnectionArgs secure=yes returned error: %v", err)
+	}
+	if !options.Secure {
+		t.Fatalf("secure=yes should enable secure mode")
+	}
+
+	if err := parseConnectionArgs("ping", []string{"-server", "localhost:9007", "extra"}, &options); err == nil {
+		t.Fatalf("expected parseConnectionArgs to reject unexpected positional args")
 	}
 }

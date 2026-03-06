@@ -1,8 +1,8 @@
 package gofercli
 
 import (
-	"fmt"
 	"flag"
+	"fmt"
 	"io"
 	"strings"
 	"time"
