@@ -86,6 +86,117 @@ type Client struct {
 	msgRouter       *MessageRouter
 }
 
+type socketOptions struct {
+	noDelay          bool
+	noDelaySet       bool
+	sendBuffer       int
+	sendBufferSet    bool
+	receiveBuffer    int
+	receiveBufferSet bool
+}
+
+type socketConfigurator interface {
+	SetNoDelay(noDelay bool) error
+	SetReadBuffer(bytes int) error
+	SetWriteBuffer(bytes int) error
+}
+
+func parseSocketOptions(values url.Values) (socketOptions, error) {
+	var options socketOptions
+	for key, rawValues := range values {
+		var value string
+		if len(rawValues) > 0 {
+			value = rawValues[0]
+		}
+		switch key {
+		case "", "mt":
+			continue
+		case "tcp_nodelay":
+			parsed, err := parseSocketBool(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.noDelay = parsed
+			options.noDelaySet = true
+		case "tcp_sndbuf":
+			parsed, err := parseSocketInt(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.sendBuffer = parsed
+			options.sendBufferSet = true
+		case "tcp_rcvbuf":
+			parsed, err := parseSocketInt(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.receiveBuffer = parsed
+			options.receiveBufferSet = true
+		default:
+			return socketOptions{}, fmt.Errorf("unsupported URI option %q", key)
+		}
+	}
+	return options, nil
+}
+
+func parseSocketBool(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "t", "true", "y", "yes":
+		return true, nil
+	case "0", "f", "false", "n", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid URI boolean value %q", raw)
+	}
+}
+
+func parseSocketInt(raw string) (int, error) {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("invalid URI integer value %q", raw)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("invalid URI integer value %q", raw)
+	}
+	return value, nil
+}
+
+func applySocketOptions(connection net.Conn, options socketOptions) error {
+	if connection == nil {
+		return nil
+	}
+
+	var underlying = connection
+	for {
+		wrapped, ok := underlying.(interface{ NetConn() net.Conn })
+		if !ok {
+			break
+		}
+		underlying = wrapped.NetConn()
+	}
+
+	configurable, ok := underlying.(socketConfigurator)
+	if !ok {
+		return nil
+	}
+	if options.noDelaySet {
+		if err := configurable.SetNoDelay(options.noDelay); err != nil {
+			return err
+		}
+	}
+	if options.sendBufferSet {
+		if err := configurable.SetWriteBuffer(options.sendBuffer); err != nil {
+			return err
+		}
+	}
+	if options.receiveBufferSet {
+		if err := configurable.SetReadBuffer(options.receiveBuffer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type _Result struct {
 	Status bool
 	Reason string
@@ -968,6 +1079,10 @@ func (client *Client) Connect(uri string) error {
 	if err != nil {
 		return NewError(InvalidURIError, err)
 	}
+	socketOptions, err := parseSocketOptions(parsedURI.Query())
+	if err != nil {
+		return NewError(InvalidURIError, err)
+	}
 	state := ensureClientState(client)
 	if state != nil {
 		state.lock.Lock()
@@ -1025,6 +1140,11 @@ func (client *Client) Connect(uri string) error {
 		if err != nil {
 			return NewError(ConnectionRefusedError, err)
 		}
+	}
+	if err := applySocketOptions(client.connection, socketOptions); err != nil {
+		_ = client.connection.Close()
+		client.connection = nil
+		return NewError(ConnectionError, err)
 	}
 
 	client.connected.Store(true)
