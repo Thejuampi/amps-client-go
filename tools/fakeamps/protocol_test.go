@@ -186,6 +186,19 @@ func TestBuildLogonCompletedAndStatsAcks(t *testing.T) {
 	}
 }
 
+func TestBuildAckSupportsRoutingAndBookmarkExtras(t *testing.T) {
+	var buf = bytes.NewBuffer(nil)
+	var frame = buildAck(buf, "completed", "cid-4", "success",
+		kv{k: "sub_id", v: "sub-1"},
+		kv{k: "bm", v: "10|1|"},
+	)
+	var body = string(frame[4:])
+
+	if !strings.Contains(body, `"sub_id":"sub-1"`) || !strings.Contains(body, `"bm":"10|1|"`) {
+		t.Fatalf("unexpected ack extras body: %s", body)
+	}
+}
+
 func TestSowKeyAndUtilityHelpers(t *testing.T) {
 	key := makeSowKey("orders", 42)
 	if !strings.Contains(key, "orders") {

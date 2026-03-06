@@ -16,7 +16,7 @@
   <a href="https://github.com/Thejuampi/amps-client-go/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Thejuampi/amps-client-go?style=social"></a>
 </p>
 
-Version: `0.2.5`
+Version: `0.3.0`
 
 ---
 
@@ -113,6 +113,16 @@ This isn't a minimal SDK. It's a full-surface client with behavior parity across
 
 ```bash
 go get github.com/Thejuampi/amps-client-go/amps
+```
+
+## Spark-Compatible CLI
+
+`gofer` is the repository's spark-compatible command-line client.
+
+```bash
+go run ./cmd/gofer help
+go run ./cmd/gofer ping -server localhost:9007 -type json
+go run ./cmd/gofer publish -server localhost:9007 -type json -topic orders -data '{"id":1}'
 ```
 
 ## Quick Start

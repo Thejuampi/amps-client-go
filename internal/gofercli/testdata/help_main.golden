@@ -1,0 +1,16 @@
+gofer - AMPS spark-compatible command line client
+
+Usage:
+  gofer help
+  gofer help <command>
+  gofer <command> [options]
+
+Commands:
+  ping              Test connectivity to an AMPS instance
+  publish           Publish one or more messages to a topic
+  subscribe         Subscribe to a topic and stream matching messages
+  sow               Query the State of the World for a topic
+  sow_and_subscribe Query SOW, then continue streaming live updates
+  sow_delete        Delete matching SOW records
+
+Use "gofer help <command>" for command details.

@@ -120,7 +120,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 | **Logon** | Processed ack with `version`, `client_name`, correlation ID echo |
 | **Subscribe** | With content filter, topic wildcards, replace option; processed ack |
 | **Delta Subscribe** | Receives OOF on record delete AND filter mismatch |
-| **Bookmark Subscribe** | Journal replay from position with content filtering |
+| **Bookmark Subscribe** | Journal replay from position with content filtering and terminal completed ack carrying replay bookmark metadata |
 | **Unsubscribe** | By subID, by multiple subIDs (sids), or "all" |
 | **Publish** | Processed + persisted acks (echo seq ID); journal + SOW upsert |
 | **Delta Publish** | Recursive JSON merge-patch into existing SOW record |
@@ -129,9 +129,9 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 | **SOW and Delta Subscribe** | SOW snapshot + delta subscription with OOF |
 | **SOW Delete** | By key, sow_keys, filter, or payload data; records_deleted count; OOF to delta subs |
 | **Flush** | Processed + completed acks |
-| **Heartbeat** | Processed ack + beat echo; server-side liveness watchdog |
+| **Heartbeat** | Processed ack + `start,<interval>` broker heartbeats + beat echo + server-side liveness watchdog |
 | **Queue Topics** | `queue://` prefix adds `lease_period`; supports `max_backlog=<n>` backpressure and `pull` delivery mode via `sow_and_subscribe` + `top_n` |
-| **Client Ack** | Accepted silently |
+| **Client Ack** | Queue lease release by key or bookmark, including batched comma-separated bookmark acknowledgements |
 | **Group Begin/End** | SOW batch markers + accepted as commands |
 | **Start/Stop Timer** | Processed ack |
 | **Pause / Resume** | Suspend/resume subscription delivery |

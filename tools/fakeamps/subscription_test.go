@@ -201,6 +201,32 @@ func TestHandleQueueAckByBookmarkRemovesLease(t *testing.T) {
 	}
 }
 
+func TestHandleQueueAckBatchRemovesMultipleLeases(t *testing.T) {
+	addQueueLease("orders", "sub1", "ack-batch-1", "bm-batch-1", []byte(`{"id":1}`), "ts1", "json", time.Second)
+	addQueueLease("orders", "sub1", "ack-batch-2", "bm-batch-2", []byte(`{"id":2}`), "ts2", "json", time.Second)
+
+	var released = handleQueueAckBatch("ack-batch-1, ack-batch-2")
+	if len(released) != 2 {
+		t.Fatalf("expected two released leases, got %d", len(released))
+	}
+	if getQueueLease("ack-batch-1") != nil || getQueueLease("ack-batch-2") != nil {
+		t.Fatal("expected queue leases to be removed by batched key ack")
+	}
+}
+
+func TestHandleQueueAckByBookmarkBatchRemovesMultipleLeases(t *testing.T) {
+	addQueueLease("orders", "sub1", "ack-bm-batch-1", "bm-batch-a", []byte(`{"id":1}`), "ts1", "json", time.Second)
+	addQueueLease("orders", "sub1", "ack-bm-batch-2", "bm-batch-b", []byte(`{"id":2}`), "ts2", "json", time.Second)
+
+	var released = handleQueueAckByBookmarkBatch("bm-batch-a, bm-batch-b")
+	if len(released) != 2 {
+		t.Fatalf("expected two released leases, got %d", len(released))
+	}
+	if getQueueLease("ack-bm-batch-1") != nil || getQueueLease("ack-bm-batch-2") != nil {
+		t.Fatal("expected queue leases to be removed by batched bookmark ack")
+	}
+}
+
 func TestReleaseQueueLeasesForSubscriptionsMatchesTopicAndSubID(t *testing.T) {
 	var connA, peerA = net.Pipe()
 	defer connA.Close()

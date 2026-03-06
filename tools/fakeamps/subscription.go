@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,12 +48,12 @@ type queueLease struct {
 }
 
 type queuePendingMessage struct {
-	topic       string
-	sowKey      string
-	bookmark    string
-	payload     []byte
-	timestamp   string
-	messageType string
+	topic         string
+	sowKey        string
+	bookmark      string
+	payload       []byte
+	timestamp     string
+	messageType   string
 	deliveryReady bool
 }
 
@@ -467,8 +468,60 @@ func handleQueueAck(sowKey string) *queueLease {
 	return removeQueueLease(sowKey)
 }
 
+func handleQueueAckBatch(sowKeys string) []*queueLease {
+	var values = splitQueueAckValues(sowKeys)
+	if len(values) == 0 {
+		return nil
+	}
+
+	var released []*queueLease
+	for _, value := range values {
+		var lease = handleQueueAck(value)
+		if lease != nil {
+			released = append(released, lease)
+		}
+	}
+
+	return released
+}
+
 func handleQueueAckByBookmark(bookmark string) *queueLease {
 	return removeQueueLeaseByBookmark(bookmark)
+}
+
+func handleQueueAckByBookmarkBatch(bookmarks string) []*queueLease {
+	var values = splitQueueAckValues(bookmarks)
+	if len(values) == 0 {
+		return nil
+	}
+
+	var released []*queueLease
+	for _, value := range values {
+		var lease = handleQueueAckByBookmark(value)
+		if lease != nil {
+			released = append(released, lease)
+		}
+	}
+
+	return released
+}
+
+func splitQueueAckValues(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+
+	var parts = strings.Split(raw, ",")
+	var values = make([]string, 0, len(parts))
+	for _, part := range parts {
+		var value = strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		values = append(values, value)
+	}
+
+	return values
 }
 
 func releaseQueueLeasesForSubscriptions(localSubs map[string]*localSub) []*queueLease {

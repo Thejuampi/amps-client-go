@@ -1,0 +1,38 @@
+gofer publish - publish one or more messages to a topic
+
+Usage:
+  gofer publish -server <host[:port]|uri> -topic <topic> [options]
+
+Options:
+  -server string
+        AMPS server address or full URI
+  -topic string
+        Destination topic
+  -data string
+        Publish a single inline payload
+  -file string
+        Read payloads from a file or ZIP archive
+  -delimiter value
+        Split text input on the provided delimiter byte (default newline)
+  -delta
+        Use delta_publish instead of publish
+  -copy string
+        Copy published payloads to a secondary AMPS server
+  -type string
+        Message type selector (spark-compatible alias)
+  -prot string
+        Message type selector (spark-compatible alias)
+  -proto string
+       Protocol or message type selector
+  -secure value
+       Connection security preference (true/false/1/0/yes/no; bare -secure implies true)
+  -urischeme string
+       Explicit URI scheme override
+  -uriopts string
+       Extra URI query options to append
+  -authenticator string
+       Authenticator factory name (for example com.crankuptheamps.spark.DefaultAuthenticatorFactory)
+  -rate value
+       Maximum publish rate in messages per second
+  -timeout duration
+        Connection and logon timeout (default 10s)

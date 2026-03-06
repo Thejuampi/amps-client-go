@@ -159,6 +159,16 @@ func commandToMessage(command *Command) *Message {
 	if command.header.bookmark != nil {
 		message.header.bookmark = append([]byte(nil), command.header.bookmark...)
 	}
+	if command.header.correlationID != nil {
+		message.header.correlationID = append([]byte(nil), command.header.correlationID...)
+	}
+	if command.header.expiration != nil {
+		var expiration = *command.header.expiration
+		message.header.expiration = &expiration
+	}
+	if command.header.sowKey != nil {
+		message.header.sowKey = append([]byte(nil), command.header.sowKey...)
+	}
 	if command.header.subID != nil {
 		message.header.subID = append([]byte(nil), command.header.subID...)
 	}

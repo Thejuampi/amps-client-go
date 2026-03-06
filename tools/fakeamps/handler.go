@@ -132,10 +132,16 @@ func handleConnection(conn net.Conn) {
 	var connClientName string         // set on logon
 	var heartbeatWatchdog *time.Timer // liveness check
 	var heartbeatTimeout time.Duration
+	var heartbeatTickerStop chan struct{}
 	var pendingChallengeUser string
 	var pendingChallengeNonce string
 
 	defer func() {
+		if heartbeatTickerStop != nil {
+			close(heartbeatTickerStop)
+			heartbeatTickerStop = nil
+		}
+
 		timerMu.Lock()
 		for timerID, stop := range timerStops {
 			close(stop)
@@ -396,7 +402,8 @@ func handleConnection(conn net.Conn) {
 			}
 
 			if wantProcessed {
-				writer.send(buildAck(buf, "processed", commandID, "success"))
+				writer.send(buildAck(buf, "processed", commandID, "success",
+					kv{k: "sub_id", v: effectiveSubID}))
 			}
 
 			// Bookmark replay.
@@ -404,14 +411,23 @@ func handleConnection(conn net.Conn) {
 				afterSeq := parseBookmarkSeq(bookmark)
 				entries := journal.replayFrom(topic, afterSeq)
 				mt := getTopicMessageType(topic)
+				var completedBookmark = bookmark
 				for _, e := range entries {
 					if filter != "" && !evaluateFilter(filter, e.payload) {
 						continue
 					}
+					completedBookmark = e.bookmark
 					deliveryPayload := fireOnDeliver(topic, e.payload, effectiveSubID)
 					frame := buildPublishDelivery(buf, topic, effectiveSubID,
 						deliveryPayload, e.bookmark, e.timestamp, e.sowKey, mt, isQueueTopic)
 					writer.send(frame)
+				}
+				if wantCompleted {
+					var extras = []kv{{k: "sub_id", v: effectiveSubID}}
+					if completedBookmark != "" {
+						extras = append(extras, kv{k: "bm", v: completedBookmark})
+					}
+					writer.send(buildAck(buf, "completed", commandID, "success", extras...))
 				}
 			}
 
@@ -429,7 +445,8 @@ func handleConnection(conn net.Conn) {
 			queryID := firstNonEmpty(header.queryID, subID, commandID)
 
 			if wantProcessed {
-				writer.send(buildAck(buf, "processed", commandID, "success"))
+				writer.send(buildAck(buf, "processed", commandID, "success",
+					kv{k: "query_id", v: queryID}))
 			}
 
 			recordCount := 0
@@ -827,6 +844,46 @@ func handleConnection(conn net.Conn) {
 			if wantProcessed {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
 			}
+
+			var heartbeatInterval, hasHeartbeatStart = parseHeartbeatStartInterval(options)
+			if hasHeartbeatStart {
+				if heartbeatInterval <= 0 {
+					heartbeatInterval = time.Second
+				}
+				heartbeatTimeout = heartbeatInterval * 3
+				if heartbeatTimeout < heartbeatInterval {
+					heartbeatTimeout = heartbeatInterval
+				}
+
+				if heartbeatTickerStop != nil {
+					close(heartbeatTickerStop)
+				}
+				heartbeatTickerStop = make(chan struct{})
+
+				if heartbeatWatchdog != nil {
+					heartbeatWatchdog.Stop()
+				}
+				heartbeatWatchdog = time.AfterFunc(heartbeatTimeout, func() {
+					log.Printf("fakeamps: heartbeat timeout for %s, closing connection", remoteAddr)
+					_ = conn.Close()
+				})
+
+				go func(stop <-chan struct{}, period time.Duration) {
+					var ticker = time.NewTicker(period)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-stop:
+							return
+						case <-ticker.C:
+							var heartbeatBuf = getWriteBuf()
+							var frame = buildHeartbeatFrame(heartbeatBuf)
+							writer.send(frame)
+							putWriteBuf(heartbeatBuf)
+						}
+					}
+				}(heartbeatTickerStop, heartbeatInterval)
+			}
 			if strings.Contains(options, "beat") {
 				writer.send(buildHeartbeatFrame(buf))
 
@@ -850,14 +907,23 @@ func handleConnection(conn net.Conn) {
 		// ---------------------------------------------------------------
 		case "ack":
 			// Queue acknowledgment from client.
-			var released *queueLease
+			var released []*queueLease
 			if sowKey != "" {
-				released = handleQueueAck(sowKey)
+				released = handleQueueAckBatch(sowKey)
 			} else if bookmark != "" {
-				released = handleQueueAckByBookmark(bookmark)
+				released = handleQueueAckByBookmarkBatch(bookmark)
 			}
-			if released != nil {
-				dispatchPendingQueueTopic(released.topic)
+			if len(released) > 0 {
+				var topics = make(map[string]struct{})
+				for _, lease := range released {
+					if lease == nil || lease.topic == "" {
+						continue
+					}
+					topics[lease.topic] = struct{}{}
+				}
+				for topic := range topics {
+					dispatchPendingQueueTopic(topic)
+				}
 			}
 
 		// ---------------------------------------------------------------
@@ -1109,6 +1175,50 @@ func parseTimerInterval(options string) time.Duration {
 		if millis, err := strconv.Atoi(raw); err == nil && millis > 0 {
 			return time.Duration(millis) * time.Millisecond
 		}
+	}
+
+	return time.Second
+}
+
+func parseHeartbeatStartInterval(options string) (time.Duration, bool) {
+	if options == "" {
+		return 0, false
+	}
+
+	var parts = strings.Split(options, ",")
+	for index, token := range parts {
+		var part = strings.TrimSpace(token)
+		if part == "" {
+			continue
+		}
+
+		if part == "start" {
+			if index+1 >= len(parts) {
+				return time.Second, true
+			}
+			return parseHeartbeatIntervalValue(parts[index+1]), true
+		}
+
+		if strings.HasPrefix(part, "start=") {
+			return parseHeartbeatIntervalValue(strings.TrimPrefix(part, "start=")), true
+		}
+	}
+
+	return 0, false
+}
+
+func parseHeartbeatIntervalValue(raw string) time.Duration {
+	var value = strings.TrimSpace(raw)
+	if value == "" {
+		return time.Second
+	}
+
+	if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
+		return duration
+	}
+
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
 	}
 
 	return time.Second
