@@ -39,10 +39,20 @@ type peerConn struct {
 	conn       net.Conn
 	mu         sync.Mutex
 	alive      bool
+	mode       string
+	deferred   []replicatedPublish
 	stopCh     chan struct{}
 	pendingMu  sync.Mutex
 	pendingAck map[string]chan headerFields
 	nextCID    atomic.Uint64
+}
+
+type replicatedPublish struct {
+	topic       string
+	payload     []byte
+	messageType string
+	sowKey      string
+	waitSyncAck bool
 }
 
 var (
@@ -61,7 +71,7 @@ func initReplication(peerAddrs string, instanceID string) {
 		if addr == "" {
 			continue
 		}
-		p := &peerConn{addr: addr, stopCh: make(chan struct{}), pendingAck: make(map[string]chan headerFields)}
+		p := &peerConn{addr: addr, mode: "active", stopCh: make(chan struct{}), pendingAck: make(map[string]chan headerFields)}
 		replicaPeers = append(replicaPeers, p)
 		go p.connectLoop()
 	}
@@ -174,6 +184,9 @@ func applyReplicatedPublish(header headerFields, payload []byte) {
 		bm = makeBookmark(seq)
 	}
 
+	var evictedRecord *sowRecord
+	var previousWorkspacePayload []byte
+	var currentWorkspacePayload = payload
 	if sow != nil && topic != "" {
 		if sowKey == "" {
 			sowKey = makeSowKey(topic, seq)
@@ -181,14 +194,17 @@ func applyReplicatedPublish(header headerFields, payload []byte) {
 		ts := makeTimestamp()
 		isDelta := header.c == "delta_publish"
 		if isDelta {
-			sow.deltaUpsert(topic, sowKey, payload, bm, ts, seq, 0)
+			_, _, previousWorkspacePayload, currentWorkspacePayload, evictedRecord = sow.deltaUpsertWithPrevious(topic, sowKey, payload, bm, ts, seq, 0)
 		} else {
-			sow.upsert(topic, sowKey, payload, bm, ts, seq, 0)
+			_, _, previousWorkspacePayload, evictedRecord = sow.upsertWithEvicted(topic, sowKey, payload, bm, ts, seq, 0)
 		}
 	}
 
 	// Fan-out to local subscribers.
 	ts := makeTimestamp()
+	if topic != "" {
+		workspaceSessions.NotifyRow(topic, previousWorkspacePayload, currentWorkspacePayload, bm, ts, sowKey)
+	}
 	isQueue := strings.HasPrefix(topic, "queue://")
 	buf := getWriteBuf()
 	defer putWriteBuf(buf)
@@ -199,6 +215,9 @@ func applyReplicatedPublish(header headerFields, payload []byte) {
 			payload, bm, ts, sowKey, mt, queueMode)
 		sub.writer.send(frame)
 	})
+	if evictedRecord != nil {
+		workspaceSessions.NotifyRemove(topic, evictedRecord.sowKey, evictedRecord.bookmark, "evicted")
+	}
 }
 
 const replicationSyncAckTimeout = 2 * time.Second
@@ -243,6 +262,27 @@ func (p *peerConn) handlePeerAck(header headerFields) {
 }
 
 func (p *peerConn) writeReplicatedPublish(topic string, payload []byte, messageType, sowKey string, waitSyncAck bool) error {
+	if p == nil {
+		return errors.New("nil replication peer")
+	}
+	p.mu.Lock()
+	if p.mode == "downgraded" {
+		p.deferred = append(p.deferred, replicatedPublish{
+			topic:       topic,
+			payload:     append([]byte(nil), payload...),
+			messageType: messageType,
+			sowKey:      sowKey,
+			waitSyncAck: waitSyncAck,
+		})
+		p.mu.Unlock()
+		return nil
+	}
+	p.mu.Unlock()
+
+	return p.writeReplicatedPublishNow(topic, payload, messageType, sowKey, waitSyncAck)
+}
+
+func (p *peerConn) writeReplicatedPublishNow(topic string, payload []byte, messageType, sowKey string, waitSyncAck bool) error {
 	if p == nil {
 		return errors.New("nil replication peer")
 	}
@@ -304,6 +344,39 @@ func (p *peerConn) writeReplicatedPublish(topic string, payload []byte, messageT
 	case <-time.After(replicationSyncAckTimeout):
 		p.clearPendingAck(commandID)
 		return errors.New("replication sync ack timed out")
+	}
+}
+
+func (p *peerConn) resumeDeferredPublishes(targetMode string) error {
+	if p == nil {
+		return nil
+	}
+
+	for {
+		p.mu.Lock()
+		if p.mode != "downgraded" {
+			p.mu.Unlock()
+			return nil
+		}
+		if len(p.deferred) == 0 {
+			p.mode = targetMode
+			p.mu.Unlock()
+			return nil
+		}
+		var deferred = append([]replicatedPublish(nil), p.deferred...)
+		p.deferred = nil
+		p.mu.Unlock()
+
+		var index int
+		for index = 0; index < len(deferred); index++ {
+			var publish = deferred[index]
+			if err := p.writeReplicatedPublishNow(publish.topic, publish.payload, publish.messageType, publish.sowKey, publish.waitSyncAck); err != nil {
+				p.mu.Lock()
+				p.deferred = append(deferred[index:], p.deferred...)
+				p.mu.Unlock()
+				return err
+			}
+		}
 	}
 }
 

@@ -55,6 +55,8 @@ type Client struct {
 	heartbeatTimestamp uint
 	heartbeatTimeoutID *time.Timer
 	heartbeatLock      sync.Mutex
+	disconnectCh       chan struct{}
+	disconnectLock     sync.Mutex
 
 	// Preferred lock order when multiple locks are required:
 	// client.lock -> client parity state lock -> store-specific locks.
@@ -279,6 +281,53 @@ func (client *Client) signalSyncAckProcessing(result _Result) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func newClientSignal(closed bool) chan struct{} {
+	var signal = make(chan struct{})
+	if closed {
+		close(signal)
+	}
+	return signal
+}
+
+func clientSignalClosed(signal <-chan struct{}) bool {
+	if signal == nil {
+		return false
+	}
+	select {
+	case <-signal:
+		return true
+	default:
+		return false
+	}
+}
+
+func (client *Client) currentDisconnectSignal() <-chan struct{} {
+	client.disconnectLock.Lock()
+	defer client.disconnectLock.Unlock()
+	if client.disconnectCh == nil {
+		client.disconnectCh = newClientSignal(true)
+	}
+	return client.disconnectCh
+}
+
+func (client *Client) resetDisconnectSignal() {
+	client.disconnectLock.Lock()
+	client.disconnectCh = newClientSignal(false)
+	client.disconnectLock.Unlock()
+}
+
+func (client *Client) signalDisconnect() {
+	client.disconnectLock.Lock()
+	defer client.disconnectLock.Unlock()
+	if client.disconnectCh == nil {
+		client.disconnectCh = newClientSignal(true)
+		return
+	}
+	if !clientSignalClosed(client.disconnectCh) {
+		close(client.disconnectCh)
 	}
 }
 
@@ -836,6 +885,7 @@ func (client *Client) onConnectionError(err error) {
 	client.connected.Store(false)
 	client.stopped.Store(true)
 	client.logging = false
+	client.signalDisconnect()
 	client.notifyConnectionState(ConnectionStateDisconnected)
 	if state := ensureClientState(client); state != nil {
 		state.lock.Lock()
@@ -938,20 +988,15 @@ func (client *Client) establishHeartbeat() (hbError error) {
 		}
 		timer := time.NewTimer(waitTimeout)
 		defer timer.Stop()
-		poll := time.NewTicker(50 * time.Millisecond)
-		defer poll.Stop()
+		var disconnectCh = client.currentDisconnectSignal()
 
-		for {
-			select {
-			case err := <-done:
-				return err
-			case <-poll.C:
-				if !client.connected.Load() {
-					return NewError(DisconnectedError, "Client disconnected while waiting for heartbeat acknowledgement")
-				}
-			case <-timer.C:
-				return NewError(TimedOutError, "heartbeat establishment timed out waiting for processed ack")
-			}
+		select {
+		case err := <-done:
+			return err
+		case <-disconnectCh:
+			return NewError(DisconnectedError, "Client disconnected while waiting for heartbeat acknowledgement")
+		case <-timer.C:
+			return NewError(TimedOutError, "heartbeat establishment timed out waiting for processed ack")
 		}
 	}
 
@@ -1147,6 +1192,7 @@ func (client *Client) Connect(uri string) error {
 		return NewError(ConnectionError, err)
 	}
 
+	client.resetDisconnectSignal()
 	client.connected.Store(true)
 	client.notifyConnectionState(ConnectionStateConnected)
 
@@ -1852,20 +1898,15 @@ func (client *Client) SowAndDeltaSubscribeAsync(messageHandler func(*Message) er
 func (client *Client) waitForStatsAck(result <-chan _Stats, operation string) (*Message, error) {
 	timer := time.NewTimer(defaultStatsAckTimeout)
 	defer timer.Stop()
-	poll := time.NewTicker(50 * time.Millisecond)
-	defer poll.Stop()
+	var disconnectCh = client.currentDisconnectSignal()
 
-	for {
-		select {
-		case stats := <-result:
-			return stats.Stats, stats.Error
-		case <-poll.C:
-			if !client.connected.Load() {
-				return nil, NewError(DisconnectedError, "Client disconnected while waiting for "+operation+" ack")
-			}
-		case <-timer.C:
-			return nil, NewError(TimedOutError, operation+" timed out waiting for stats ack")
-		}
+	select {
+	case stats := <-result:
+		return stats.Stats, stats.Error
+	case <-disconnectCh:
+		return nil, NewError(DisconnectedError, "Client disconnected while waiting for "+operation+" ack")
+	case <-timer.C:
+		return nil, NewError(TimedOutError, operation+" timed out waiting for stats ack")
 	}
 }
 
@@ -2002,6 +2043,7 @@ func (client *Client) Disconnect() (err error) {
 	client.connected.Store(false)
 	client.logging = false
 	client.stopped.Store(true)
+	client.signalDisconnect()
 	client.notifyConnectionState(ConnectionStateShutdown)
 
 	client.routes = new(sync.Map)
@@ -2072,6 +2114,7 @@ func NewClient(clientName ...string) *Client {
 		message:         &Message{header: new(_Header)},
 		routes:          new(sync.Map),
 		messageStreams:  new(sync.Map),
+		disconnectCh:    newClientSignal(true),
 	}
 	client.errorHandler = defaultErrorHandler(client)
 	client.nameHashValue = unsafeStringHash(client.nameHash)

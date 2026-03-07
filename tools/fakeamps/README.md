@@ -4,6 +4,76 @@
 
 - Isolated under `tools/` — **not** part of the exported `amps-client-go` client API.
 - Models real AMPS server behavior including stateful message journal, SOW cache, content filtering, topic wildcards, delta merge, queue topics, per-topic message types, views, actions, replication exercises, authentication, and administration.
+- Can now bootstrap from AMPS-style XML configuration files with recursive includes, `${ENV}` expansion, sample/verify/dump modes, and a `FakeAMPS` extension block for harness-specific runtime options.
+
+## AMPS XML Configuration
+
+`fakeamps` supports XML-driven startup in addition to the original flag-only mode:
+
+```bash
+go run ./tools/fakeamps --sample-config
+go run ./tools/fakeamps --verify-config config.xml
+go run ./tools/fakeamps --dump-config config.xml
+go run ./tools/fakeamps --config config.xml
+go run ./tools/fakeamps config.xml
+```
+
+Implemented XML processing behavior:
+
+- Recursive `<Include>...</Include>` expansion with include-cycle detection
+- `${ENV_NAME}` substitution from the process environment
+- `ConfigIncludeCommentDefault` comment wrapping in dumped/expanded XML
+- `RequiredMinimumVersion` validation against the configured fakeamps runtime version
+- Case-insensitive interval and scaled-integer parsing for common AMPS-style values such as `20s`, `5m`, `10k`, and `3m`
+- Deterministic validation failures for unsupported custom modules and module-backed UDFs
+
+Core AMPS sections currently bound directly into runtime behavior:
+
+- `<Transports>` for the primary listener address
+- `<Admin>` for the admin/dashboard listener, sampling interval, history persistence file, SQL transport validation, auth mode, anonymous paths, session options, response headers, and TLS inputs
+- `<Logging>` for `stdout`, `stderr`, and file-backed log targets
+
+Harness-specific behavior belongs under:
+
+```xml
+<Extensions>
+  <FakeAMPS>
+    <Version>6.3.1.0</Version>
+    <SOWEnabled>true</SOWEnabled>
+    <JournalEnabled>true</JournalEnabled>
+    <JournalMax>1000000</JournalMax>
+    <QueueEnabled>true</QueueEnabled>
+    <Auth>alice:pwd,bob:secret</Auth>
+    <Peers>127.0.0.1:19001,127.0.0.1:19002</Peers>
+    <View>orders_view:orders:/region = 'US'::</View>
+    <Action>on-publish:orders:log:archive</Action>
+  </FakeAMPS>
+</Extensions>
+```
+
+`/admin/status` now exposes the resolved effective config summary when XML startup is used.
+
+## Monitoring Dashboard
+
+When started with `-admin :8085` or an `<Admin><InetAddr>...</InetAddr></Admin>` XML block, `fakeamps` now serves:
+
+- `/` — browser dashboard with overview, host metrics, time-series charting, replication state, and a read-only SQL workspace
+- `/amps` — monitoring API root
+- `/amps/host` — host/runtime metrics
+- `/amps/instance` — instance counts, transports, replication, and admin status
+- `/amps/instance/history` — time-range metrics for charting and time-machine playback
+- `/amps/instance/clients` — active monitored client list
+- `/amps/administrator/...` — operator actions for diagnostics, client disconnect, transport enable/disable, replication upgrade/downgrade, and SOW maintenance
+- `/amps/sql/ws` — same-origin read-only websocket workspace for `sow`, `subscribe`, and `sow_and_subscribe`
+
+Compatibility aliases remain under `/admin/*`.
+
+Intentional validation limits:
+
+- Custom AMPS modules with `<Library>` are rejected.
+- Module-backed `<UserDefinedFunctions>` are rejected.
+- Only built-in module names are accepted in the `Modules` graph.
+- XML is the only supported config-file format in this repo.
 
 ## Architecture
 
@@ -154,6 +224,10 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 
 ```
 -addr            listen address (default "127.0.0.1:19000")
+-config          load AMPS XML configuration from this file (default "")
+-sample-config   print a sample AMPS XML configuration and exit (default false)
+-verify-config   verify the provided AMPS XML configuration and exit (default "")
+-dump-config     expand includes and environment variables and print the resulting XML (default "")
 -version         AMPS server version in logon ack (default "6.3.1.0")
 -fanout          fan-out publishes to subscribers (default true)
 -echo            echo publishes back to same connection (default false)
@@ -186,6 +260,30 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 ## Admin REST API
 
 When started with `-admin :8085`, provides:
+
+### Primary monitoring surface
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Embedded monitoring dashboard |
+| `/amps` | GET | Monitoring API root |
+| `/amps/host` | GET | Host/runtime metrics |
+| `/amps/instance` | GET | Instance counts, transports, replication, auth mode |
+| `/amps/instance/history` | GET | Historical metric samples for charting |
+| `/amps/instance/clients` | GET | Monitored client inventory |
+| `/amps/session` | GET | Current session or basic-auth identity |
+| `/amps/session/login` | POST | Issue a cookie-backed admin session |
+| `/amps/session/logout` | POST | Clear the current admin session |
+| `/amps/administrator/diagnostics` | POST | Write a diagnostics snapshot to the log |
+| `/amps/administrator/clients/:id/disconnect` | POST | Disconnect a monitored client |
+| `/amps/administrator/transports/:id/enable` | POST | Enable a transport |
+| `/amps/administrator/transports/:id/disable` | POST | Disable a transport |
+| `/amps/administrator/replication/:id/upgrade` | POST | Mark a replication peer upgraded |
+| `/amps/administrator/replication/:id/downgrade` | POST | Mark a replication peer downgraded |
+| `/amps/administrator/sow/clear` | POST | Clear all SOW data or a specific topic via `?topic=` |
+| `/amps/sql/ws` | WebSocket | Read-only browser workspace |
+
+### Compatibility aliases
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -238,3 +336,4 @@ Still intentionally limited (single-process parity harness focus):
 - Deep multi-format server-side parsing/validation (FIX/XML/BSON/Protobuf)
 - Pluggable enterprise identity providers (PAM/LDAP/Kerberos)
 - Field-level/row-level security policies beyond configured topic/filter entitlements
+- Arbitrary custom AMPS modules or module-backed UDF loading from XML

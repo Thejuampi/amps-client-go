@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"runtime"
 	"strings"
@@ -38,30 +37,6 @@ var (
 
 func init() {
 	serverStartTime = time.Now()
-}
-
-func startAdminServer(addr string) {
-	if addr == "" {
-		return
-	}
-	adminAddr = addr
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/admin/status", handleAdminStatus)
-	mux.HandleFunc("/admin/stats", handleAdminStats)
-	mux.HandleFunc("/admin/sow", handleAdminSOW)
-	mux.HandleFunc("/admin/sow/", handleAdminSOWTopic)
-	mux.HandleFunc("/admin/subscriptions", handleAdminSubscriptions)
-	mux.HandleFunc("/admin/views", handleAdminViews)
-	mux.HandleFunc("/admin/actions", handleAdminActions)
-	mux.HandleFunc("/admin/journal", handleAdminJournal)
-
-	go func() {
-		log.Printf("fakeamps: admin API listening on %s", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil {
-			log.Printf("fakeamps: admin API error: %v", err)
-		}
-	}()
 }
 
 func jsonResponse(w http.ResponseWriter, v interface{}) {
@@ -102,8 +77,24 @@ func handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 			"queue":       *flagQueue,
 			"echo":        *flagEcho,
 			"auth":        *flagAuth != "",
+			"effective":   effectiveConfigSummary(),
 		},
 	})
+}
+
+func effectiveConfigSummary() map[string]interface{} {
+	if effectiveConfig == nil {
+		return nil
+	}
+
+	return map[string]interface{}{
+		"source":          effectiveConfig.Path,
+		"name":            effectiveConfig.Runtime.Name,
+		"group":           effectiveConfig.Runtime.Group,
+		"description":     effectiveConfig.Runtime.Description,
+		"transport_count": len(effectiveConfig.Runtime.Transports),
+		"admin_addr":      effectiveConfig.Runtime.Admin.InetAddr,
+	}
 }
 
 func handleAdminStats(w http.ResponseWriter, r *http.Request) {
@@ -116,19 +107,8 @@ func handleAdminStats(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminSOW(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "DELETE" {
-		// Clear all SOW data.
-		if sow != nil {
-			for _, t := range sow.allTopics() {
-				raw, ok := sow.topics.Load(t)
-				if !ok {
-					continue
-				}
-				ts := raw.(*topicSOW)
-				ts.mu.Lock()
-				ts.records = make(map[string]*sowRecord)
-				ts.mu.Unlock()
-			}
-		}
+		_, removed := clearAllSOWRecords("clear")
+		notifyWorkspaceRemovals(removed)
 		jsonResponse(w, map[string]string{"status": "cleared"})
 		return
 	}
@@ -172,21 +152,15 @@ func handleAdminSOWTopic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == "DELETE" {
-		if sow != nil {
-			raw, ok := sow.topics.Load(topic)
-			if ok {
-				t := raw.(*topicSOW)
-				t.mu.Lock()
-				cleared := len(t.records)
-				t.records = make(map[string]*sowRecord)
-				t.mu.Unlock()
-				jsonResponse(w, map[string]interface{}{
-					"status":          "cleared",
-					"topic":           topic,
-					"records_cleared": cleared,
-				})
-				return
-			}
+		var cleared, removed, ok = clearSOWTopicRecords(topic, "clear")
+		if ok {
+			notifyWorkspaceRemovals(removed)
+			jsonResponse(w, map[string]interface{}{
+				"status":          "cleared",
+				"topic":           topic,
+				"records_cleared": cleared,
+			})
+			return
 		}
 		jsonResponse(w, map[string]interface{}{"status": "not_found", "topic": topic})
 		return

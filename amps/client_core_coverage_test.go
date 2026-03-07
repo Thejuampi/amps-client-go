@@ -23,6 +23,15 @@ func (authFailureAuthenticator) Retry(string, string) (string, error) {
 }
 func (authFailureAuthenticator) Completed(string, string, string) {}
 
+func isClientSignalClosed(signal <-chan struct{}) bool {
+	select {
+	case <-signal:
+		return true
+	default:
+		return false
+	}
+}
+
 func buildFrameFromCommand(t *testing.T, command *Command) []byte {
 	t.Helper()
 	buffer := bytes.NewBuffer(nil)
@@ -708,6 +717,7 @@ func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	sowClient := NewClient("sow-delete")
 	sowConn := newTestConn()
 	sowClient.connected.Store(true)
+	sowClient.resetDisconnectSignal()
 	sowClient.connection = sowConn
 
 	type sowResult struct {
@@ -754,6 +764,7 @@ func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	heartbeatClient := NewClient("establish-heartbeat")
 	heartbeatConn := newTestConn()
 	heartbeatClient.connected.Store(true)
+	heartbeatClient.resetDisconnectSignal()
 	heartbeatClient.connection = heartbeatConn
 	heartbeatClient.heartbeatInterval = 1
 	heartbeatClient.heartbeatTimeout = 1
@@ -835,9 +846,36 @@ func TestClientFlushAckPathsCoverage(t *testing.T) {
 	}
 }
 
+func TestClientDisconnectSignalLifecycle(t *testing.T) {
+	var client = NewClient("disconnect-signal")
+	if !isClientSignalClosed(client.disconnectCh) {
+		t.Fatalf("expected new client disconnect signal to start closed")
+	}
+
+	client.resetDisconnectSignal()
+	if isClientSignalClosed(client.disconnectCh) {
+		t.Fatalf("expected reset disconnect signal to open the active signal")
+	}
+
+	var activeSignal = client.disconnectCh
+	client.signalDisconnect()
+	if !isClientSignalClosed(activeSignal) {
+		t.Fatalf("expected signalDisconnect to close the active signal")
+	}
+
+	client.resetDisconnectSignal()
+	if client.disconnectCh == activeSignal {
+		t.Fatalf("expected resetDisconnectSignal to allocate a fresh signal")
+	}
+	if isClientSignalClosed(client.disconnectCh) {
+		t.Fatalf("expected refreshed disconnect signal to remain open")
+	}
+}
+
 func TestClientSowDeleteWaitAbortsOnDisconnect(t *testing.T) {
 	client := NewClient("sow-delete-disconnect")
 	client.connected.Store(true)
+	client.resetDisconnectSignal()
 	client.connection = newTestConn()
 
 	errCh := make(chan error, 1)
@@ -848,6 +886,7 @@ func TestClientSowDeleteWaitAbortsOnDisconnect(t *testing.T) {
 
 	_, _ = waitForAnyRouteHandler(t, client)
 	client.connected.Store(false)
+	client.signalDisconnect()
 
 	select {
 	case err := <-errCh:
@@ -859,9 +898,38 @@ func TestClientSowDeleteWaitAbortsOnDisconnect(t *testing.T) {
 	}
 }
 
+func TestClientEstablishHeartbeatAbortsOnDisconnect(t *testing.T) {
+	var client = NewClient("heartbeat-disconnect")
+	client.connected.Store(true)
+	client.resetDisconnectSignal()
+	client.connection = newTestConn()
+	client.heartbeatInterval = 1
+	client.heartbeatTimeout = 2
+	client.SetErrorHandler(func(error) {})
+
+	var errCh = make(chan error, 1)
+	go func() {
+		errCh <- client.establishHeartbeat()
+	}()
+
+	_, _ = waitForAnyRouteHandler(t, client)
+	client.connected.Store(false)
+	client.signalDisconnect()
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "DisconnectedError") {
+			t.Fatalf("expected disconnected error while waiting for heartbeat ack, got %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("expected heartbeat establishment to abort after disconnect")
+	}
+}
+
 func TestClientEstablishHeartbeatTimeoutCoverage(t *testing.T) {
 	client := NewClient("heartbeat-timeout")
 	client.connected.Store(true)
+	client.resetDisconnectSignal()
 	client.connection = newTestConn()
 	client.heartbeatInterval = 1
 	client.heartbeatTimeout = 1

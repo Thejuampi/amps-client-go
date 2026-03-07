@@ -38,6 +38,51 @@ type MemoryPublishStore struct {
 	lastPersisted     uint64
 	nextSequence      uint64
 	errorOnPublishGap bool
+	drainedCh         chan struct{}
+}
+
+func newPublishStoreSignal(closed bool) chan struct{} {
+	var signal = make(chan struct{})
+	if closed {
+		close(signal)
+	}
+	return signal
+}
+
+func publishStoreDrainSignalClosed(signal <-chan struct{}) bool {
+	if signal == nil {
+		return false
+	}
+	select {
+	case <-signal:
+		return true
+	default:
+		return false
+	}
+}
+
+func (store *MemoryPublishStore) reopenDrainSignalLocked() {
+	if publishStoreDrainSignalClosed(store.drainedCh) {
+		store.drainedCh = newPublishStoreSignal(false)
+	}
+}
+
+func (store *MemoryPublishStore) closeDrainSignalLocked() {
+	if store.drainedCh == nil {
+		store.drainedCh = newPublishStoreSignal(true)
+		return
+	}
+	if !publishStoreDrainSignalClosed(store.drainedCh) {
+		close(store.drainedCh)
+	}
+}
+
+func (store *MemoryPublishStore) rebuildDrainSignalLocked() {
+	if len(store.entries) == 0 {
+		store.drainedCh = newPublishStoreSignal(true)
+		return
+	}
+	store.drainedCh = newPublishStoreSignal(false)
 }
 
 // NewMemoryPublishStore returns a new MemoryPublishStore.
@@ -46,6 +91,7 @@ func NewMemoryPublishStore() *MemoryPublishStore {
 		entries:       make(map[uint64]*Command),
 		nextSequence:  1,
 		lastPersisted: 0,
+		drainedCh:     newPublishStoreSignal(true),
 	}
 }
 
@@ -60,6 +106,7 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 
 	store.lock.Lock()
 	defer store.lock.Unlock()
+	var wasEmpty = len(store.entries) == 0
 
 	sequence := uint64(0)
 	if command.header != nil && command.header.sequenceID != nil && *command.header.sequenceID > 0 {
@@ -72,6 +119,9 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 	cloned := cloneCommand(command)
 	cloned.SetSequenceID(sequence)
 	store.entries[sequence] = cloned
+	if wasEmpty {
+		store.reopenDrainSignalLocked()
+	}
 	if sequence >= store.nextSequence {
 		store.nextSequence = sequence + 1
 	}
@@ -95,6 +145,9 @@ func (store *MemoryPublishStore) DiscardUpTo(sequence uint64) error {
 		if key <= sequence {
 			delete(store.entries, key)
 		}
+	}
+	if len(store.entries) == 0 {
+		store.closeDrainSignalLocked()
 	}
 
 	if sequence > store.lastPersisted {
@@ -171,31 +224,34 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 	if store == nil {
 		return errors.New("nil publish store")
 	}
+	store.lock.Lock()
+	if len(store.entries) == 0 {
+		store.lock.Unlock()
+		return nil
+	}
+	var drainedCh = store.drainedCh
+	store.lock.Unlock()
 
 	if timeout <= 0 {
-		for {
-			store.lock.Lock()
-			if len(store.entries) == 0 {
-				store.lock.Unlock()
-				return nil
-			}
-			store.lock.Unlock()
-			time.Sleep(time.Millisecond)
-		}
+		<-drainedCh
+		return nil
 	}
 
-	deadline := time.Now().Add(timeout)
-	for {
-		store.lock.Lock()
-		if len(store.entries) == 0 {
-			store.lock.Unlock()
-			return nil
+	var timer = time.NewTimer(timeout)
+	defer func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
 		}
-		store.lock.Unlock()
-		if time.Now().After(deadline) {
-			return NewError(TimedOutError, "publish store flush timed out")
-		}
-		time.Sleep(time.Millisecond)
+	}()
+
+	select {
+	case <-drainedCh:
+		return nil
+	case <-timer.C:
+		return NewError(TimedOutError, "publish store flush timed out")
 	}
 }
 
@@ -456,7 +512,13 @@ func (store *FilePublishStore) load() error {
 	if err := store.loadCheckpoint(); err != nil {
 		return err
 	}
-	return store.replayWal()
+	if err := store.replayWal(); err != nil {
+		return err
+	}
+	store.lock.Lock()
+	store.rebuildDrainSignalLocked()
+	store.lock.Unlock()
+	return nil
 }
 
 // Store returns the configured store instance used by the receiver.
