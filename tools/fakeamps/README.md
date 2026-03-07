@@ -30,7 +30,7 @@ Implemented XML processing behavior:
 Core AMPS sections currently bound directly into runtime behavior:
 
 - `<Transports>` for the primary listener address
-- `<Admin>` for the admin REST listener
+- `<Admin>` for the admin/dashboard listener, sampling interval, history persistence file, SQL transport validation, auth mode, anonymous paths, session options, response headers, and TLS inputs
 - `<Logging>` for `stdout`, `stderr`, and file-backed log targets
 
 Harness-specific behavior belongs under:
@@ -52,6 +52,21 @@ Harness-specific behavior belongs under:
 ```
 
 `/admin/status` now exposes the resolved effective config summary when XML startup is used.
+
+## Monitoring Dashboard
+
+When started with `-admin :8085` or an `<Admin><InetAddr>...</InetAddr></Admin>` XML block, `fakeamps` now serves:
+
+- `/` — browser dashboard with overview, host metrics, time-series charting, replication state, and a read-only SQL workspace
+- `/amps` — monitoring API root
+- `/amps/host` — host/runtime metrics
+- `/amps/instance` — instance counts, transports, replication, and admin status
+- `/amps/instance/history` — time-range metrics for charting and time-machine playback
+- `/amps/instance/clients` — active monitored client list
+- `/amps/administrator/...` — operator actions for diagnostics, client disconnect, transport enable/disable, replication upgrade/downgrade, and SOW maintenance
+- `/amps/sql/ws` — same-origin read-only websocket workspace for `sow`, `subscribe`, and `sow_and_subscribe`
+
+Compatibility aliases remain under `/admin/*`.
 
 Intentional validation limits:
 
@@ -245,6 +260,30 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 ## Admin REST API
 
 When started with `-admin :8085`, provides:
+
+### Primary monitoring surface
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Embedded monitoring dashboard |
+| `/amps` | GET | Monitoring API root |
+| `/amps/host` | GET | Host/runtime metrics |
+| `/amps/instance` | GET | Instance counts, transports, replication, auth mode |
+| `/amps/instance/history` | GET | Historical metric samples for charting |
+| `/amps/instance/clients` | GET | Monitored client inventory |
+| `/amps/session` | GET | Current session or basic-auth identity |
+| `/amps/session/login` | POST | Issue a cookie-backed admin session |
+| `/amps/session/logout` | POST | Clear the current admin session |
+| `/amps/administrator/diagnostics` | POST | Write a diagnostics snapshot to the log |
+| `/amps/administrator/clients/:id/disconnect` | POST | Disconnect a monitored client |
+| `/amps/administrator/transports/:id/enable` | POST | Enable a transport |
+| `/amps/administrator/transports/:id/disable` | POST | Disable a transport |
+| `/amps/administrator/replication/:id/upgrade` | POST | Mark a replication peer upgraded |
+| `/amps/administrator/replication/:id/downgrade` | POST | Mark a replication peer downgraded |
+| `/amps/administrator/sow/clear` | POST | Clear all SOW data or a specific topic via `?topic=` |
+| `/amps/sql/ws` | WebSocket | Read-only browser workspace |
+
+### Compatibility aliases
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

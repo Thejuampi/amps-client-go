@@ -89,6 +89,12 @@ func getTopicMessageType(topic string) string {
 func handleConnection(conn net.Conn) {
 	remoteAddr := conn.RemoteAddr().String()
 	baseConn := conn
+	var transportID = primaryTransportID()
+	if !monitoringTransports.Enabled(transportID) {
+		_ = baseConn.Close()
+		globalConnectionsCurrent.Add(-1)
+		return
+	}
 	if *flagLogConn {
 		log.Printf("fakeamps: connected  %s  (total=%d active=%d)",
 			remoteAddr, globalConnectionsAccepted.Load(), globalConnectionsCurrent.Load())
@@ -116,6 +122,7 @@ func handleConnection(conn net.Conn) {
 
 	var stats connStats
 	writer := newConnWriter(conn, &stats)
+	var clientID = monitoringClients.Register(baseConn, remoteAddr, connectionProtocolLabel(conn), transportID, &stats)
 
 	var statsDone chan struct{}
 	if *flagLogStats {
@@ -160,6 +167,7 @@ func handleConnection(conn net.Conn) {
 		}
 		writer.close()
 		_ = conn.Close()
+		monitoringClients.Remove(clientID)
 		globalConnectionsCurrent.Add(-1)
 		if statsDone != nil {
 			close(statsDone)
@@ -296,6 +304,7 @@ func handleConnection(conn net.Conn) {
 		case "logon":
 			connUserID = header.userID
 			connClientName = firstNonEmpty(header.clientName, connUserID)
+			monitoringClients.UpdateLogon(clientID, connUserID, connClientName)
 
 			// Authentication check.
 			if *flagAuth != "" {
@@ -699,15 +708,17 @@ func handleConnection(conn net.Conn) {
 
 			// SOW cache.
 			var evictedRecord *sowRecord
+			var previousWorkspacePayload []byte
+			var currentWorkspacePayload = payload
 			if sow != nil && topic != "" {
 				if effectiveSowKey == "" {
 					effectiveSowKey = makeSowKey(topic, seq)
 				}
 				ts := makeTimestamp()
 				if isDelta {
-					sow.deltaUpsert(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
+					_, _, previousWorkspacePayload, currentWorkspacePayload = sow.deltaUpsertWithPrevious(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				} else {
-					_, _, _, evictedRecord = sow.upsertWithEvicted(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
+					_, _, previousWorkspacePayload, evictedRecord = sow.upsertWithEvicted(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				}
 			}
 
@@ -736,17 +747,21 @@ func handleConnection(conn net.Conn) {
 				_ = replicatePublish(topic, payload, mt, effectiveSowKey)
 			}
 
-			// Fan-out to subscribers.
-			if *flagFanout && topic != "" {
-				ts := makeTimestamp()
-				fanoutPublishWithConflation(conn, topic, payload, bm, ts, effectiveSowKey, mt, isQueueTopic, &stats, conflationBuffers)
+			if topic != "" {
+				var ts = makeTimestamp()
+				workspaceSessions.NotifyRow(topic, previousWorkspacePayload, currentWorkspacePayload, bm, ts, effectiveSowKey)
+
+				// Fan-out to subscribers.
+				if *flagFanout {
+					fanoutPublishWithConflation(conn, topic, payload, bm, ts, effectiveSowKey, mt, isQueueTopic, &stats, conflationBuffers)
+				}
 				if evictedRecord != nil {
 					fanoutOOFWithReason(conn, topic, evictedRecord.sowKey, evictedRecord.bookmark, "evicted", &stats)
 				}
 
 				// OOF-on-filter-mismatch: for delta subscribers whose topic
 				// matches but content filter no longer matches, send OOF.
-				if effectiveSowKey != "" {
+				if *flagFanout && effectiveSowKey != "" {
 					forEachOOFCandidate(topic, payload, func(sub *subscription) {
 						oofBuf := getWriteBuf()
 						frame := buildOOFDeliveryWithReason(oofBuf, topic, sub.subID, effectiveSowKey, bm, "match")
@@ -817,12 +832,14 @@ func handleConnection(conn net.Conn) {
 				writer.send(buildPersistedAck(buf, commandID, seqID))
 			}
 
-			// OOF to delta subscribers.
-			if deleted > 0 && *flagFanout && topic != "" {
+			if deleted > 0 && topic != "" {
 				for _, key := range deletedKeys {
 					seq := globalBookmarkSeq.Add(1)
 					bm := makeBookmark(seq)
-					fanoutOOFWithReason(conn, topic, key, bm, "delete", &stats)
+					workspaceSessions.NotifyRemove(topic, key, bm, "delete")
+					if *flagFanout {
+						fanoutOOFWithReason(conn, topic, key, bm, "delete", &stats)
+					}
 				}
 			}
 

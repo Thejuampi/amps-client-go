@@ -71,6 +71,14 @@ func (c *websocketConn) Read(p []byte) (int, error) {
 }
 
 func (c *websocketConn) Write(p []byte) (int, error) {
+	return c.writeDataFrame(0x2, p)
+}
+
+func (c *websocketConn) WriteText(p []byte) (int, error) {
+	return c.writeDataFrame(0x1, p)
+}
+
+func (c *websocketConn) writeDataFrame(opcode byte, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -81,12 +89,12 @@ func (c *websocketConn) Write(p []byte) (int, error) {
 	var header []byte
 	var length = len(p)
 	if length <= 125 {
-		header = []byte{0x82, byte(length)}
+		header = []byte{0x80 | opcode, byte(length)}
 	} else if length <= 65535 {
-		header = []byte{0x82, 126, byte(length >> 8), byte(length)}
+		header = []byte{0x80 | opcode, 126, byte(length >> 8), byte(length)}
 	} else {
 		header = make([]byte, 10)
-		header[0] = 0x82
+		header[0] = 0x80 | opcode
 		header[1] = 127
 		binary.BigEndian.PutUint64(header[2:], uint64(length))
 	}
@@ -187,6 +195,15 @@ func prepareProtocolConn(conn net.Conn) (net.Conn, error) {
 	}
 
 	return &websocketConn{Conn: conn, reader: reader}, nil
+}
+
+func connectionProtocolLabel(conn net.Conn) string {
+	switch conn.(type) {
+	case *websocketConn:
+		return "websocket"
+	default:
+		return "tcp"
+	}
 }
 
 func performWebSocketHandshake(conn net.Conn, reader *bufio.Reader) error {

@@ -1,6 +1,7 @@
 package ampsconfig
 
 import (
+	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -60,12 +61,29 @@ type LoggingTargetConfig struct {
 }
 
 type AdminConfig struct {
-	InetAddr string
-	Interval time.Duration
+	InetAddr         string
+	Interval         time.Duration
+	FileName         string
+	ExternalInetAddr string
+	SQLTransport     string
+	Authentication   string
+	Entitlement      string
+	AnonymousPaths   []string
+	SessionOptions   []string
+	Headers          []string
+	Certificate      string
+	PrivateKey       string
+	Ciphers          []string
 }
 
 type ExtensionsConfig struct {
 	FakeAMPS FakeAMPSExtension
+}
+
+type AdminUserConfig struct {
+	Username string
+	Password string
+	Role     string
 }
 
 type FakeAMPSExtension struct {
@@ -114,6 +132,7 @@ type FakeAMPSExtension struct {
 	SlowClientPolicy      string
 	CrashArtifactDir      string
 	ExternalLibraryPath   string
+	AdminUsers            []AdminUserConfig
 }
 
 type xmlConfig struct {
@@ -154,8 +173,31 @@ type xmlLoggingTarget struct {
 }
 
 type xmlAdmin struct {
-	InetAddr string `xml:"InetAddr"`
-	Interval string `xml:"Interval"`
+	InetAddr         string             `xml:"InetAddr"`
+	Interval         string             `xml:"Interval"`
+	FileName         string             `xml:"FileName"`
+	ExternalInetAddr string             `xml:"ExternalInetAddr"`
+	SQLTransport     string             `xml:"SQLTransport"`
+	Authentication   string             `xml:"Authentication"`
+	Entitlement      string             `xml:"Entitlement"`
+	AnonymousPaths   xmlAdminPathList   `xml:"AnonymousPaths"`
+	SessionOptions   xmlAdminOptionList `xml:"SessionOptions"`
+	Headers          []string           `xml:"Header"`
+	Certificate      string             `xml:"Certificate"`
+	PrivateKey       string             `xml:"PrivateKey"`
+	Ciphers          xmlAdminCipherList `xml:"Ciphers"`
+}
+
+type xmlAdminPathList struct {
+	Items []string `xml:"Path"`
+}
+
+type xmlAdminOptionList struct {
+	Items []string `xml:"Option"`
+}
+
+type xmlAdminCipherList struct {
+	Items []string `xml:"Cipher"`
 }
 
 type xmlModules struct {
@@ -182,41 +224,52 @@ type xmlExtensions struct {
 }
 
 type xmlFakeAMPS struct {
-	ListenAddress       string   `xml:"ListenAddress"`
-	Version             string   `xml:"Version"`
-	Fanout              string   `xml:"Fanout"`
-	SOWEnabled          string   `xml:"SOWEnabled"`
-	JournalEnabled      string   `xml:"JournalEnabled"`
-	JournalMax          string   `xml:"JournalMax"`
-	JournalDisk         string   `xml:"JournalDisk"`
-	LogConnections      string   `xml:"LogConnections"`
-	LogStats            string   `xml:"LogStats"`
-	StatsInterval       string   `xml:"StatsInterval"`
-	WriteBuffer         string   `xml:"WriteBuffer"`
-	ReadBuffer          string   `xml:"ReadBuffer"`
-	NoDelay             string   `xml:"NoDelay"`
-	Latency             string   `xml:"Latency"`
-	QueueEnabled        string   `xml:"QueueEnabled"`
-	Lease               string   `xml:"Lease"`
-	Echo                string   `xml:"Echo"`
-	OutDepth            string   `xml:"OutDepth"`
-	SOWGCInterval       string   `xml:"SOWGCInterval"`
-	QueueLeaseInterval  string   `xml:"QueueLeaseInterval"`
-	BenchmarkStability  string   `xml:"BenchmarkStability"`
-	Auth                string   `xml:"Auth"`
-	AuthChallenge       string   `xml:"AuthChallenge"`
-	Peers               string   `xml:"Peers"`
-	ReplicationID       string   `xml:"ReplicationID"`
-	RedirectURI         string   `xml:"RedirectURI"`
-	SOWMax              string   `xml:"SOWMax"`
-	SOWEviction         string   `xml:"SOWEviction"`
-	SOWDisk             string   `xml:"SOWDisk"`
-	Views               []string `xml:"View"`
-	Actions             []string `xml:"Action"`
-	ProcessName         string   `xml:"ProcessName"`
-	SlowClientPolicy    string   `xml:"SlowClientPolicy"`
-	CrashArtifactDir    string   `xml:"CrashArtifactDir"`
-	ExternalLibraryPath string   `xml:"ExternalLibraryPath"`
+	ListenAddress       string        `xml:"ListenAddress"`
+	Version             string        `xml:"Version"`
+	Fanout              string        `xml:"Fanout"`
+	SOWEnabled          string        `xml:"SOWEnabled"`
+	JournalEnabled      string        `xml:"JournalEnabled"`
+	JournalMax          string        `xml:"JournalMax"`
+	JournalDisk         string        `xml:"JournalDisk"`
+	LogConnections      string        `xml:"LogConnections"`
+	LogStats            string        `xml:"LogStats"`
+	StatsInterval       string        `xml:"StatsInterval"`
+	WriteBuffer         string        `xml:"WriteBuffer"`
+	ReadBuffer          string        `xml:"ReadBuffer"`
+	NoDelay             string        `xml:"NoDelay"`
+	Latency             string        `xml:"Latency"`
+	QueueEnabled        string        `xml:"QueueEnabled"`
+	Lease               string        `xml:"Lease"`
+	Echo                string        `xml:"Echo"`
+	OutDepth            string        `xml:"OutDepth"`
+	SOWGCInterval       string        `xml:"SOWGCInterval"`
+	QueueLeaseInterval  string        `xml:"QueueLeaseInterval"`
+	BenchmarkStability  string        `xml:"BenchmarkStability"`
+	Auth                string        `xml:"Auth"`
+	AuthChallenge       string        `xml:"AuthChallenge"`
+	Peers               string        `xml:"Peers"`
+	ReplicationID       string        `xml:"ReplicationID"`
+	RedirectURI         string        `xml:"RedirectURI"`
+	SOWMax              string        `xml:"SOWMax"`
+	SOWEviction         string        `xml:"SOWEviction"`
+	SOWDisk             string        `xml:"SOWDisk"`
+	Views               []string      `xml:"View"`
+	Actions             []string      `xml:"Action"`
+	ProcessName         string        `xml:"ProcessName"`
+	SlowClientPolicy    string        `xml:"SlowClientPolicy"`
+	CrashArtifactDir    string        `xml:"CrashArtifactDir"`
+	ExternalLibraryPath string        `xml:"ExternalLibraryPath"`
+	AdminUsers          xmlAdminUsers `xml:"AdminUsers"`
+}
+
+type xmlAdminUsers struct {
+	Items []xmlAdminUser `xml:"User"`
+}
+
+type xmlAdminUser struct {
+	Username string `xml:"Username"`
+	Password string `xml:"Password"`
+	Role     string `xml:"Role"`
 }
 
 func LoadFile(path string, opts LoadOptions) (*ExpandedConfig, error) {
@@ -439,6 +492,29 @@ func buildRuntimeConfig(document xmlConfig) (RuntimeConfig, error) {
 		runtime.Admin.Interval = interval
 	}
 	runtime.Admin.InetAddr = strings.TrimSpace(document.Admin.InetAddr)
+	runtime.Admin.FileName = strings.TrimSpace(document.Admin.FileName)
+	runtime.Admin.ExternalInetAddr = strings.TrimSpace(document.Admin.ExternalInetAddr)
+	runtime.Admin.SQLTransport = strings.TrimSpace(document.Admin.SQLTransport)
+	runtime.Admin.Authentication = strings.TrimSpace(document.Admin.Authentication)
+	runtime.Admin.Entitlement = strings.TrimSpace(document.Admin.Entitlement)
+	runtime.Admin.Certificate = strings.TrimSpace(document.Admin.Certificate)
+	runtime.Admin.PrivateKey = strings.TrimSpace(document.Admin.PrivateKey)
+	runtime.Admin.AnonymousPaths = make([]string, 0, len(document.Admin.AnonymousPaths.Items))
+	for _, path := range document.Admin.AnonymousPaths.Items {
+		runtime.Admin.AnonymousPaths = append(runtime.Admin.AnonymousPaths, strings.TrimSpace(path))
+	}
+	runtime.Admin.SessionOptions = make([]string, 0, len(document.Admin.SessionOptions.Items))
+	for _, option := range document.Admin.SessionOptions.Items {
+		runtime.Admin.SessionOptions = append(runtime.Admin.SessionOptions, strings.TrimSpace(option))
+	}
+	runtime.Admin.Headers = make([]string, 0, len(document.Admin.Headers))
+	for _, header := range document.Admin.Headers {
+		runtime.Admin.Headers = append(runtime.Admin.Headers, strings.TrimSpace(header))
+	}
+	runtime.Admin.Ciphers = make([]string, 0, len(document.Admin.Ciphers.Items))
+	for _, cipher := range document.Admin.Ciphers.Items {
+		runtime.Admin.Ciphers = append(runtime.Admin.Ciphers, strings.TrimSpace(cipher))
+	}
 
 	for _, module := range document.Modules.Items {
 		runtime.Modules = append(runtime.Modules, ModuleConfig{
@@ -463,6 +539,14 @@ func buildRuntimeConfig(document xmlConfig) (RuntimeConfig, error) {
 	runtime.Extensions.FakeAMPS.SlowClientPolicy = strings.TrimSpace(extension.SlowClientPolicy)
 	runtime.Extensions.FakeAMPS.CrashArtifactDir = strings.TrimSpace(extension.CrashArtifactDir)
 	runtime.Extensions.FakeAMPS.ExternalLibraryPath = strings.TrimSpace(extension.ExternalLibraryPath)
+	runtime.Extensions.FakeAMPS.AdminUsers = make([]AdminUserConfig, 0, len(extension.AdminUsers.Items))
+	for _, adminUser := range extension.AdminUsers.Items {
+		runtime.Extensions.FakeAMPS.AdminUsers = append(runtime.Extensions.FakeAMPS.AdminUsers, AdminUserConfig{
+			Username: strings.TrimSpace(adminUser.Username),
+			Password: strings.TrimSpace(adminUser.Password),
+			Role:     strings.ToLower(strings.TrimSpace(adminUser.Role)),
+		})
+	}
 
 	if value, err := parseOptionalBool(extension.Fanout); err != nil {
 		return RuntimeConfig{}, fmt.Errorf("parse FakeAMPS Fanout: %w", err)
@@ -630,6 +714,19 @@ func validateRuntimeConfig(runtime RuntimeConfig, udfs xmlUDFs, runtimeVersion s
 			return fmt.Errorf("external library path %q is unavailable: %w", runtime.Extensions.FakeAMPS.ExternalLibraryPath, err)
 		}
 	}
+	if runtime.Admin.Certificate != "" {
+		if _, err := os.Stat(runtime.Admin.Certificate); err != nil {
+			return fmt.Errorf("admin certificate %q is unavailable: %w", runtime.Admin.Certificate, err)
+		}
+	}
+	if runtime.Admin.PrivateKey != "" {
+		if _, err := os.Stat(runtime.Admin.PrivateKey); err != nil {
+			return fmt.Errorf("admin private key %q is unavailable: %w", runtime.Admin.PrivateKey, err)
+		}
+	}
+	if (runtime.Admin.Certificate == "") != (runtime.Admin.PrivateKey == "") {
+		return fmt.Errorf("admin TLS configuration requires both Certificate and PrivateKey")
+	}
 	if runtime.Extensions.FakeAMPS.CrashArtifactDir != "" {
 		var info, err = os.Stat(runtime.Extensions.FakeAMPS.CrashArtifactDir)
 		if err != nil {
@@ -644,6 +741,77 @@ func validateRuntimeConfig(runtime RuntimeConfig, udfs xmlUDFs, runtimeVersion s
 	case "", "disconnect", "drop-oldest", "block":
 	default:
 		return fmt.Errorf("unsupported slow client policy %q", runtime.Extensions.FakeAMPS.SlowClientPolicy)
+	}
+
+	if runtime.Admin.Authentication != "" && !strings.HasPrefix(strings.ToLower(runtime.Admin.Authentication), "basic") {
+		return fmt.Errorf("unsupported admin authentication %q", runtime.Admin.Authentication)
+	}
+	if runtime.Admin.Authentication != "" && len(runtime.Extensions.FakeAMPS.AdminUsers) == 0 {
+		return fmt.Errorf("admin authentication requires at least one admin user")
+	}
+	if err := validateAdminCipherSuites(runtime.Admin.Ciphers); err != nil {
+		return err
+	}
+
+	if runtime.Admin.SQLTransport != "" {
+		var matched bool
+		for _, transport := range runtime.Transports {
+			if transport.Name == runtime.Admin.SQLTransport {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("admin SQLTransport %q does not match any configured transport", runtime.Admin.SQLTransport)
+		}
+	}
+
+	for _, adminUser := range runtime.Extensions.FakeAMPS.AdminUsers {
+		if adminUser.Username == "" {
+			return fmt.Errorf("admin user is missing Username")
+		}
+		if adminUser.Password == "" {
+			return fmt.Errorf("admin user %q is missing Password", adminUser.Username)
+		}
+		switch adminUser.Role {
+		case "viewer", "operator":
+		default:
+			return fmt.Errorf("unsupported admin user role %q", adminUser.Role)
+		}
+	}
+
+	return nil
+}
+
+func validateAdminCipherSuites(cipherNames []string) error {
+	if len(cipherNames) == 0 {
+		return nil
+	}
+
+	var suiteByName = make(map[string]*tls.CipherSuite)
+	for _, suite := range tls.CipherSuites() {
+		suiteByName[suite.Name] = suite
+	}
+	for _, suite := range tls.InsecureCipherSuites() {
+		suiteByName[suite.Name] = suite
+	}
+
+	for _, name := range cipherNames {
+		var suite, ok = suiteByName[strings.TrimSpace(name)]
+		if !ok {
+			return fmt.Errorf("unsupported admin cipher %q", name)
+		}
+
+		var supported bool
+		for _, version := range suite.SupportedVersions {
+			if version <= tls.VersionTLS12 {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return fmt.Errorf("admin cipher %q targets TLS 1.3, which Go cannot restrict explicitly", name)
+		}
 	}
 
 	return nil

@@ -33,6 +33,30 @@ func readPeerHeader(t *testing.T, conn net.Conn, timeout time.Duration) headerFi
 	return returnHeader
 }
 
+func tryReadPeerHeader(conn net.Conn, timeout time.Duration) (headerFields, error) {
+	var err = conn.SetReadDeadline(time.Now().Add(timeout))
+	if err != nil {
+		return headerFields{}, err
+	}
+	defer func() {
+		_ = conn.SetReadDeadline(time.Time{})
+	}()
+
+	var lenBuf [4]byte
+	if _, err = io.ReadFull(conn, lenBuf[:]); err != nil {
+		return headerFields{}, err
+	}
+
+	var frameLen = binary.BigEndian.Uint32(lenBuf[:])
+	var frame = make([]byte, frameLen)
+	if _, err = io.ReadFull(conn, frame); err != nil {
+		return headerFields{}, err
+	}
+
+	var returnHeader, _ = parseAMPSHeader(frame)
+	return returnHeader, nil
+}
+
 func TestReplicationNoPeersHelpers(t *testing.T) {
 	initReplication("", "instance-test")
 	var err = replicatePublish("orders", []byte(`{"id":1}`), "json", "k1")

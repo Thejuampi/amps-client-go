@@ -257,7 +257,9 @@ func main() {
 
 	// Admin API.
 	if *flagAdminAddr != "" {
-		startAdminServer(*flagAdminAddr)
+		if err := startAdminServer(*flagAdminAddr); err != nil {
+			log.Fatalf("fakeamps: %v", err)
+		}
 	}
 
 	// SOW expiration GC — periodically sweep expired records.

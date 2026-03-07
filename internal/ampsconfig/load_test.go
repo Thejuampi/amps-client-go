@@ -164,6 +164,251 @@ func TestLoadParsesUnitsAndRequiredMinimumVersion(t *testing.T) {
 	}
 }
 
+func TestLoadParsesAdminDashboardConfiguration(t *testing.T) {
+	var tempDir = t.TempDir()
+	var certPath = filepath.Join(tempDir, "admin.crt")
+	var keyPath = filepath.Join(tempDir, "admin.key")
+	var configPath = filepath.Join(tempDir, "config.xml")
+
+	if err := os.WriteFile(certPath, []byte("cert"), 0o600); err != nil {
+		t.Fatalf("WriteFile(cert): %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte("key"), 0o600); err != nil {
+		t.Fatalf("WriteFile(key): %v", err)
+	}
+
+	if err := os.WriteFile(configPath, []byte(strings.TrimSpace(`
+<AMPSConfig>
+    <Name>dashboard-instance</Name>
+    <Transports>
+        <Transport>
+            <Name>json-tcp</Name>
+            <Type>tcp</Type>
+            <InetAddr>127.0.0.1:19000</InetAddr>
+        </Transport>
+    </Transports>
+    <Admin>
+        <InetAddr>127.0.0.1:8085</InetAddr>
+        <Interval>5s</Interval>
+        <FileName>${ADMIN_FILE}</FileName>
+        <ExternalInetAddr>dashboard.example.com:8443</ExternalInetAddr>
+        <SQLTransport>json-tcp</SQLTransport>
+        <Authentication>Basic realm="FakeAMPS"</Authentication>
+        <Entitlement>role-based</Entitlement>
+        <AnonymousPaths>
+            <Path>/</Path>
+            <Path>/assets</Path>
+        </AnonymousPaths>
+        <SessionOptions>
+            <Option>SameSite=Lax</Option>
+            <Option>Secure=true</Option>
+        </SessionOptions>
+        <Header>X-Frame-Options: DENY</Header>
+        <Header>Cache-Control: no-store</Header>
+        <Certificate>`+certPath+`</Certificate>
+        <PrivateKey>`+keyPath+`</PrivateKey>
+        <Ciphers>
+            <Cipher>TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256</Cipher>
+        </Ciphers>
+    </Admin>
+    <Extensions>
+        <FakeAMPS>
+            <AdminUsers>
+                <User>
+                    <Username>viewer</Username>
+                    <Password>viewer-pass</Password>
+                    <Role>viewer</Role>
+                </User>
+                <User>
+                    <Username>operator</Username>
+                    <Password>operator-pass</Password>
+                    <Role>operator</Role>
+                </User>
+            </AdminUsers>
+        </FakeAMPS>
+    </Extensions>
+</AMPSConfig>
+`)), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	var expanded, err = LoadFile(configPath, LoadOptions{
+		Env: map[string]string{
+			"ADMIN_FILE": filepath.Join(tempDir, "admin-history.json"),
+		},
+		RuntimeVersion: "6.3.1.0",
+	})
+	if err != nil {
+		t.Fatalf("LoadFile returned error: %v", err)
+	}
+
+	if expanded.Runtime.Admin.FileName != filepath.Join(tempDir, "admin-history.json") {
+		t.Fatalf("Runtime.Admin.FileName = %q, want expanded admin history path", expanded.Runtime.Admin.FileName)
+	}
+	if expanded.Runtime.Admin.ExternalInetAddr != "dashboard.example.com:8443" {
+		t.Fatalf("Runtime.Admin.ExternalInetAddr = %q, want dashboard.example.com:8443", expanded.Runtime.Admin.ExternalInetAddr)
+	}
+	if expanded.Runtime.Admin.SQLTransport != "json-tcp" {
+		t.Fatalf("Runtime.Admin.SQLTransport = %q, want json-tcp", expanded.Runtime.Admin.SQLTransport)
+	}
+	if expanded.Runtime.Admin.Authentication != `Basic realm="FakeAMPS"` {
+		t.Fatalf("Runtime.Admin.Authentication = %q, want Basic realm", expanded.Runtime.Admin.Authentication)
+	}
+	if len(expanded.Runtime.Admin.AnonymousPaths) != 2 {
+		t.Fatalf("len(Runtime.Admin.AnonymousPaths) = %d, want 2", len(expanded.Runtime.Admin.AnonymousPaths))
+	}
+	if len(expanded.Runtime.Admin.SessionOptions) != 2 {
+		t.Fatalf("len(Runtime.Admin.SessionOptions) = %d, want 2", len(expanded.Runtime.Admin.SessionOptions))
+	}
+	if len(expanded.Runtime.Admin.Headers) != 2 {
+		t.Fatalf("len(Runtime.Admin.Headers) = %d, want 2", len(expanded.Runtime.Admin.Headers))
+	}
+	if expanded.Runtime.Admin.Certificate != certPath {
+		t.Fatalf("Runtime.Admin.Certificate = %q, want %q", expanded.Runtime.Admin.Certificate, certPath)
+	}
+	if expanded.Runtime.Admin.PrivateKey != keyPath {
+		t.Fatalf("Runtime.Admin.PrivateKey = %q, want %q", expanded.Runtime.Admin.PrivateKey, keyPath)
+	}
+	if len(expanded.Runtime.Admin.Ciphers) != 1 || expanded.Runtime.Admin.Ciphers[0] != "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" {
+		t.Fatalf("Runtime.Admin.Ciphers = %v, want TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", expanded.Runtime.Admin.Ciphers)
+	}
+	if len(expanded.Runtime.Extensions.FakeAMPS.AdminUsers) != 2 {
+		t.Fatalf("len(Runtime.Extensions.FakeAMPS.AdminUsers) = %d, want 2", len(expanded.Runtime.Extensions.FakeAMPS.AdminUsers))
+	}
+}
+
+func TestLoadRejectsTLS13OnlyAdminCipherSuites(t *testing.T) {
+	var tempDir = t.TempDir()
+	var certPath = filepath.Join(tempDir, "admin.crt")
+	var keyPath = filepath.Join(tempDir, "admin.key")
+	var configPath = filepath.Join(tempDir, "config.xml")
+
+	if err := os.WriteFile(certPath, []byte("cert"), 0o600); err != nil {
+		t.Fatalf("WriteFile(cert): %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte("key"), 0o600); err != nil {
+		t.Fatalf("WriteFile(key): %v", err)
+	}
+
+	if err := os.WriteFile(configPath, []byte(strings.TrimSpace(`
+<AMPSConfig>
+    <Transports>
+        <Transport>
+            <Name>json-tcp</Name>
+            <Type>tcp</Type>
+            <InetAddr>127.0.0.1:19000</InetAddr>
+        </Transport>
+    </Transports>
+    <Admin>
+        <InetAddr>127.0.0.1:8085</InetAddr>
+        <Certificate>`+certPath+`</Certificate>
+        <PrivateKey>`+keyPath+`</PrivateKey>
+        <Ciphers>
+            <Cipher>TLS_AES_128_GCM_SHA256</Cipher>
+        </Ciphers>
+    </Admin>
+</AMPSConfig>
+`)), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	_, err := LoadFile(configPath, LoadOptions{RuntimeVersion: "6.3.1.0"})
+	if err == nil {
+		t.Fatalf("LoadFile should fail for TLS 1.3-only admin cipher suites")
+	}
+	if !strings.Contains(err.Error(), "TLS 1.3") {
+		t.Fatalf("LoadFile error = %v, want TLS 1.3 validation", err)
+	}
+}
+
+func TestLoadRejectsAdminAuthenticationWithoutUsers(t *testing.T) {
+	var tempDir = t.TempDir()
+	var configPath = filepath.Join(tempDir, "config.xml")
+
+	if err := os.WriteFile(configPath, []byte(strings.TrimSpace(`
+<AMPSConfig>
+    <Name>dashboard-auth</Name>
+    <Transports>
+        <Transport>
+            <Name>json-tcp</Name>
+            <Type>tcp</Type>
+            <InetAddr>127.0.0.1:19000</InetAddr>
+        </Transport>
+    </Transports>
+    <Admin>
+        <InetAddr>127.0.0.1:8085</InetAddr>
+        <Authentication>Basic realm="FakeAMPS"</Authentication>
+    </Admin>
+</AMPSConfig>
+`)), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	_, err := LoadFile(configPath, LoadOptions{RuntimeVersion: "6.3.1.0"})
+	if err == nil {
+		t.Fatalf("LoadFile should fail when admin authentication is configured without users")
+	}
+	if !strings.Contains(err.Error(), "admin authentication requires at least one admin user") {
+		t.Fatalf("LoadFile error = %v, want admin user validation", err)
+	}
+}
+
+func TestLoadRejectsPartialAdminTLSConfiguration(t *testing.T) {
+	var tempDir = t.TempDir()
+	var certPath = filepath.Join(tempDir, "admin.crt")
+	var keyPath = filepath.Join(tempDir, "admin.key")
+
+	if err := os.WriteFile(certPath, []byte("cert"), 0o600); err != nil {
+		t.Fatalf("WriteFile(cert): %v", err)
+	}
+	if err := os.WriteFile(keyPath, []byte("key"), 0o600); err != nil {
+		t.Fatalf("WriteFile(key): %v", err)
+	}
+
+	for _, testCase := range []struct {
+		name string
+		xml  string
+	}{
+		{
+			name: "certificate only",
+			xml: `
+<AMPSConfig>
+    <Admin>
+        <InetAddr>127.0.0.1:8085</InetAddr>
+        <Certificate>` + certPath + `</Certificate>
+    </Admin>
+</AMPSConfig>
+`,
+		},
+		{
+			name: "private key only",
+			xml: `
+<AMPSConfig>
+    <Admin>
+        <InetAddr>127.0.0.1:8085</InetAddr>
+        <PrivateKey>` + keyPath + `</PrivateKey>
+    </Admin>
+</AMPSConfig>
+`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var configPath = filepath.Join(tempDir, strings.ReplaceAll(testCase.name, " ", "_")+".xml")
+			if err := os.WriteFile(configPath, []byte(strings.TrimSpace(testCase.xml)), 0o600); err != nil {
+				t.Fatalf("WriteFile(config): %v", err)
+			}
+
+			_, err := LoadFile(configPath, LoadOptions{RuntimeVersion: "6.3.1.0"})
+			if err == nil {
+				t.Fatalf("LoadFile should fail for partial admin TLS configuration")
+			}
+			if !strings.Contains(err.Error(), "admin TLS configuration requires both Certificate and PrivateKey") {
+				t.Fatalf("LoadFile error = %v, want TLS pair validation", err)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsUnknownCustomModuleAndUDF(t *testing.T) {
 	var tempDir = t.TempDir()
 	var configPath = filepath.Join(tempDir, "config.xml")

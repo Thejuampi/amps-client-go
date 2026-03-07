@@ -431,6 +431,11 @@ func (c *sowCache) upsertWithEvicted(topic, sowKey string, payload []byte, bookm
 // JSON merge-patch semantics (RFC 7396). If the record doesn't exist,
 // the delta becomes the full record.
 func (c *sowCache) deltaUpsert(topic, sowKey string, deltaPayload []byte, bookmark, timestamp string, seqNum uint64, expiration time.Duration) (inserted bool, updated bool, mergedPayload []byte) {
+	inserted, updated, _, mergedPayload = c.deltaUpsertWithPrevious(topic, sowKey, deltaPayload, bookmark, timestamp, seqNum, expiration)
+	return
+}
+
+func (c *sowCache) deltaUpsertWithPrevious(topic, sowKey string, deltaPayload []byte, bookmark, timestamp string, seqNum uint64, expiration time.Duration) (inserted bool, updated bool, previousPayload []byte, mergedPayload []byte) {
 	if sowKey == "" {
 		sowKey = "auto-" + strconv.FormatUint(seqNum, 10)
 	}
@@ -461,6 +466,7 @@ func (c *sowCache) deltaUpsert(topic, sowKey string, deltaPayload []byte, bookma
 		mergedPayload = dataCopy
 		inserted = true
 	} else {
+		previousPayload = append([]byte(nil), existing.payload...)
 		merged := mergeJSON(existing.payload, deltaPayload)
 		existing.payload = merged
 		existing.bookmark = bookmark

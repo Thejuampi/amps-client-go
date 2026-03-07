@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"runtime"
 	"strings"
@@ -38,30 +37,6 @@ var (
 
 func init() {
 	serverStartTime = time.Now()
-}
-
-func startAdminServer(addr string) {
-	if addr == "" {
-		return
-	}
-	adminAddr = addr
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/admin/status", handleAdminStatus)
-	mux.HandleFunc("/admin/stats", handleAdminStats)
-	mux.HandleFunc("/admin/sow", handleAdminSOW)
-	mux.HandleFunc("/admin/sow/", handleAdminSOWTopic)
-	mux.HandleFunc("/admin/subscriptions", handleAdminSubscriptions)
-	mux.HandleFunc("/admin/views", handleAdminViews)
-	mux.HandleFunc("/admin/actions", handleAdminActions)
-	mux.HandleFunc("/admin/journal", handleAdminJournal)
-
-	go func() {
-		log.Printf("fakeamps: admin API listening on %s", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil {
-			log.Printf("fakeamps: admin API error: %v", err)
-		}
-	}()
 }
 
 func jsonResponse(w http.ResponseWriter, v interface{}) {

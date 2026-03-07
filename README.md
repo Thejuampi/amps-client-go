@@ -1,4 +1,4 @@
-# AMPS Go Client
+# amps-client-go
 
 **A feature-complete, high-performance Go client for [AMPS](https://www.cranktheamps.com/) — built from scratch to match and outperform the official C/C++ client on critical hot paths.**
 
@@ -136,7 +136,14 @@ go run ./tools/fakeamps --dump-config config.xml
 go run ./tools/fakeamps --config config.xml
 ```
 
-See [tools/fakeamps/README.md](tools/fakeamps/README.md) for the supported XML sections, the `Extensions/FakeAMPS` runtime block, and the deterministic validation rules for unsupported custom modules and UDFs.
+It also serves a browser dashboard and monitoring API from the admin listener:
+
+```bash
+go run ./tools/fakeamps --config config.xml
+# then open http://127.0.0.1:8085/
+```
+
+See [tools/fakeamps/README.md](tools/fakeamps/README.md) for the supported XML sections, dashboard/admin routes, the `Extensions/FakeAMPS` runtime block, and the deterministic validation rules for unsupported custom modules and UDFs.
 
 ## Quick Start
 
