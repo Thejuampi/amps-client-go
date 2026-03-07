@@ -85,6 +85,41 @@ func waitForAnyRouteHandler(t *testing.T, client *Client) (string, func(*Message
 	return "", nil
 }
 
+func executeSyncStreamWithProcessedAck(t *testing.T, clientName string, command *Command, routeID string) (*Client, func(*Message) error, *MessageStream) {
+	t.Helper()
+
+	var client = NewClient(clientName)
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	type executeResult struct {
+		stream *MessageStream
+		err    error
+	}
+
+	var resultCh = make(chan executeResult, 1)
+	go func() {
+		var stream, err = client.Execute(command)
+		resultCh <- executeResult{stream: stream, err: err}
+	}()
+
+	var handler = waitForRouteHandler(t, client, routeID)
+	var ack = AckTypeProcessed
+	_ = handler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ack,
+		status:  []byte("success"),
+	}})
+
+	var result = <-resultCh
+	if result.err != nil || result.stream == nil {
+		t.Fatalf("expected execute success, stream=%v err=%v", result.stream, result.err)
+	}
+
+	return client, handler, result.stream
+}
+
 func buildSOWFrame(t *testing.T, routeID string, data []byte) []byte {
 	t.Helper()
 	outer := NewCommand("sow")
@@ -710,6 +745,128 @@ func TestClientExecuteAsyncSyncAckCoverage(t *testing.T) {
 	unsubClient.routes.Store("to-remove", func(*Message) error { return nil })
 	if routeID, err := unsubClient.ExecuteAsync(NewCommand("unsubscribe").SetSubID("all"), nil); err != nil || routeID != "" {
 		t.Fatalf("expected unsubscribe execute async success, route=%q err=%v", routeID, err)
+	}
+}
+
+func TestClientExecuteSowAndSubscribeWaitsForFirstMessage(t *testing.T) {
+	var _, handler, stream = executeSyncStreamWithProcessedAck(
+		t,
+		"execute-sow-and-subscribe",
+		NewCommand("sow_and_subscribe").SetTopic("orders").SetSubID("sub-sync"),
+		"sub-sync",
+	)
+
+	var hasNextCh = make(chan bool, 1)
+	go func() {
+		hasNextCh <- stream.HasNext()
+	}()
+
+	select {
+	case hasNext := <-hasNextCh:
+		t.Fatalf("HasNext returned before any SOW message arrived: %v", hasNext)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	_ = handler(&Message{header: &_Header{
+		command: CommandSOW,
+		queryID: []byte("sub-sync"),
+		subID:   []byte("sub-sync"),
+		topic:   []byte("orders"),
+	}, data: []byte(`{"id":1}`)})
+
+	select {
+	case hasNext := <-hasNextCh:
+		if !hasNext {
+			t.Fatalf("expected HasNext to report queued SOW data")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("timed out waiting for HasNext after SOW data arrival")
+	}
+
+	var message = stream.Next()
+	if message == nil || string(message.Data()) != `{"id":1}` {
+		t.Fatalf("unexpected SOW message: %#v", message)
+	}
+}
+
+func TestClientExecuteSowAndDeltaSubscribeWaitsForFirstMessage(t *testing.T) {
+	var _, handler, stream = executeSyncStreamWithProcessedAck(
+		t,
+		"execute-sow-and-delta-subscribe",
+		NewCommand("sow_and_delta_subscribe").SetTopic("orders").SetSubID("delta-sync"),
+		"delta-sync",
+	)
+
+	var hasNextCh = make(chan bool, 1)
+	go func() {
+		hasNextCh <- stream.HasNext()
+	}()
+
+	select {
+	case hasNext := <-hasNextCh:
+		t.Fatalf("HasNext returned before any delta SOW message arrived: %v", hasNext)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	_ = handler(&Message{header: &_Header{
+		command: CommandSOW,
+		queryID: []byte("delta-sync"),
+		subID:   []byte("delta-sync"),
+		topic:   []byte("orders"),
+	}, data: []byte(`{"id":2}`)})
+
+	select {
+	case hasNext := <-hasNextCh:
+		if !hasNext {
+			t.Fatalf("expected HasNext to report queued delta SOW data")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("timed out waiting for HasNext after delta SOW data arrival")
+	}
+
+	var message = stream.Next()
+	if message == nil || string(message.Data()) != `{"id":2}` {
+		t.Fatalf("unexpected delta SOW message: %#v", message)
+	}
+}
+
+func TestClientExecuteSowAndSubscribeCloseUnsubscribes(t *testing.T) {
+	var client, _, stream = executeSyncStreamWithProcessedAck(
+		t,
+		"execute-sow-and-subscribe-close",
+		NewCommand("sow_and_subscribe").SetTopic("orders").SetSubID("sub-close"),
+		"sub-close",
+	)
+
+	if err := stream.Close(); err != nil {
+		t.Fatalf("expected close success: %v", err)
+	}
+
+	var conn = client.connection.(*testConn)
+	var payload = conn.WrittenPayload()
+	if !strings.Contains(payload, `"c":"unsubscribe"`) || !strings.Contains(payload, `"sub_id":"sub-close"`) {
+		t.Fatalf("expected unsubscribe payload for live subscription, got %q", payload)
+	}
+}
+
+func TestClientExecuteSowAndSubscribeCloseRemovesQueryRoute(t *testing.T) {
+	var client, _, stream = executeSyncStreamWithProcessedAck(
+		t,
+		"execute-sow-and-subscribe-query-close",
+		NewCommand("sow_and_subscribe").SetTopic("orders").SetSubID("sub-close-query").SetQueryID("qid-close-query"),
+		"qid-close-query",
+	)
+
+	if _, exists := client.routes.Load("qid-close-query"); !exists {
+		t.Fatalf("expected query route registration before close")
+	}
+
+	if err := stream.Close(); err != nil {
+		t.Fatalf("expected close success: %v", err)
+	}
+
+	if _, exists := client.routes.Load("qid-close-query"); exists {
+		t.Fatalf("expected close to remove query route for live subscription")
 	}
 }
 

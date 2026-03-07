@@ -29,6 +29,9 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	if stream.SetSubscription("cid", "sub", "qid") != stream {
 		t.Fatalf("expected SetSubscription fluent return")
 	}
+	if stream.commandID != "cid" || stream.unsubscribeID != "sub" || stream.queryID != "qid" {
+		t.Fatalf("unexpected subscription stream ids")
+	}
 	stream.SetTimeout(123).SetMaxDepth(9)
 	if stream.Timeout() != 123 || stream.MaxDepth() != 9 {
 		t.Fatalf("unexpected timeout/max depth")
