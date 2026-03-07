@@ -239,7 +239,7 @@ func TestMessageStreamParitySelectors(t *testing.T) {
 	}
 
 	stream.SetSubscription("cid-4", "sub-4", "qid-4")
-	if stream.commandID != "sub-4" || stream.queryID != "qid-4" {
+	if stream.commandID != "cid-4" || stream.unsubscribeID != "sub-4" || stream.queryID != "qid-4" {
 		t.Fatalf("unexpected subscription stream ids")
 	}
 

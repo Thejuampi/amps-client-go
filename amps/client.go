@@ -1486,6 +1486,10 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 
 	if isStatsOnly {
 		messageStream.setStatsOnly()
+	} else if isSow && isSubscribe {
+		var subID, _ = command.SubID()
+		var queryID, _ = command.QueryID()
+		messageStream.SetSubscription(cmdID, subID, queryID)
 	} else if isSow {
 		messageStream.setQueryID(cmdID)
 		if !isSubscribe {

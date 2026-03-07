@@ -20,11 +20,12 @@ const (
 
 // MessageStream stores exported state used by AMPS client APIs.
 type MessageStream struct {
-	client    *Client
-	commandID string
-	queryID   string
-	current   *Message
-	sowKeyMap map[string]*Message
+	client        *Client
+	commandID     string
+	queryID       string
+	unsubscribeID string
+	current       *Message
+	sowKeyMap     map[string]*Message
 
 	state    int32
 	depth    uint64
@@ -115,13 +116,14 @@ func (ms *MessageStream) SetStatsOnly(commandID string, queryID ...string) *Mess
 }
 
 // SetSubscription configures the stream for subscription responses.
-func (ms *MessageStream) SetSubscription(commandID string, subID string, queryID ...string) *MessageStream {
+func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, queryID ...string) *MessageStream {
 	if ms == nil {
 		return nil
 	}
-	ms.commandID = commandID
-	if subID != "" {
-		ms.commandID = subID
+	ms.commandID = routeID
+	ms.unsubscribeID = routeID
+	if unsubscribeID != "" {
+		ms.unsubscribeID = unsubscribeID
 	}
 	if len(queryID) > 0 {
 		ms.queryID = queryID[0]
@@ -306,17 +308,26 @@ func (ms *MessageStream) Close() (err error) {
 	if ms.client == nil {
 		ms.commandID = ""
 		ms.queryID = ""
+		ms.unsubscribeID = ""
 	} else {
 		if len(ms.commandID) > 0 {
 
 			if atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed {
+				if ms.queryID != "" && ms.queryID != ms.unsubscribeID {
+					ms.client.routes.Delete(ms.queryID)
+				}
 				ms.setState(messageStreamStateComplete)
-				err = ms.client.Unsubscribe(ms.commandID)
+				if ms.unsubscribeID != "" {
+					err = ms.client.Unsubscribe(ms.unsubscribeID)
+				} else {
+					err = ms.client.Unsubscribe(ms.commandID)
+				}
 			} else {
 				ms.client.routes.Delete(ms.commandID)
 			}
 
 			ms.commandID = ""
+			ms.unsubscribeID = ""
 		} else if len(ms.queryID) > 0 {
 
 			if atomic.LoadInt32(&ms.state) >= messageStreamStateComplete {
@@ -343,6 +354,7 @@ func emptyMessageStream() *MessageStream {
 
 func (ms *MessageStream) setSubID(subID string) {
 	ms.commandID = subID
+	ms.unsubscribeID = subID
 	ms.setState(messageStreamStateSubscribed)
 }
 
