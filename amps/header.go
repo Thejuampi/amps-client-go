@@ -67,29 +67,49 @@ func (header *_Header) reset() {
 	header.command = CommandUnknown
 }
 
+const (
+	maxUint64Div10 = ^uint64(0) / 10
+	maxUint64Mod10 = ^uint64(0) % 10
+	maxUint32Div10 = ^uint32(0) / 10
+	maxUint32Mod10 = ^uint32(0) % 10
+)
+
 func parseUintBytes(value []byte) (uint64, bool) {
 	if len(value) == 0 {
 		return 0, false
 	}
 	var result uint64
-	for _, digit := range value {
+	for index := 0; index < len(value); index++ {
+		digit := value[index]
 		if digit < '0' || digit > '9' {
 			return 0, false
 		}
-		if result > (^uint64(0)-uint64(digit-'0'))/10 {
+		digitValue := uint64(digit - '0')
+		if result > maxUint64Div10 || (result == maxUint64Div10 && digitValue > maxUint64Mod10) {
 			return 0, false
 		}
-		result = (result * 10) + uint64(digit-'0')
+		result = (result * 10) + digitValue
 	}
 	return result, true
 }
 
 func parseUint32Value(value []byte) (uint, bool) {
-	parsed, ok := parseUintBytes(value)
-	if !ok || parsed > (1<<32)-1 {
+	if len(value) == 0 {
 		return 0, false
 	}
-	return uint(parsed), true
+	var result uint32
+	for index := 0; index < len(value); index++ {
+		digit := value[index]
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+		digitValue := uint32(digit - '0')
+		if result > maxUint32Div10 || (result == maxUint32Div10 && digitValue > maxUint32Mod10) {
+			return 0, false
+		}
+		result = (result * 10) + digitValue
+	}
+	return uint(result), true
 }
 
 func parseUint64Value(value []byte) (uint64, bool) {

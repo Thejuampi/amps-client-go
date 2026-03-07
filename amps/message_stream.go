@@ -233,8 +233,7 @@ func (ms *MessageStream) isStatsOnlyComplete(message *Message) bool {
 
 // Next executes the exported next operation.
 func (ms *MessageStream) Next() (message *Message) {
-	if ms.timedOut.Load() {
-		ms.timedOut.Store(false)
+	if ms.timedOut.Swap(false) {
 		return nil
 	}
 
