@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +47,23 @@ func TestParseStartupOptionsSupportsEqualsSyntaxAndMissingValues(t *testing.T) {
 	_, missingErr := parseStartupOptions([]string{"--verify-config"})
 	if missingErr == nil {
 		t.Fatalf("parseStartupOptions should fail when verify-config has no path")
+	}
+}
+
+func TestParseStartupOptionsKeepsFlagsAfterPositionalConfigPath(t *testing.T) {
+	var options, err = parseStartupOptions([]string{"config.xml", "-admin", ":8085", "-fanout=false"})
+	if err != nil {
+		t.Fatalf("parseStartupOptions returned error: %v", err)
+	}
+
+	if options.ConfigPath != "config.xml" {
+		t.Fatalf("ConfigPath = %q, want config.xml", options.ConfigPath)
+	}
+	if len(options.parseArgs) != 3 {
+		t.Fatalf("len(parseArgs) = %d, want 3", len(options.parseArgs))
+	}
+	if options.parseArgs[0] != "-admin" || options.parseArgs[1] != ":8085" || options.parseArgs[2] != "-fanout=false" {
+		t.Fatalf("parseArgs = %v, want trailing flags without positional config path", options.parseArgs)
 	}
 }
 
@@ -95,6 +113,104 @@ func TestHandleConfigModesRunLoadsConfigAndSetsEffectiveConfig(t *testing.T) {
 	}
 	if *flagVersion != "6.3.7.0" {
 		t.Fatalf("flagVersion = %q, want config version", *flagVersion)
+	}
+}
+
+func TestHandleConfigModesVerifyUsesConfiguredVersionWhenVersionFlagIsUnset(t *testing.T) {
+	restore := snapshotRuntimeFlags()
+	defer restore()
+
+	var tempDir = t.TempDir()
+	var configPath = filepath.Join(tempDir, "config.xml")
+	if err := os.WriteFile(configPath, []byte(strings.TrimSpace(`
+<AMPSConfig>
+    <RequiredMinimumVersion>6.4.0.0</RequiredMinimumVersion>
+    <Extensions>
+        <FakeAMPS>
+            <Version>6.4.0.0</Version>
+        </FakeAMPS>
+    </Extensions>
+</AMPSConfig>
+`)), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	var output bytes.Buffer
+	var err = handleConfigModesWithWriter(startupOptions{
+		Mode:       startupModeVerifyConfig,
+		ConfigPath: configPath,
+	}, &output)
+	if !errors.Is(err, errStartupHandled) {
+		t.Fatalf("handleConfigModesWithWriter returned %v, want errStartupHandled", err)
+	}
+	if !strings.Contains(output.String(), "config verified:") {
+		t.Fatalf("verify output = %q, want verification message", output.String())
+	}
+}
+
+func TestHandleConfigModesVerifyHonorsExplicitVersionOverride(t *testing.T) {
+	restore := snapshotRuntimeFlags()
+	defer restore()
+
+	*flagVersion = "6.3.1.0"
+
+	var tempDir = t.TempDir()
+	var configPath = filepath.Join(tempDir, "config.xml")
+	if err := os.WriteFile(configPath, []byte(strings.TrimSpace(`
+<AMPSConfig>
+    <RequiredMinimumVersion>6.4.0.0</RequiredMinimumVersion>
+    <Extensions>
+        <FakeAMPS>
+            <Version>6.4.0.0</Version>
+        </FakeAMPS>
+    </Extensions>
+</AMPSConfig>
+`)), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	var output bytes.Buffer
+	var err = handleConfigModesWithWriter(startupOptions{
+		Mode:       startupModeVerifyConfig,
+		ConfigPath: configPath,
+		userSet: map[string]bool{
+			"version": true,
+		},
+	}, &output)
+	if err == nil {
+		t.Fatalf("handleConfigModesWithWriter should fail when explicit version is below the required minimum")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "required minimum version") {
+		t.Fatalf("handleConfigModesWithWriter error = %v, want minimum version validation", err)
+	}
+}
+
+func TestHandleConfigModesVerifyUsesDefaultVersionWhenConfigVersionIsUnset(t *testing.T) {
+	restore := snapshotRuntimeFlags()
+	defer restore()
+
+	*flagVersion = "6.3.1.0"
+
+	var tempDir = t.TempDir()
+	var configPath = filepath.Join(tempDir, "config.xml")
+	if err := os.WriteFile(configPath, []byte(strings.TrimSpace(`
+<AMPSConfig>
+    <RequiredMinimumVersion>6.4.0.0</RequiredMinimumVersion>
+</AMPSConfig>
+`)), 0o600); err != nil {
+		t.Fatalf("WriteFile(config): %v", err)
+	}
+
+	var output bytes.Buffer
+	var err = handleConfigModesWithWriter(startupOptions{
+		Mode:       startupModeVerifyConfig,
+		ConfigPath: configPath,
+	}, &output)
+	if err == nil {
+		t.Fatalf("handleConfigModesWithWriter should fail when the default runtime version is below the required minimum")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "required minimum version") {
+		t.Fatalf("handleConfigModesWithWriter error = %v, want minimum version validation", err)
 	}
 }
 

@@ -17,10 +17,12 @@ import (
 var includePattern = regexp.MustCompile(`(?is)<Include(?P<attrs>[^>]*)>(?P<path>.*?)</Include>`)
 var envPattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 var includeCommentDefaultPattern = regexp.MustCompile(`(?is)<ConfigIncludeCommentDefault>\s*(true|false)\s*</ConfigIncludeCommentDefault>`)
+var xmlCommentPattern = regexp.MustCompile(`(?s)<!--.*?-->`)
 
 type LoadOptions struct {
-	Env            map[string]string
-	RuntimeVersion string
+	Env                   map[string]string
+	RuntimeVersion        string
+	DefaultRuntimeVersion string
 }
 
 type ExpandedConfig struct {
@@ -293,7 +295,9 @@ func LoadFile(path string, opts LoadOptions) (*ExpandedConfig, error) {
 	if runtimeErr != nil {
 		return nil, runtimeErr
 	}
-	if err := validateRuntimeConfig(runtime, document.UserDefinedFunctions, opts.RuntimeVersion); err != nil {
+	resolveRuntimePaths(&runtime, filepath.Dir(absolutePath))
+	var runtimeVersion = validationRuntimeVersion(runtime, opts.RuntimeVersion, opts.DefaultRuntimeVersion)
+	if err := validateRuntimeConfig(runtime, document.UserDefinedFunctions, runtimeVersion); err != nil {
 		return nil, err
 	}
 
@@ -350,8 +354,9 @@ func expandConfigFile(path string, opts LoadOptions, stack map[string]bool, incl
 
 	var content = expandEnvironment(string(contentBytes), opts.Env)
 	var commentDefault = detectIncludeCommentDefault(content, includeComments)
+	var protectedContent, comments = protectXMLComments(content)
 	var expandErr error
-	var expanded = includePattern.ReplaceAllStringFunc(content, func(match string) string {
+	var expanded = includePattern.ReplaceAllStringFunc(protectedContent, func(match string) string {
 		if expandErr != nil {
 			return ""
 		}
@@ -399,7 +404,7 @@ func expandConfigFile(path string, opts LoadOptions, stack map[string]bool, incl
 		return "", expandErr
 	}
 
-	return expanded, nil
+	return restoreXMLComments(expanded, comments), nil
 }
 
 func clonePathStack(input map[string]bool) map[string]bool {
@@ -408,6 +413,28 @@ func clonePathStack(input map[string]bool) map[string]bool {
 		output[key] = value
 	}
 	return output
+}
+
+func protectXMLComments(content string) (string, []string) {
+	var comments []string
+	var protected = xmlCommentPattern.ReplaceAllStringFunc(content, func(match string) string {
+		var placeholder = xmlCommentPlaceholder(len(comments))
+		comments = append(comments, match)
+		return placeholder
+	})
+	return protected, comments
+}
+
+func restoreXMLComments(content string, comments []string) string {
+	var index int
+	for index = 0; index < len(comments); index++ {
+		content = strings.ReplaceAll(content, xmlCommentPlaceholder(index), comments[index])
+	}
+	return content
+}
+
+func xmlCommentPlaceholder(index int) string {
+	return "__AMPSCONFIG_COMMENT_" + strconv.Itoa(index) + "__"
 }
 
 func expandEnvironment(content string, env map[string]string) string {
@@ -450,6 +477,39 @@ func parseIncludeCommentOverride(attrs string) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+func resolveRuntimePaths(runtime *RuntimeConfig, baseDir string) {
+	if runtime == nil || strings.TrimSpace(baseDir) == "" {
+		return
+	}
+
+	for index := range runtime.Logging.Targets {
+		runtime.Logging.Targets[index].FileName = resolveConfigPath(baseDir, runtime.Logging.Targets[index].FileName)
+	}
+
+	runtime.Admin.FileName = resolveConfigPath(baseDir, runtime.Admin.FileName)
+	runtime.Admin.Certificate = resolveConfigPath(baseDir, runtime.Admin.Certificate)
+	runtime.Admin.PrivateKey = resolveConfigPath(baseDir, runtime.Admin.PrivateKey)
+
+	runtime.Extensions.FakeAMPS.JournalDisk = resolveConfigPath(baseDir, runtime.Extensions.FakeAMPS.JournalDisk)
+	runtime.Extensions.FakeAMPS.SOWDisk = resolveConfigPath(baseDir, runtime.Extensions.FakeAMPS.SOWDisk)
+	runtime.Extensions.FakeAMPS.CrashArtifactDir = resolveConfigPath(baseDir, runtime.Extensions.FakeAMPS.CrashArtifactDir)
+	runtime.Extensions.FakeAMPS.ExternalLibraryPath = resolveConfigPath(baseDir, runtime.Extensions.FakeAMPS.ExternalLibraryPath)
+}
+
+func resolveConfigPath(baseDir string, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || filepath.IsAbs(value) {
+		return value
+	}
+
+	var resolved = filepath.Join(baseDir, value)
+	var absolutePath, err = filepath.Abs(resolved)
+	if err != nil {
+		return resolved
+	}
+	return absolutePath
 }
 
 func buildRuntimeConfig(document xmlConfig) (RuntimeConfig, error) {
@@ -684,6 +744,18 @@ func buildRuntimeConfig(document xmlConfig) (RuntimeConfig, error) {
 	return runtime, nil
 }
 
+func validationRuntimeVersion(runtime RuntimeConfig, override string, fallback string) string {
+	override = strings.TrimSpace(override)
+	if override != "" {
+		return override
+	}
+	var configured = strings.TrimSpace(runtime.Extensions.FakeAMPS.Version)
+	if configured != "" {
+		return configured
+	}
+	return strings.TrimSpace(fallback)
+}
+
 type ModuleConfig struct {
 	Name    string
 	Library string
@@ -693,6 +765,14 @@ func validateRuntimeConfig(runtime RuntimeConfig, udfs xmlUDFs, runtimeVersion s
 	if runtime.RequiredMinimumVersion != "" && runtimeVersion != "" {
 		if amps.ConvertVersionToNumber(runtimeVersion) < amps.ConvertVersionToNumber(runtime.RequiredMinimumVersion) {
 			return fmt.Errorf("runtime version %s is below required minimum version %s", runtimeVersion, runtime.RequiredMinimumVersion)
+		}
+	}
+
+	for _, transport := range runtime.Transports {
+		switch transport.Type {
+		case "", "tcp":
+		default:
+			return fmt.Errorf("unsupported transport type %q", transport.Type)
 		}
 	}
 
@@ -818,10 +898,6 @@ func validateAdminCipherSuites(cipherNames []string) error {
 }
 
 func isSupportedBuiltInModule(name string) bool {
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "amps-") {
-		return true
-	}
-
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "":
 		return true

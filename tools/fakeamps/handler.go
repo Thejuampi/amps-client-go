@@ -290,11 +290,9 @@ func handleConnection(conn net.Conn) {
 			writer.send(buildAck(buf, "received", commandID, "success"))
 		}
 
-		if sow != nil && *flagFanout {
+		if sow != nil {
 			var expired = sow.gcExpiredRecords()
-			for _, record := range expired {
-				fanoutOOFWithReason(conn, record.topic, record.sowKey, record.bookmark, "expire", &stats)
-			}
+			notifyExpiredSOWRecords(expired)
 		}
 
 		switch command {
@@ -716,7 +714,7 @@ func handleConnection(conn net.Conn) {
 				}
 				ts := makeTimestamp()
 				if isDelta {
-					_, _, previousWorkspacePayload, currentWorkspacePayload = sow.deltaUpsertWithPrevious(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
+					_, _, previousWorkspacePayload, currentWorkspacePayload, evictedRecord = sow.deltaUpsertWithPrevious(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				} else {
 					_, _, previousWorkspacePayload, evictedRecord = sow.upsertWithEvicted(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				}
@@ -756,6 +754,7 @@ func handleConnection(conn net.Conn) {
 					fanoutPublishWithConflation(conn, topic, payload, bm, ts, effectiveSowKey, mt, isQueueTopic, &stats, conflationBuffers)
 				}
 				if evictedRecord != nil {
+					workspaceSessions.NotifyRemove(topic, evictedRecord.sowKey, evictedRecord.bookmark, "evicted")
 					fanoutOOFWithReason(conn, topic, evictedRecord.sowKey, evictedRecord.bookmark, "evicted", &stats)
 				}
 

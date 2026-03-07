@@ -431,11 +431,11 @@ func (c *sowCache) upsertWithEvicted(topic, sowKey string, payload []byte, bookm
 // JSON merge-patch semantics (RFC 7396). If the record doesn't exist,
 // the delta becomes the full record.
 func (c *sowCache) deltaUpsert(topic, sowKey string, deltaPayload []byte, bookmark, timestamp string, seqNum uint64, expiration time.Duration) (inserted bool, updated bool, mergedPayload []byte) {
-	inserted, updated, _, mergedPayload = c.deltaUpsertWithPrevious(topic, sowKey, deltaPayload, bookmark, timestamp, seqNum, expiration)
+	inserted, updated, _, mergedPayload, _ = c.deltaUpsertWithPrevious(topic, sowKey, deltaPayload, bookmark, timestamp, seqNum, expiration)
 	return
 }
 
-func (c *sowCache) deltaUpsertWithPrevious(topic, sowKey string, deltaPayload []byte, bookmark, timestamp string, seqNum uint64, expiration time.Duration) (inserted bool, updated bool, previousPayload []byte, mergedPayload []byte) {
+func (c *sowCache) deltaUpsertWithPrevious(topic, sowKey string, deltaPayload []byte, bookmark, timestamp string, seqNum uint64, expiration time.Duration) (inserted bool, updated bool, previousPayload []byte, mergedPayload []byte, evicted *sowRecord) {
 	if sowKey == "" {
 		sowKey = "auto-" + strconv.FormatUint(seqNum, 10)
 	}
@@ -453,7 +453,7 @@ func (c *sowCache) deltaUpsertWithPrevious(topic, sowKey string, deltaPayload []
 		dataCopy := make([]byte, len(deltaPayload))
 		copy(dataCopy, deltaPayload)
 
-		evicted := t.evictIfNeeded()
+		evicted = t.evictIfNeeded()
 		if evicted != nil {
 			log.Printf("fakeamps: sow evicted key=%s topic=%s (policy=%d)", evicted.sowKey, topic, t.eviction)
 		}

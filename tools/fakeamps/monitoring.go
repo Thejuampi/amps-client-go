@@ -71,7 +71,7 @@ type replicationDescriptor struct {
 }
 
 type sqlWorkspaceOptions struct {
-	TopN     int    `json:"top_n"`
+	TopN     *int   `json:"top_n"`
 	OrderBy  string `json:"order_by"`
 	Bookmark string `json:"bookmark"`
 	Delta    bool   `json:"delta"`
@@ -506,6 +506,13 @@ func (service *monitoringService) handleSessionState(w http.ResponseWriter, r *h
 		jsonResponse(w, principal)
 		return
 	}
+	if !service.authEnabled() {
+		jsonResponse(w, adminPrincipal{
+			Username: "open",
+			Role:     "operator",
+		})
+		return
+	}
 	jsonError(w, http.StatusUnauthorized, "no active session")
 }
 
@@ -790,27 +797,7 @@ func (service *monitoringService) handleSOWClear(w http.ResponseWriter, r *http.
 
 	var topic = strings.TrimSpace(r.URL.Query().Get("topic"))
 	if topic == "" {
-		var cleared int
-		var removed []workspaceRemovedRecord
-		for _, currentTopic := range sow.allTopics() {
-			var raw, ok = sow.topics.Load(currentTopic)
-			if !ok {
-				continue
-			}
-			var current = raw.(*topicSOW)
-			current.mu.Lock()
-			cleared += len(current.records)
-			for _, record := range current.records {
-				removed = append(removed, workspaceRemovedRecord{
-					Topic:    currentTopic,
-					SOWKey:   record.sowKey,
-					Bookmark: record.bookmark,
-					Reason:   "clear",
-				})
-			}
-			current.records = make(map[string]*sowRecord)
-			current.mu.Unlock()
-		}
+		var cleared, removed = clearAllSOWRecords("clear")
 		notifyWorkspaceRemovals(removed)
 		jsonResponse(w, map[string]interface{}{
 			"status":          "cleared",
@@ -819,7 +806,7 @@ func (service *monitoringService) handleSOWClear(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var raw, ok = sow.topics.Load(topic)
+	var cleared, removed, ok = clearSOWTopicRecords(topic, "clear")
 	if !ok {
 		jsonResponse(w, map[string]interface{}{
 			"status":          "not_found",
@@ -829,20 +816,6 @@ func (service *monitoringService) handleSOWClear(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var current = raw.(*topicSOW)
-	current.mu.Lock()
-	var cleared = len(current.records)
-	var removed = make([]workspaceRemovedRecord, 0, len(current.records))
-	for _, record := range current.records {
-		removed = append(removed, workspaceRemovedRecord{
-			Topic:    topic,
-			SOWKey:   record.sowKey,
-			Bookmark: record.bookmark,
-			Reason:   "clear",
-		})
-	}
-	current.records = make(map[string]*sowRecord)
-	current.mu.Unlock()
 	notifyWorkspaceRemovals(removed)
 	jsonResponse(w, map[string]interface{}{
 		"status":          "cleared",
@@ -1002,17 +975,18 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 
 	switch mode {
 	case "sow":
+		var rows = service.collectSOWRows(
+			request.Topic,
+			request.Filter,
+			workspaceTopN(request.Options),
+			request.Options.OrderBy,
+			request.Options.Bookmark,
+		)
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
 			"type":       "workspace_snapshot",
 			"request_id": request.RequestID,
 			"mode":       mode,
-			"rows": service.collectSOWRows(
-				request.Topic,
-				request.Filter,
-				request.Options.TopN,
-				request.Options.OrderBy,
-				request.Options.Bookmark,
-			),
+			"rows":       rows,
 		}))
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
 			"type":       "workspace_complete",
@@ -1020,20 +994,25 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 			"reason":     "snapshot_complete",
 		}))
 	case "subscribe":
+		var rows = []map[string]interface{}{}
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
 			"type":       "workspace_snapshot",
 			"request_id": request.RequestID,
 			"mode":       mode,
-			"rows":       []map[string]interface{}{},
+			"rows":       rows,
 		}))
 		if request.Options.Live {
-			workspaceSessions.Set(ws, workspaceLiveQuery{
+			var query = workspaceLiveQuery{
 				RequestID: request.RequestID,
 				Mode:      mode,
 				Topic:     request.Topic,
 				Filter:    request.Filter,
 				Options:   request.Options,
-			})
+			}
+			if workspaceQueryUsesSnapshots(query) {
+				query.Signature = workspaceRowsSignature(rows)
+			}
+			workspaceSessions.Set(ws, query)
 			return
 		}
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
@@ -1042,26 +1021,31 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 			"reason":     "snapshot_complete",
 		}))
 	case "sow_and_subscribe":
+		var rows = service.collectSOWRows(
+			request.Topic,
+			request.Filter,
+			workspaceTopN(request.Options),
+			request.Options.OrderBy,
+			request.Options.Bookmark,
+		)
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
 			"type":       "workspace_snapshot",
 			"request_id": request.RequestID,
 			"mode":       mode,
-			"rows": service.collectSOWRows(
-				request.Topic,
-				request.Filter,
-				request.Options.TopN,
-				request.Options.OrderBy,
-				request.Options.Bookmark,
-			),
+			"rows":       rows,
 		}))
 		if request.Options.Live {
-			workspaceSessions.Set(ws, workspaceLiveQuery{
+			var query = workspaceLiveQuery{
 				RequestID: request.RequestID,
 				Mode:      mode,
 				Topic:     request.Topic,
 				Filter:    request.Filter,
 				Options:   request.Options,
-			})
+			}
+			if workspaceQueryUsesSnapshots(query) {
+				query.Signature = workspaceRowsSignature(rows)
+			}
+			workspaceSessions.Set(ws, query)
 			return
 		}
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
@@ -1094,10 +1078,11 @@ func (service *monitoringService) collectSOWRecords(topic string, filter string)
 		return []map[string]interface{}{}
 	}
 
-	var result = sow.query(topic, filter, -1, "")
-	var records = make([]map[string]interface{}, 0, len(result.records))
-	for _, record := range result.records {
+	var snapshotRecords = workspaceSnapshotRecords(topic, filter, -1, "", "")
+	var records = make([]map[string]interface{}, 0, len(snapshotRecords))
+	for _, record := range snapshotRecords {
 		records = append(records, map[string]interface{}{
+			"topic":     record.topic,
 			"sow_key":   record.sowKey,
 			"bookmark":  record.bookmark,
 			"timestamp": record.timestamp,
@@ -1112,14 +1097,10 @@ func (service *monitoringService) collectSOWRows(topic string, filter string, to
 		return []map[string]interface{}{}
 	}
 
-	if topN == 0 {
-		topN = -1
-	}
-
-	var result = querySOWWithBookmark(topic, filter, topN, orderBy, bookmark)
-	var rows = make([]map[string]interface{}, 0, len(result.records))
-	for _, record := range result.records {
-		rows = append(rows, workspaceRow(topic, record.sowKey, record.bookmark, record.timestamp, "record", record.payload))
+	var snapshotRecords = workspaceSnapshotRecords(topic, filter, topN, orderBy, bookmark)
+	var rows = make([]map[string]interface{}, 0, len(snapshotRecords))
+	for _, record := range snapshotRecords {
+		rows = append(rows, workspaceRow(record.topic, record.sowKey, record.bookmark, record.timestamp, "record", record.payload))
 	}
 	return rows
 }
@@ -1319,6 +1300,13 @@ func normalizeWorkspaceMode(raw string) string {
 	}
 }
 
+func workspaceTopN(options sqlWorkspaceOptions) int {
+	if options.TopN == nil {
+		return -1
+	}
+	return *options.TopN
+}
+
 func randomToken() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -1359,10 +1347,87 @@ type workspaceRemovedRecord struct {
 	Reason   string
 }
 
+func clearAllSOWRecords(reason string) (int, []workspaceRemovedRecord) {
+	if sow == nil {
+		return 0, nil
+	}
+
+	var cleared int
+	var removed []workspaceRemovedRecord
+	for _, topic := range sow.allTopics() {
+		var raw, ok = sow.topics.Load(topic)
+		if !ok {
+			continue
+		}
+		var current = raw.(*topicSOW)
+		current.mu.Lock()
+		cleared += len(current.records)
+		for _, record := range current.records {
+			removed = append(removed, workspaceRemovedRecord{
+				Topic:    topic,
+				SOWKey:   record.sowKey,
+				Bookmark: record.bookmark,
+				Reason:   reason,
+			})
+		}
+		current.records = make(map[string]*sowRecord)
+		current.mu.Unlock()
+	}
+	return cleared, removed
+}
+
+func clearSOWTopicRecords(topic string, reason string) (int, []workspaceRemovedRecord, bool) {
+	if sow == nil {
+		return 0, nil, false
+	}
+
+	var raw, ok = sow.topics.Load(topic)
+	if !ok {
+		return 0, nil, false
+	}
+
+	var current = raw.(*topicSOW)
+	current.mu.Lock()
+	var cleared = len(current.records)
+	var removed = make([]workspaceRemovedRecord, 0, len(current.records))
+	for _, record := range current.records {
+		removed = append(removed, workspaceRemovedRecord{
+			Topic:    topic,
+			SOWKey:   record.sowKey,
+			Bookmark: record.bookmark,
+			Reason:   reason,
+		})
+	}
+	current.records = make(map[string]*sowRecord)
+	current.mu.Unlock()
+	return cleared, removed, true
+}
+
 func notifyWorkspaceRemovals(records []workspaceRemovedRecord) {
+	var stats connStats
 	for _, record := range records {
 		workspaceSessions.NotifyRemove(record.Topic, record.SOWKey, record.Bookmark, record.Reason)
+		if *flagFanout {
+			fanoutOOFWithReason(nil, record.Topic, record.SOWKey, record.Bookmark, record.Reason, &stats)
+		}
 	}
+}
+
+func notifyExpiredSOWRecords(records []sowRecord) {
+	if len(records) == 0 {
+		return
+	}
+
+	var removed = make([]workspaceRemovedRecord, 0, len(records))
+	for _, record := range records {
+		removed = append(removed, workspaceRemovedRecord{
+			Topic:    record.topic,
+			SOWKey:   record.sowKey,
+			Bookmark: record.bookmark,
+			Reason:   "expire",
+		})
+	}
+	notifyWorkspaceRemovals(removed)
 }
 
 func startAdminServer(addr string) error {

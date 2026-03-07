@@ -34,6 +34,7 @@ var configuredLogClosers []io.Closer
 type startupOptions struct {
 	Mode       startupMode
 	ConfigPath string
+	parseArgs  []string
 	userSet    map[string]bool
 }
 
@@ -63,11 +64,13 @@ func parseStartupOptions(args []string) (startupOptions, error) {
 			continue
 		}
 		options.userSet[name] = true
+		options.parseArgs = append(options.parseArgs, current)
 
 		if !hasValue && flagConsumesNextValue(name) && index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
 			index++
 			value = args[index]
 			hasValue = true
+			options.parseArgs = append(options.parseArgs, value)
 		}
 
 		switch name {
@@ -161,8 +164,13 @@ func handleConfigModesWithWriter(options startupOptions, stdout io.Writer) error
 		return nil
 	}
 
+	var runtimeVersion string
+	if options.FlagSetByUser("version") {
+		runtimeVersion = *flagVersion
+	}
 	var expanded, err = ampsconfig.LoadFile(options.ConfigPath, ampsconfig.LoadOptions{
-		RuntimeVersion: *flagVersion,
+		RuntimeVersion:        runtimeVersion,
+		DefaultRuntimeVersion: *flagVersion,
 	})
 	if err != nil {
 		return err
@@ -288,6 +296,15 @@ func applyRuntimeConfig(runtimeConfig ampsconfig.RuntimeConfig, options startupO
 	}
 
 	return configureLoggingTargets(runtimeConfig.Logging)
+}
+
+func configBenchmarkStabilityOverrides(runtimeConfig ampsconfig.RuntimeConfig) benchmarkStabilityOverrides {
+	return benchmarkStabilityOverrides{
+		logConnSet:            runtimeConfig.Extensions.FakeAMPS.LogConnections != nil,
+		logStatsSet:           runtimeConfig.Extensions.FakeAMPS.LogStats != nil,
+		sowGCIntervalSet:      runtimeConfig.Extensions.FakeAMPS.HasSOWGCInterval,
+		queueLeaseIntervalSet: runtimeConfig.Extensions.FakeAMPS.HasQueueLeaseInterval,
+	}
 }
 
 func configureLoggingTargets(loggingConfig ampsconfig.LoggingConfig) error {

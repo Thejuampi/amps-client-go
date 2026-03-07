@@ -107,19 +107,8 @@ func handleAdminStats(w http.ResponseWriter, r *http.Request) {
 
 func handleAdminSOW(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "DELETE" {
-		// Clear all SOW data.
-		if sow != nil {
-			for _, t := range sow.allTopics() {
-				raw, ok := sow.topics.Load(t)
-				if !ok {
-					continue
-				}
-				ts := raw.(*topicSOW)
-				ts.mu.Lock()
-				ts.records = make(map[string]*sowRecord)
-				ts.mu.Unlock()
-			}
-		}
+		_, removed := clearAllSOWRecords("clear")
+		notifyWorkspaceRemovals(removed)
 		jsonResponse(w, map[string]string{"status": "cleared"})
 		return
 	}
@@ -163,21 +152,15 @@ func handleAdminSOWTopic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == "DELETE" {
-		if sow != nil {
-			raw, ok := sow.topics.Load(topic)
-			if ok {
-				t := raw.(*topicSOW)
-				t.mu.Lock()
-				cleared := len(t.records)
-				t.records = make(map[string]*sowRecord)
-				t.mu.Unlock()
-				jsonResponse(w, map[string]interface{}{
-					"status":          "cleared",
-					"topic":           topic,
-					"records_cleared": cleared,
-				})
-				return
-			}
+		var cleared, removed, ok = clearSOWTopicRecords(topic, "clear")
+		if ok {
+			notifyWorkspaceRemovals(removed)
+			jsonResponse(w, map[string]interface{}{
+				"status":          "cleared",
+				"topic":           topic,
+				"records_cleared": cleared,
+			})
+			return
 		}
 		jsonResponse(w, map[string]interface{}{"status": "not_found", "topic": topic})
 		return

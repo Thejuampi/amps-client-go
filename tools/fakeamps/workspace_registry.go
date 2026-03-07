@@ -13,6 +13,7 @@ type workspaceLiveQuery struct {
 	Topic     string
 	Filter    string
 	Options   sqlWorkspaceOptions
+	Signature string
 }
 
 type workspaceSessionRegistry struct {
@@ -90,6 +91,12 @@ func (registry *workspaceSessionRegistry) NotifyRow(topic string, previousPayloa
 		if !topicMatches(topic, query.Topic) {
 			continue
 		}
+		if workspaceQueryUsesSnapshots(query) {
+			if err := registry.writeWorkspaceSnapshot(conn, query); err != nil {
+				registry.Remove(conn)
+			}
+			continue
+		}
 		var matchedBefore = len(previousPayload) > 0 && workspaceQueryMatches(query, topic, previousPayload)
 		if !workspaceQueryMatches(query, topic, payload) {
 			if matchedBefore && sowKey != "" {
@@ -135,6 +142,12 @@ func (registry *workspaceSessionRegistry) NotifyRemove(topic string, sowKey stri
 		if !topicMatches(topic, query.Topic) {
 			continue
 		}
+		if workspaceQueryUsesSnapshots(query) {
+			if err := registry.writeWorkspaceSnapshot(conn, query); err != nil {
+				registry.Remove(conn)
+			}
+			continue
+		}
 
 		var message = mustJSON(map[string]interface{}{
 			"type":       "workspace_remove",
@@ -161,6 +174,150 @@ func workspaceQueryMatches(query workspaceLiveQuery, topic string, payload []byt
 		return false
 	}
 	return evaluateFilter(query.Filter, payload)
+}
+
+func workspaceQueryUsesSnapshots(query workspaceLiveQuery) bool {
+	return query.Options.TopN != nil || strings.TrimSpace(query.Options.OrderBy) != ""
+}
+
+func (registry *workspaceSessionRegistry) writeWorkspaceSnapshot(conn *websocketConn, query workspaceLiveQuery) error {
+	var rows = workspaceSnapshotRows(query)
+	var signature = workspaceRowsSignature(rows)
+	if query.Signature == signature {
+		return nil
+	}
+
+	var message = mustJSON(map[string]interface{}{
+		"type":       "workspace_snapshot",
+		"request_id": query.RequestID,
+		"mode":       query.Mode,
+		"rows":       rows,
+	})
+	if _, err := conn.WriteText(message); err != nil {
+		return err
+	}
+
+	if registry != nil {
+		registry.mu.Lock()
+		if current, ok := registry.queries[conn]; ok && current.RequestID == query.RequestID {
+			current.Signature = signature
+			registry.queries[conn] = current
+		}
+		registry.mu.Unlock()
+	}
+	return nil
+}
+
+func workspaceSnapshotRows(query workspaceLiveQuery) []map[string]interface{} {
+	if sow == nil || query.Topic == "" {
+		return []map[string]interface{}{}
+	}
+
+	var records = workspaceSnapshotRecords(query.Topic, query.Filter, workspaceTopN(query.Options), query.Options.OrderBy, query.Options.Bookmark)
+	var rows = make([]map[string]interface{}, 0, len(records))
+	for _, record := range records {
+		rows = append(rows, workspaceRow(record.topic, record.sowKey, record.bookmark, record.timestamp, "record", record.payload))
+	}
+	return rows
+}
+
+func workspaceSnapshotRecords(topic string, filter string, topN int, orderBy string, bookmark string) []sowRecord {
+	if sow == nil || topic == "" {
+		return nil
+	}
+
+	if !workspaceUsesTopicPattern(topic) {
+		return querySOWWithBookmark(topic, filter, topN, orderBy, bookmark).records
+	}
+
+	var topics = workspaceMatchingTopics(topic)
+	var records []sowRecord
+	for _, matchedTopic := range topics {
+		records = append(records, querySOWWithBookmark(matchedTopic, filter, -1, "", bookmark).records...)
+	}
+
+	sortWorkspaceRecords(records, orderBy)
+	if topN == 0 {
+		return nil
+	}
+	if topN > 0 && topN < len(records) {
+		records = records[:topN]
+	}
+	return records
+}
+
+func workspaceUsesTopicPattern(topic string) bool {
+	return topic == ">" ||
+		strings.HasPrefix(topic, "^") ||
+		strings.Contains(topic, "*") ||
+		strings.Contains(topic, "..") ||
+		strings.HasSuffix(topic, ".>")
+}
+
+func workspaceMatchingTopics(topicPattern string) []string {
+	var seen = make(map[string]struct{})
+	var topics []string
+	var addTopic = func(topic string) {
+		if topic == "" || !topicMatches(topic, topicPattern) {
+			return
+		}
+		if _, ok := seen[topic]; ok {
+			return
+		}
+		seen[topic] = struct{}{}
+		topics = append(topics, topic)
+	}
+
+	if sow != nil {
+		for _, topic := range sow.allTopics() {
+			addTopic(topic)
+		}
+	}
+	if journal != nil {
+		for _, entry := range journal.replayAll(0) {
+			addTopic(entry.topic)
+		}
+	}
+
+	sort.Strings(topics)
+	return topics
+}
+
+func sortWorkspaceRecords(records []sowRecord, orderBy string) {
+	if orderBy != "" {
+		var desc bool
+		var field = orderBy
+		if strings.HasPrefix(orderBy, "-") {
+			desc = true
+			field = orderBy[1:]
+		} else if strings.HasSuffix(strings.ToUpper(orderBy), " DESC") {
+			desc = true
+			field = strings.TrimSuffix(strings.TrimSuffix(orderBy, " DESC"), " desc")
+			field = strings.TrimSpace(field)
+		}
+
+		sort.Slice(records, func(i, j int) bool {
+			var left = extractJSONStringField(records[i].payload, field)
+			var right = extractJSONStringField(records[j].payload, field)
+			if desc {
+				return left > right
+			}
+			return left < right
+		})
+		return
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].seqNum < records[j].seqNum
+	})
+}
+
+func workspaceRowsSignature(rows []map[string]interface{}) string {
+	var payload, err = json.Marshal(rows)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
 }
 
 func workspaceRow(topic string, sowKey string, bookmark string, timestamp string, rowType string, payload []byte) map[string]interface{} {

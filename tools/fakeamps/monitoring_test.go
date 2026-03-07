@@ -136,6 +136,24 @@ func TestMonitoringServiceAuthenticationWithoutUsersFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMonitoringServiceSessionStateReportsOpenOperatorAccess(t *testing.T) {
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var handler = service.Handler()
+
+	var response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/amps/session", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET /amps/session status = %d, want 200 in open-admin mode", response.Code)
+	}
+	var principal adminPrincipal
+	if err := json.Unmarshal(response.Body.Bytes(), &principal); err != nil {
+		t.Fatalf("json.Unmarshal(open session): %v", err)
+	}
+	if principal.Role != "operator" {
+		t.Fatalf("GET /amps/session role = %q, want operator", principal.Role)
+	}
+}
+
 func TestMonitoringServiceAnonymousPathsStayViewerOnly(t *testing.T) {
 	var service = newMonitoringService(monitoringServiceOptions{
 		Admin: ampsconfig.AdminConfig{
@@ -239,6 +257,38 @@ func TestMonitoringServiceSQLWebSocketIsReadOnlyAndCanQuerySOW(t *testing.T) {
 	_, publishResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
 	if !strings.Contains(string(publishResponse), `"error":"read_only"`) {
 		t.Fatalf("publish websocket response = %s, want read_only error", string(publishResponse))
+	}
+}
+
+func TestMonitoringServiceWorkspaceTopZeroReturnsNoRows(t *testing.T) {
+	var oldSOW = sow
+	sow = newSOWCache()
+	defer func() {
+		sow = oldSOW
+	}()
+
+	sow.upsert("orders", "k1", []byte(`{"id":1,"status":"open"}`), "bm1", "ts1", 1, 0)
+	sow.upsert("orders", "k2", []byte(`{"id":2,"status":"open"}`), "bm2", "ts2", 2, 0)
+
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var initialRows = service.collectSOWRows("orders", "", 0, "", "")
+	if len(initialRows) != 0 {
+		t.Fatalf("collectSOWRows(top_n=0) returned %d rows, want none", len(initialRows))
+	}
+
+	var topZero = 0
+
+	var liveRows = workspaceSnapshotRows(workspaceLiveQuery{
+		RequestID: "req-top-zero",
+		Mode:      "sow_and_subscribe",
+		Topic:     "orders",
+		Options: sqlWorkspaceOptions{
+			TopN: &topZero,
+			Live: true,
+		},
+	})
+	if len(liveRows) != 0 {
+		t.Fatalf("workspaceSnapshotRows(top_n=0) returned %d rows, want none", len(liveRows))
 	}
 }
 
@@ -414,41 +464,26 @@ func TestMonitoringServiceWorkspaceRunProtocolSupportsOptionsAndLiveUpdates(t *t
 	sendFrame(t, publisher, buildCommandFrame(`{"c":"publish","cid":"pub-1","t":"orders","a":"processed","k":"k4","mt":"json"}`, []byte(`{"id":4,"status":"open"}`)))
 
 	_, rowResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
-	if !strings.Contains(string(rowResponse), `"type":"workspace_row"`) {
-		t.Fatalf("workspace row response = %s, want workspace_row", string(rowResponse))
+	if !strings.Contains(string(rowResponse), `"type":"workspace_snapshot"`) {
+		t.Fatalf("workspace row response = %s, want refreshed workspace_snapshot", string(rowResponse))
 	}
-	if !strings.Contains(string(rowResponse), `"id":4`) {
-		t.Fatalf("workspace row response = %s, want live publish row", string(rowResponse))
+	if !strings.Contains(string(rowResponse), `"id":4`) || strings.Contains(string(rowResponse), `"id":2`) {
+		t.Fatalf("workspace row response = %s, want refreshed top_n snapshot with only id 4", string(rowResponse))
 	}
 
 	sendFrame(t, publisher, buildCommandFrame(`{"c":"publish","cid":"pub-2","t":"orders","a":"processed","k":"k4","mt":"json"}`, []byte(`{"id":4,"status":"closed"}`)))
 
 	_, mismatchRemoveResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
-	if !strings.Contains(string(mismatchRemoveResponse), `"type":"workspace_remove"`) {
-		t.Fatalf("workspace mismatch remove response = %s, want workspace_remove", string(mismatchRemoveResponse))
+	if !strings.Contains(string(mismatchRemoveResponse), `"type":"workspace_snapshot"`) {
+		t.Fatalf("workspace mismatch remove response = %s, want refreshed workspace_snapshot", string(mismatchRemoveResponse))
 	}
-	if !strings.Contains(string(mismatchRemoveResponse), `"sow_key":"k4"`) {
-		t.Fatalf("workspace mismatch remove response = %s, want updated sow key", string(mismatchRemoveResponse))
-	}
-	if !strings.Contains(string(mismatchRemoveResponse), `"reason":"match"`) {
-		t.Fatalf("workspace mismatch remove response = %s, want match reason", string(mismatchRemoveResponse))
+	if !strings.Contains(string(mismatchRemoveResponse), `"id":2`) || strings.Contains(string(mismatchRemoveResponse), `"id":4`) {
+		t.Fatalf("workspace mismatch remove response = %s, want snapshot to fall back to id 2", string(mismatchRemoveResponse))
 	}
 
 	sendFrame(t, publisher, buildCommandFrame(`{"c":"publish","cid":"pub-3","t":"orders","a":"processed","k":"k5","mt":"json"}`, []byte(`{"id":5,"status":"closed"}`)))
 
-	if _, unexpected, err := tryReadWebSocketFrame(websocketConn, 150*time.Millisecond); err == nil {
-		t.Fatalf("unexpected websocket frame after unmatched publish: %s", string(unexpected))
-	}
-
 	sendFrame(t, publisher, buildCommandFrame(`{"c":"sow_delete","cid":"del-1","t":"orders","k":"k4","a":"processed"}`, nil))
-
-	_, removeResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
-	if !strings.Contains(string(removeResponse), `"type":"workspace_remove"`) {
-		t.Fatalf("workspace remove response = %s, want workspace_remove", string(removeResponse))
-	}
-	if !strings.Contains(string(removeResponse), `"reason":"delete"`) {
-		t.Fatalf("workspace remove response = %s, want delete reason", string(removeResponse))
-	}
 
 	writeTextWebSocketFrame(t, websocketConn, []byte(`{"type":"stop","request_id":"req-1"}`))
 	_, completeResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
@@ -1030,8 +1065,11 @@ func TestMonitoringServiceAuxiliaryRoutesAndErrors(t *testing.T) {
 
 	var sessionResponse = httptest.NewRecorder()
 	handler.ServeHTTP(sessionResponse, httptest.NewRequest(http.MethodGet, "/amps/session", nil))
-	if sessionResponse.Code != http.StatusUnauthorized {
-		t.Fatalf("GET /amps/session status = %d, want 401", sessionResponse.Code)
+	if sessionResponse.Code != http.StatusOK {
+		t.Fatalf("GET /amps/session status = %d, want 200", sessionResponse.Code)
+	}
+	if !strings.Contains(sessionResponse.Body.String(), `"role": "operator"`) {
+		t.Fatalf("GET /amps/session body = %q, want operator session payload", sessionResponse.Body.String())
 	}
 
 	var logoutResponse = httptest.NewRecorder()
@@ -1211,6 +1249,112 @@ func TestMonitoringServiceSOWClearNotifiesWorkspaceSubscribers(t *testing.T) {
 	}
 	if !strings.Contains(string(removeResponse), `"sow_key":"k1"`) {
 		t.Fatalf("workspace remove response = %s, want removed sow key", string(removeResponse))
+	}
+}
+
+func TestMonitoringServiceSOWClearSendsOOFToDeltaSubscribers(t *testing.T) {
+	var oldSOW = sow
+	var oldJournal = journal
+	sow = newSOWCache()
+	journal = newMessageJournal(64)
+	defer func() {
+		sow = oldSOW
+		journal = oldJournal
+	}()
+
+	resetTopicConfigsForTest()
+	defer resetTopicConfigsForTest()
+	resetTopicSubscribersForTest()
+	defer resetTopicSubscribersForTest()
+
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var adminServer = httptest.NewServer(service.Handler())
+	defer adminServer.Close()
+
+	var listener, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen(): %v", err)
+	}
+	defer listener.Close()
+
+	var done = make(chan struct{}, 2)
+	for index := 0; index < 2; index++ {
+		go func() {
+			var conn, acceptErr = listener.Accept()
+			if acceptErr != nil {
+				done <- struct{}{}
+				return
+			}
+			handleConnection(conn)
+			done <- struct{}{}
+		}()
+	}
+
+	var subscriber, subscriberErr = net.Dial("tcp", listener.Addr().String())
+	if subscriberErr != nil {
+		t.Fatalf("net.Dial(subscriber): %v", subscriberErr)
+	}
+	defer subscriber.Close()
+
+	var publisher, publisherErr = net.Dial("tcp", listener.Addr().String())
+	if publisherErr != nil {
+		t.Fatalf("net.Dial(publisher): %v", publisherErr)
+	}
+	defer publisher.Close()
+
+	sendFrame(t, subscriber, buildCommandFrame(`{"c":"logon","cid":"log-sub","a":"processed","client_name":"admin-clear-subscriber"}`, nil))
+	_ = readFrameBody(t, subscriber, 500*time.Millisecond)
+
+	sendFrame(t, subscriber, buildCommandFrame(`{"c":"delta_subscribe","cid":"sub-1","sub_id":"d1","t":"orders","a":"processed"}`, nil))
+	_ = readFrameBody(t, subscriber, 500*time.Millisecond)
+
+	sendFrame(t, publisher, buildCommandFrame(`{"c":"logon","cid":"log-pub","a":"processed","client_name":"admin-clear-publisher"}`, nil))
+	_ = readFrameBody(t, publisher, 500*time.Millisecond)
+
+	sendFrame(t, publisher, buildCommandFrame(`{"c":"publish","cid":"pub-1","t":"orders","a":"processed","k":"order-1","mt":"json"}`, []byte(`{"id":1,"status":"open"}`)))
+	_ = readFrameBody(t, publisher, 500*time.Millisecond)
+	for attempt := 0; attempt < 4; attempt++ {
+		var body = readFrameBody(t, subscriber, 500*time.Millisecond)
+		if strings.Contains(body, `"c":"p"`) && strings.Contains(body, `"k":"order-1"`) {
+			break
+		}
+	}
+
+	var clearResponse, clearErr = http.Post(adminServer.URL+"/amps/administrator/sow/clear?topic=orders", "application/json", http.NoBody)
+	if clearErr != nil {
+		t.Fatalf("POST /amps/administrator/sow/clear error: %v", clearErr)
+	}
+	defer clearResponse.Body.Close()
+	if clearResponse.StatusCode != http.StatusOK {
+		t.Fatalf("POST /amps/administrator/sow/clear status = %d, want 200", clearResponse.StatusCode)
+	}
+
+	var foundClearReasonOOF bool
+	var receivedBodies []string
+	for attempt := 0; attempt < 6; attempt++ {
+		var body, ok = tryReadFrameBody(subscriber, 500*time.Millisecond)
+		if !ok {
+			continue
+		}
+		receivedBodies = append(receivedBodies, body)
+		if strings.Contains(body, `"c":"oof"`) && strings.Contains(body, `"reason":"clear"`) && strings.Contains(body, `"k":"order-1"`) {
+			foundClearReasonOOF = true
+			break
+		}
+	}
+
+	if !foundClearReasonOOF {
+		t.Fatalf("expected OOF frame with clear reason after admin SOW clear, got %v", receivedBodies)
+	}
+
+	_ = publisher.Close()
+	_ = subscriber.Close()
+	for count := 0; count < 2; count++ {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("handleConnection did not exit in time")
+		}
 	}
 }
 
@@ -1484,6 +1628,267 @@ func TestPrimaryTransportIDMatchesListenerOverride(t *testing.T) {
 
 	if primaryTransportID() != "xml-secondary" {
 		t.Fatalf("primaryTransportID() = %q, want xml-secondary", primaryTransportID())
+	}
+}
+
+func TestDashboardAssetGuardsWorkspaceMessagesByRequestID(t *testing.T) {
+	var asset, err = dashboardAssets.ReadFile("dashboard/dashboard.js")
+	if err != nil {
+		t.Fatalf("dashboardAssets.ReadFile() error: %v", err)
+	}
+
+	var script = string(asset)
+	if !strings.Contains(script, "message.request_id && message.request_id !== state.workspaceRequestId") {
+		t.Fatalf("dashboard.js should ignore stale workspace frames by request_id")
+	}
+}
+
+func TestNotifyExpiredSOWRecordsSendsWorkspaceRemove(t *testing.T) {
+	var oldSOW = sow
+	sow = newSOWCache()
+	defer func() {
+		sow = oldSOW
+	}()
+
+	resetWorkspaceSessionsForTest()
+	defer resetWorkspaceSessionsForTest()
+
+	sow.upsert("orders", "k-expire", []byte(`{"id":1,"status":"open"}`), "bm-expire", "ts-expire", 1, 5*time.Millisecond)
+	time.Sleep(15 * time.Millisecond)
+
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var server = httptest.NewServer(service.Handler())
+	defer server.Close()
+
+	var websocketConn = dialAdminWebSocket(t, server.URL, "/amps/sql/ws", nil)
+	defer websocketConn.Close()
+
+	writeTextWebSocketFrame(t, websocketConn, []byte(`{"type":"run","request_id":"req-expire","mode":"sow_and_subscribe","topic":"orders","options":{"live":true}}`))
+
+	_, _ = readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+	_, _ = readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+
+	notifyExpiredSOWRecords(sow.gcExpiredRecords())
+
+	_, removeResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+	if !strings.Contains(string(removeResponse), `"type":"workspace_remove"`) {
+		t.Fatalf("workspace expire response = %s, want workspace_remove", string(removeResponse))
+	}
+	if !strings.Contains(string(removeResponse), `"reason":"expire"`) {
+		t.Fatalf("workspace expire response = %s, want expire reason", string(removeResponse))
+	}
+}
+
+func TestApplyReplicatedPublishNotifiesLiveWorkspaceSessions(t *testing.T) {
+	var oldSOW = sow
+	var oldJournal = journal
+	sow = newSOWCache()
+	journal = newMessageJournal(64)
+	defer func() {
+		sow = oldSOW
+		journal = oldJournal
+	}()
+
+	resetWorkspaceSessionsForTest()
+	defer resetWorkspaceSessionsForTest()
+
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var server = httptest.NewServer(service.Handler())
+	defer server.Close()
+
+	var websocketConn = dialAdminWebSocket(t, server.URL, "/amps/sql/ws", nil)
+	defer websocketConn.Close()
+
+	writeTextWebSocketFrame(t, websocketConn, []byte(`{"type":"run","request_id":"req-repl","mode":"sow_and_subscribe","topic":"orders","options":{"live":true}}`))
+
+	_, readyResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+	if !strings.Contains(string(readyResponse), `"type":"workspace_ready"`) {
+		t.Fatalf("workspace ready response = %s, want workspace_ready", string(readyResponse))
+	}
+
+	_, snapshotResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+	if !strings.Contains(string(snapshotResponse), `"type":"workspace_snapshot"`) {
+		t.Fatalf("workspace snapshot response = %s, want workspace_snapshot", string(snapshotResponse))
+	}
+
+	applyReplicatedPublish(headerFields{c: "publish", t: "orders", mt: "json", k: "repl-1"}, []byte(`{"id":1,"status":"replicated"}`))
+
+	_, rowResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+	if !strings.Contains(string(rowResponse), `"type":"workspace_row"`) {
+		t.Fatalf("workspace row response = %s, want workspace_row", string(rowResponse))
+	}
+	if !strings.Contains(string(rowResponse), `"sow_key":"repl-1"`) {
+		t.Fatalf("workspace row response = %s, want replicated sow key", string(rowResponse))
+	}
+}
+
+func TestWorkspaceSnapshotRowsIncludeWildcardTopics(t *testing.T) {
+	var oldSOW = sow
+	sow = newSOWCache()
+	defer func() {
+		sow = oldSOW
+	}()
+
+	sow.upsert("orders.us", "us-1", []byte(`{"id":1,"region":"US"}`), "bm-us", "ts-us", 1, 0)
+	sow.upsert("orders.eu", "eu-1", []byte(`{"id":2,"region":"EU"}`), "bm-eu", "ts-eu", 2, 0)
+
+	var topN = 10
+	var rows = workspaceSnapshotRows(workspaceLiveQuery{
+		Topic: "orders.>",
+		Options: sqlWorkspaceOptions{
+			TopN: &topN,
+		},
+	})
+	if len(rows) != 2 {
+		t.Fatalf("len(workspaceSnapshotRows wildcard) = %d, want 2", len(rows))
+	}
+
+	var topics = []string{rows[0]["topic"].(string), rows[1]["topic"].(string)}
+	if !(topics[0] == "orders.eu" && topics[1] == "orders.us" || topics[0] == "orders.us" && topics[1] == "orders.eu") {
+		t.Fatalf("workspaceSnapshotRows topics = %v, want wildcard-matched topics", topics)
+	}
+}
+
+func TestWorkspaceEvictionSendsWorkspaceRemove(t *testing.T) {
+	var oldSOW = sow
+	var oldJournal = journal
+	sow = newSOWCacheWithEviction(1, evictionOldest)
+	journal = newMessageJournal(64)
+	defer func() {
+		sow = oldSOW
+		journal = oldJournal
+	}()
+
+	resetTopicConfigsForTest()
+	defer resetTopicConfigsForTest()
+	resetTopicSubscribersForTest()
+	defer resetTopicSubscribersForTest()
+	resetWorkspaceSessionsForTest()
+	defer resetWorkspaceSessionsForTest()
+
+	sow.upsert("orders", "k1", []byte(`{"id":1,"status":"open"}`), "bm1", "ts1", 1, 0)
+	getOrSetTopicMessageType("orders", "json")
+
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var server = httptest.NewServer(service.Handler())
+	defer server.Close()
+
+	var websocketConn = dialAdminWebSocket(t, server.URL, "/amps/sql/ws", nil)
+	defer websocketConn.Close()
+
+	writeTextWebSocketFrame(t, websocketConn, []byte(`{"type":"run","request_id":"req-evicted","mode":"sow_and_subscribe","topic":"orders","options":{"live":true}}`))
+
+	_, _ = readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+	_, snapshotResponse := readWebSocketFrame(t, websocketConn, 500*time.Millisecond)
+	if !strings.Contains(string(snapshotResponse), `"sow_key":"k1"`) {
+		t.Fatalf("workspace snapshot response = %s, want existing row", string(snapshotResponse))
+	}
+
+	var publisherListener, listenErr = net.Listen("tcp", "127.0.0.1:0")
+	if listenErr != nil {
+		t.Fatalf("net.Listen() error: %v", listenErr)
+	}
+	defer publisherListener.Close()
+
+	var publisherDone = make(chan struct{})
+	go func() {
+		defer close(publisherDone)
+		var conn, acceptErr = publisherListener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		handleConnection(conn)
+	}()
+
+	var publisher, dialErr = net.Dial("tcp", publisherListener.Addr().String())
+	if dialErr != nil {
+		t.Fatalf("net.Dial(publisher) error: %v", dialErr)
+	}
+	defer publisher.Close()
+
+	var publisherReadDone = make(chan struct{})
+	go func() {
+		defer close(publisherReadDone)
+		_, _ = io.Copy(io.Discard, publisher)
+	}()
+
+	sendFrame(t, publisher, buildCommandFrame(`{"c":"logon","cid":"log-evicted","a":"processed","client_name":"workspace-publisher"}`, nil))
+	sendFrame(t, publisher, buildCommandFrame(`{"c":"publish","cid":"pub-evicted","t":"orders","a":"processed","k":"k2","mt":"json"}`, []byte(`{"id":2,"status":"open"}`)))
+
+	var foundRow bool
+	var foundRemove bool
+	var frames []string
+	for attempt := 0; attempt < 4; attempt++ {
+		if _, payload, err := tryReadWebSocketFrame(websocketConn, 500*time.Millisecond); err == nil {
+			var body = string(payload)
+			frames = append(frames, body)
+			if strings.Contains(body, `"type":"workspace_row"`) && strings.Contains(body, `"sow_key":"k2"`) {
+				foundRow = true
+			}
+			if strings.Contains(body, `"type":"workspace_remove"`) && strings.Contains(body, `"sow_key":"k1"`) && strings.Contains(body, `"reason":"evicted"`) {
+				foundRemove = true
+			}
+			if foundRow && foundRemove {
+				break
+			}
+		}
+	}
+
+	if !foundRow || !foundRemove {
+		t.Fatalf("expected workspace row and eviction remove frames, got %v", frames)
+	}
+
+	_ = websocketConn.Close()
+	_ = publisher.Close()
+	_ = publisherListener.Close()
+
+	select {
+	case <-publisherDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("workspace publisher handler did not exit in time")
+	}
+
+	select {
+	case <-publisherReadDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("workspace publisher drain did not exit in time")
+	}
+}
+
+func TestNotifyWorkspaceRemovalsDoesNotFanoutOOFWhenFanoutDisabled(t *testing.T) {
+	var oldFanout = *flagFanout
+	*flagFanout = false
+	defer func() {
+		*flagFanout = oldFanout
+	}()
+
+	resetTopicSubscribersForTest()
+	defer resetTopicSubscribersForTest()
+
+	var subscriberConn, subscriberPeer = net.Pipe()
+	defer subscriberConn.Close()
+	defer subscriberPeer.Close()
+
+	var writer = newConnWriter(subscriberConn, &connStats{})
+	defer writer.close()
+
+	registerSubscription("orders", &subscription{
+		conn:    subscriberConn,
+		writer:  writer,
+		subID:   "delta-sub",
+		topic:   "orders",
+		isDelta: true,
+	})
+
+	notifyWorkspaceRemovals([]workspaceRemovedRecord{{
+		Topic:    "orders",
+		SOWKey:   "order-1",
+		Bookmark: "1|1|",
+		Reason:   "clear",
+	}})
+
+	if body, ok := tryReadFrameBody(subscriberPeer, 150*time.Millisecond); ok {
+		t.Fatalf("received unexpected delta OOF with fanout disabled: %s", body)
 	}
 }
 

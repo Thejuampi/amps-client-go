@@ -184,6 +184,9 @@ func applyReplicatedPublish(header headerFields, payload []byte) {
 		bm = makeBookmark(seq)
 	}
 
+	var evictedRecord *sowRecord
+	var previousWorkspacePayload []byte
+	var currentWorkspacePayload = payload
 	if sow != nil && topic != "" {
 		if sowKey == "" {
 			sowKey = makeSowKey(topic, seq)
@@ -191,14 +194,17 @@ func applyReplicatedPublish(header headerFields, payload []byte) {
 		ts := makeTimestamp()
 		isDelta := header.c == "delta_publish"
 		if isDelta {
-			sow.deltaUpsert(topic, sowKey, payload, bm, ts, seq, 0)
+			_, _, previousWorkspacePayload, currentWorkspacePayload, evictedRecord = sow.deltaUpsertWithPrevious(topic, sowKey, payload, bm, ts, seq, 0)
 		} else {
-			sow.upsert(topic, sowKey, payload, bm, ts, seq, 0)
+			_, _, previousWorkspacePayload, evictedRecord = sow.upsertWithEvicted(topic, sowKey, payload, bm, ts, seq, 0)
 		}
 	}
 
 	// Fan-out to local subscribers.
 	ts := makeTimestamp()
+	if topic != "" {
+		workspaceSessions.NotifyRow(topic, previousWorkspacePayload, currentWorkspacePayload, bm, ts, sowKey)
+	}
 	isQueue := strings.HasPrefix(topic, "queue://")
 	buf := getWriteBuf()
 	defer putWriteBuf(buf)
@@ -209,6 +215,9 @@ func applyReplicatedPublish(header headerFields, payload []byte) {
 			payload, bm, ts, sowKey, mt, queueMode)
 		sub.writer.send(frame)
 	})
+	if evictedRecord != nil {
+		workspaceSessions.NotifyRemove(topic, evictedRecord.sowKey, evictedRecord.bookmark, "evicted")
+	}
 }
 
 const replicationSyncAckTimeout = 2 * time.Second

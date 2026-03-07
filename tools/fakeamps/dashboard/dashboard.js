@@ -235,6 +235,10 @@ function handleLegacyWorkspacePayload(message) {
 }
 
 function handleWorkspaceMessage(message) {
+  if (message.request_id && message.request_id !== state.workspaceRequestId) {
+    return;
+  }
+
   switch (message.type) {
     case 'workspace_ready':
       state.workspaceStatus = message.live ? 'live' : 'running';
@@ -329,19 +333,22 @@ async function runWorkspaceQuery() {
   render();
 
   const socket = await ensureWorkspaceSocket();
+  const options = {
+    order_by: state.sqlOrderBy,
+    bookmark: state.sqlBookmark,
+    delta: state.sqlDelta,
+    live: state.sqlLive,
+  };
+  if (state.sqlTopN.trim() !== '') {
+    options.top_n = Number.parseInt(state.sqlTopN, 10) || 0;
+  }
   socket.send(JSON.stringify({
     type: 'run',
     request_id: state.workspaceRequestId,
     mode: state.sqlMode,
     topic: state.sqlTopic,
     filter: state.sqlFilter,
-    options: {
-      top_n: Number.parseInt(state.sqlTopN, 10) || 0,
-      order_by: state.sqlOrderBy,
-      bookmark: state.sqlBookmark,
-      delta: state.sqlDelta,
-      live: state.sqlLive,
-    },
+    options,
   }));
 }
 
@@ -359,6 +366,7 @@ function clearWorkspaceOutput() {
   state.workspaceRows = [];
   state.sqlLog = [];
   state.workspaceStatus = 'idle';
+  state.workspaceRequestId = '';
   render();
 }
 

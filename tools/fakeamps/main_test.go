@@ -133,7 +133,7 @@ func TestApplyBenchmarkStabilityDefaults(t *testing.T) {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	applyBenchmarkStabilityDefaults(fs)
+	applyBenchmarkStabilityDefaults(fs, benchmarkStabilityOverrides{})
 
 	if *flagLogConn {
 		t.Fatalf("flagLogConn = true, want false after benchmark defaults")
@@ -146,6 +146,47 @@ func TestApplyBenchmarkStabilityDefaults(t *testing.T) {
 	}
 	if *flagLeaseIvl != 30*time.Second {
 		t.Fatalf("flagLeaseIvl = %v, want 30s after benchmark defaults", *flagLeaseIvl)
+	}
+}
+
+func TestApplyBenchmarkStabilityDefaultsPreservesConfigOverrides(t *testing.T) {
+	var restore = snapshotRuntimeFlags()
+	defer restore()
+
+	var fs = flag.NewFlagSet("fakeamps-test", flag.ContinueOnError)
+	_ = fs.Bool("log-conn", true, "")
+	_ = fs.Bool("stats", false, "")
+	_ = fs.Duration("sow-gc-interval", 30*time.Second, "")
+	_ = fs.Duration("queue-lease-interval", 5*time.Second, "")
+
+	*flagBenchStable = true
+	*flagLogConn = true
+	*flagLogStats = true
+	*flagSOWGCIvl = time.Minute
+	*flagLeaseIvl = 45 * time.Second
+
+	if err := fs.Parse([]string{}); err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	applyBenchmarkStabilityDefaults(fs, benchmarkStabilityOverrides{
+		logConnSet:            true,
+		logStatsSet:           true,
+		sowGCIntervalSet:      true,
+		queueLeaseIntervalSet: true,
+	})
+
+	if !*flagLogConn {
+		t.Fatalf("flagLogConn = false, want config override preserved")
+	}
+	if !*flagLogStats {
+		t.Fatalf("flagLogStats = false, want config override preserved")
+	}
+	if *flagSOWGCIvl != time.Minute {
+		t.Fatalf("flagSOWGCIvl = %v, want config override preserved", *flagSOWGCIvl)
+	}
+	if *flagLeaseIvl != 45*time.Second {
+		t.Fatalf("flagLeaseIvl = %v, want config override preserved", *flagLeaseIvl)
 	}
 }
 

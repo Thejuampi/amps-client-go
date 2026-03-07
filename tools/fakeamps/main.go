@@ -148,7 +148,7 @@ func applyBenchmarkStabilitySettings(enabled bool, settings benchmarkStabilitySe
 	return settings
 }
 
-func applyBenchmarkStabilityDefaults(flagSet *flag.FlagSet) {
+func applyBenchmarkStabilityDefaults(flagSet *flag.FlagSet, explicitOverrides benchmarkStabilityOverrides) {
 	var settings = benchmarkStabilitySettings{
 		logConn:            *flagLogConn,
 		logStats:           *flagLogStats,
@@ -156,10 +156,10 @@ func applyBenchmarkStabilityDefaults(flagSet *flag.FlagSet) {
 		queueLeaseInterval: *flagLeaseIvl,
 	}
 	var overrides = benchmarkStabilityOverrides{
-		logConnSet:            flagSetByUser(flagSet, "log-conn"),
-		logStatsSet:           flagSetByUser(flagSet, "stats"),
-		sowGCIntervalSet:      flagSetByUser(flagSet, "sow-gc-interval"),
-		queueLeaseIntervalSet: flagSetByUser(flagSet, "queue-lease-interval"),
+		logConnSet:            flagSetByUser(flagSet, "log-conn") || explicitOverrides.logConnSet,
+		logStatsSet:           flagSetByUser(flagSet, "stats") || explicitOverrides.logStatsSet,
+		sowGCIntervalSet:      flagSetByUser(flagSet, "sow-gc-interval") || explicitOverrides.sowGCIntervalSet,
+		queueLeaseIntervalSet: flagSetByUser(flagSet, "queue-lease-interval") || explicitOverrides.queueLeaseIntervalSet,
 	}
 
 	var updated = applyBenchmarkStabilitySettings(*flagBenchStable, settings, overrides)
@@ -182,14 +182,20 @@ func main() {
 		log.Fatalf("fakeamps: %v", startupErr)
 	}
 
-	flag.Parse()
+	if err := flag.CommandLine.Parse(startup.parseArgs); err != nil {
+		log.Fatalf("fakeamps: %v", err)
+	}
 	if modeErr := handleConfigModes(startup); modeErr != nil {
 		if modeErr == errStartupHandled {
 			return
 		}
 		log.Fatalf("fakeamps: %v", modeErr)
 	}
-	applyBenchmarkStabilityDefaults(flag.CommandLine)
+	var benchmarkOverrides benchmarkStabilityOverrides
+	if effectiveConfig != nil {
+		benchmarkOverrides = configBenchmarkStabilityOverrides(effectiveConfig.Runtime)
+	}
+	applyBenchmarkStabilityDefaults(flag.CommandLine, benchmarkOverrides)
 
 	// Initialize server-global state.
 	if *flagJournal {
@@ -267,14 +273,11 @@ func main() {
 		go func() {
 			ticker := time.NewTicker(*flagSOWGCIvl)
 			defer ticker.Stop()
-			var stats connStats
 			for range ticker.C {
 				if sow != nil {
 					var expired = sow.gcExpiredRecords()
 					if len(expired) > 0 {
-						for _, record := range expired {
-							fanoutOOFWithReason(nil, record.topic, record.sowKey, record.bookmark, "expire", &stats)
-						}
+						notifyExpiredSOWRecords(expired)
 						log.Printf("fakeamps: sow gc removed %d expired records", len(expired))
 					}
 				}
