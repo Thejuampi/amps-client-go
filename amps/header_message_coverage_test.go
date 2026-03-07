@@ -23,6 +23,15 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	if _, ok := parseUint32Value([]byte("4294967296")); ok {
 		t.Fatalf("overflow parseUint32Value should fail")
 	}
+	if _, ok := parseUint32Value(nil); ok {
+		t.Fatalf("empty parseUint32Value should fail")
+	}
+	if _, ok := parseUint32Value([]byte("12a")); ok {
+		t.Fatalf("non-digit parseUint32Value should fail")
+	}
+	if value, ok := parseUint32Value([]byte("42")); !ok || value != 42 {
+		t.Fatalf("unexpected parseUint32Value value=%d ok=%v", value, ok)
+	}
 	if value, ok := parseUint64Value([]byte("18446744073709551615")); !ok || value == 0 {
 		t.Fatalf("expected parseUint64Value success, got value=%d ok=%v", value, ok)
 	}
@@ -165,6 +174,58 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	}
 	if filter, ok := escaped.Filter(); !ok || filter != `a\\\\b` {
 		t.Fatalf("unexpected escaped filter value: %q (ok=%v)", filter, ok)
+	}
+}
+
+func TestParseUint32ValueEmptyInput(t *testing.T) {
+	var empty = []byte("0")
+	empty = empty[:0]
+	if _, ok := parseUint32Value(empty); ok {
+		t.Fatalf("empty parseUint32Value should fail")
+	}
+}
+
+func TestParseAckBytesCompletedAndProcessedCoverage(t *testing.T) {
+	if value := parseAckBytes([]byte("completed")); value != AckTypeCompleted {
+		t.Fatalf("unexpected completed ack bitset: %d", value)
+	}
+	if value := parseAckBytes([]byte("processed")); value != AckTypeProcessed {
+		t.Fatalf("unexpected processed ack bitset: %d", value)
+	}
+	if value := parseAckBytes([]byte("notvalid9")); value != 0 {
+		t.Fatalf("unexpected unknown 9-byte ack bitset: %d", value)
+	}
+}
+
+func TestHeaderParseFieldMessageLengthCoverage(t *testing.T) {
+	var header = new(_Header)
+	header.parseField([]byte("l"), []byte("64"))
+	if header.messageLength == nil || *header.messageLength != 64 {
+		t.Fatalf("unexpected message length field: %#v", header.messageLength)
+	}
+
+	header = new(_Header)
+	header.parseField([]byte("l"), []byte("bad"))
+	if header.messageLength != nil {
+		t.Fatalf("expected invalid message length to remain unset: %#v", header.messageLength)
+	}
+
+	header = new(_Header)
+	header.parseField([]byte("s"), []byte("99"))
+	if header.sequenceID == nil || *header.sequenceID != 99 {
+		t.Fatalf("unexpected sequence id field: %#v", header.sequenceID)
+	}
+
+	header = new(_Header)
+	header.parseField([]byte("t"), []byte("orders"))
+	if header.topic == nil || string(header.topic) != "orders" {
+		t.Fatalf("unexpected topic field: %#v", header.topic)
+	}
+
+	header = new(_Header)
+	header.parseField([]byte("x"), []byte("corr-1"))
+	if header.correlationID == nil || string(header.correlationID) != "corr-1" {
+		t.Fatalf("unexpected correlation id field: %#v", header.correlationID)
 	}
 }
 

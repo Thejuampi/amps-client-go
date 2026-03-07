@@ -67,101 +67,6 @@ func (header *_Header) reset() {
 	header.command = CommandUnknown
 }
 
-const (
-	maxUint64Div10 = ^uint64(0) / 10
-	maxUint64Mod10 = ^uint64(0) % 10
-	maxUint32Div10 = ^uint32(0) / 10
-	maxUint32Mod10 = ^uint32(0) % 10
-)
-
-func parseUintBytes(value []byte) (uint64, bool) {
-	if len(value) == 0 {
-		return 0, false
-	}
-	var result uint64
-	for index := 0; index < len(value); index++ {
-		digit := value[index]
-		if digit < '0' || digit > '9' {
-			return 0, false
-		}
-		digitValue := uint64(digit - '0')
-		if result > maxUint64Div10 || (result == maxUint64Div10 && digitValue > maxUint64Mod10) {
-			return 0, false
-		}
-		result = (result * 10) + digitValue
-	}
-	return result, true
-}
-
-func parseUint32Value(value []byte) (uint, bool) {
-	if len(value) == 0 {
-		return 0, false
-	}
-	var result uint32
-	for index := 0; index < len(value); index++ {
-		digit := value[index]
-		if digit < '0' || digit > '9' {
-			return 0, false
-		}
-		digitValue := uint32(digit - '0')
-		if result > maxUint32Div10 || (result == maxUint32Div10 && digitValue > maxUint32Mod10) {
-			return 0, false
-		}
-		result = (result * 10) + digitValue
-	}
-	return uint(result), true
-}
-
-func parseUint64Value(value []byte) (uint64, bool) {
-	parsed, ok := parseUintBytes(value)
-	if !ok {
-		return 0, false
-	}
-	return parsed, true
-}
-
-func parseAckBytes(ackType []byte) int {
-	var ack int
-	start := 0
-	for start <= len(ackType) {
-		end := start
-		for end < len(ackType) && ackType[end] != ',' {
-			end++
-		}
-		token := ackType[start:end]
-		switch len(token) {
-		case 5:
-			if bytesEqualString(token, "stats") {
-				ack |= AckTypeStats
-			}
-		case 6:
-			if bytesEqualString(token, "parsed") {
-				ack |= AckTypeParsed
-			}
-		case 8:
-			if bytesEqualString(token, "received") {
-				ack |= AckTypeReceived
-			}
-		case 9:
-			if bytesEqualString(token, "persisted") {
-				ack |= AckTypePersisted
-			}
-			if bytesEqualString(token, "completed") {
-				ack |= AckTypeCompleted
-			}
-			if bytesEqualString(token, "processed") {
-				ack |= AckTypeProcessed
-			}
-		}
-
-		if end == len(ackType) {
-			break
-		}
-		start = end + 1
-	}
-	return ack
-}
-
 func (header *_Header) parseField(key []byte, value []byte) {
 	switch len(key) {
 	case 0:
@@ -187,15 +92,9 @@ func (header *_Header) parseField(key []byte, value []byte) {
 		case 'k':
 			header.sowKey = value
 		case 'l':
-			if messageLength, ok := parseUint32Value(value); ok {
-				header.messageLengthValue = messageLength
-				header.messageLength = &header.messageLengthValue
-			}
+			header.parseMessageLengthField(value)
 		case 's':
-			if sequenceID, ok := parseUint64Value(value); ok {
-				header.sequenceIDValue = sequenceID
-				header.sequenceID = &header.sequenceIDValue
-			}
+			header.parseSequenceIDField(value)
 		case 't':
 			header.topic = value
 		case 'x':

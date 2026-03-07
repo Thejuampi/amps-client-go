@@ -108,7 +108,7 @@ func TestHeaderParseFallbackWithWhitespace(t *testing.T) {
 func TestHeaderParseTrustedFieldCoverage(t *testing.T) {
 	message := &Message{header: new(_Header)}
 
-	left, err := parseHeader(message, true, []byte(`{"a":"processed,completed","c":"p","e":42,"f":"/id > 10","o":"replace","s":99,"t":"orders","cid":"cmd-1","sub_id":"sub-1","bs":10}tail`))
+	left, err := parseHeader(message, true, []byte(`{"a":"processed,completed","c":"p","e":42,"f":"/id > 10","o":"replace","l":64,"s":99,"t":"orders","cid":"cmd-1","sub_id":"sub-1","bs":10}tail`))
 	if err != nil {
 		t.Fatalf("parse header failed: %v", err)
 	}
@@ -126,6 +126,10 @@ func TestHeaderParseTrustedFieldCoverage(t *testing.T) {
 	batchSize, hasBatchSize := message.BatchSize()
 	if !hasBatchSize || batchSize != 10 {
 		t.Fatalf("unexpected batch size: has=%v value=%d", hasBatchSize, batchSize)
+	}
+	messageLength, hasMessageLength := message.MessageLength()
+	if !hasMessageLength || messageLength != 64 {
+		t.Fatalf("unexpected message length: has=%v value=%d", hasMessageLength, messageLength)
 	}
 }
 
