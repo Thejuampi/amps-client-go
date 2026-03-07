@@ -8,7 +8,7 @@ import (
 )
 
 func TestReleaseVersionMarkers(t *testing.T) {
-	const expectedVersion = "0.5.0"
+	const expectedVersion = "0.5.1"
 
 	if ClientVersion != expectedVersion {
 		t.Fatalf("ClientVersion = %q, want %q", ClientVersion, expectedVersion)
