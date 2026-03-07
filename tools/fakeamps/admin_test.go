@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Thejuampi/amps-client-go/internal/ampsconfig"
 )
 
 func TestStartAdminServerNoAddr(t *testing.T) {
@@ -24,11 +26,31 @@ func TestJSONResponse(t *testing.T) {
 }
 
 func TestHandleAdminStatusAndStats(t *testing.T) {
+	oldEffectiveConfig := effectiveConfig
+	effectiveConfig = &ampsconfig.ExpandedConfig{
+		Path: "testdata/config.xml",
+		Runtime: ampsconfig.RuntimeConfig{
+			Name: "configured-instance",
+			Transports: []ampsconfig.TransportConfig{
+				{InetAddr: "127.0.0.1:19000"},
+			},
+		},
+	}
+	defer func() {
+		effectiveConfig = oldEffectiveConfig
+	}()
+
 	rr := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	handleAdminStatus(rr, request)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status endpoint expected 200 got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `"source": "testdata/config.xml"`) {
+		t.Fatalf("status endpoint should expose effective config source, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"name": "configured-instance"`) {
+		t.Fatalf("status endpoint should expose effective config name, got %s", rr.Body.String())
 	}
 
 	rr = httptest.NewRecorder()

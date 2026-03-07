@@ -176,7 +176,19 @@ func applyBenchmarkStabilityDefaults(flagSet *flag.FlagSet) {
 func main() {
 	flag.Var(&flagViews, "view", "register a view: 'name:source:filter:aggregates:groupBy' (repeatable)")
 	flag.Var(&flagActions, "action", "register an action: 'trigger:topic:type:target' (repeatable)")
+
+	var startup, startupErr = parseStartupOptions(os.Args[1:])
+	if startupErr != nil {
+		log.Fatalf("fakeamps: %v", startupErr)
+	}
+
 	flag.Parse()
+	if modeErr := handleConfigModes(startup); modeErr != nil {
+		if modeErr == errStartupHandled {
+			return
+		}
+		log.Fatalf("fakeamps: %v", modeErr)
+	}
 	applyBenchmarkStabilityDefaults(flag.CommandLine)
 
 	// Initialize server-global state.
@@ -280,6 +292,7 @@ func main() {
 		sig := <-sigCh
 		log.Printf("fakeamps: received %v, shutting down", sig)
 		stopReplication()
+		closeConfiguredLogOutputs()
 		if journal != nil {
 			journal.Close()
 		}
@@ -317,7 +330,7 @@ func init() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "fakeamps — deterministic AMPS-protocol TCP responder for perf testing\n\n")
-		fmt.Fprintf(os.Stderr, "Usage: %s [flags]\n\n", filepath.Base(os.Args[0]))
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] [config.xml]\n\n", filepath.Base(os.Args[0]))
 		flag.PrintDefaults()
 	}
 }

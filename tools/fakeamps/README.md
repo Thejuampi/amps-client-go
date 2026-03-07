@@ -4,6 +4,61 @@
 
 - Isolated under `tools/` — **not** part of the exported `amps-client-go` client API.
 - Models real AMPS server behavior including stateful message journal, SOW cache, content filtering, topic wildcards, delta merge, queue topics, per-topic message types, views, actions, replication exercises, authentication, and administration.
+- Can now bootstrap from AMPS-style XML configuration files with recursive includes, `${ENV}` expansion, sample/verify/dump modes, and a `FakeAMPS` extension block for harness-specific runtime options.
+
+## AMPS XML Configuration
+
+`fakeamps` supports XML-driven startup in addition to the original flag-only mode:
+
+```bash
+go run ./tools/fakeamps --sample-config
+go run ./tools/fakeamps --verify-config config.xml
+go run ./tools/fakeamps --dump-config config.xml
+go run ./tools/fakeamps --config config.xml
+go run ./tools/fakeamps config.xml
+```
+
+Implemented XML processing behavior:
+
+- Recursive `<Include>...</Include>` expansion with include-cycle detection
+- `${ENV_NAME}` substitution from the process environment
+- `ConfigIncludeCommentDefault` comment wrapping in dumped/expanded XML
+- `RequiredMinimumVersion` validation against the configured fakeamps runtime version
+- Case-insensitive interval and scaled-integer parsing for common AMPS-style values such as `20s`, `5m`, `10k`, and `3m`
+- Deterministic validation failures for unsupported custom modules and module-backed UDFs
+
+Core AMPS sections currently bound directly into runtime behavior:
+
+- `<Transports>` for the primary listener address
+- `<Admin>` for the admin REST listener
+- `<Logging>` for `stdout`, `stderr`, and file-backed log targets
+
+Harness-specific behavior belongs under:
+
+```xml
+<Extensions>
+  <FakeAMPS>
+    <Version>6.3.1.0</Version>
+    <SOWEnabled>true</SOWEnabled>
+    <JournalEnabled>true</JournalEnabled>
+    <JournalMax>1000000</JournalMax>
+    <QueueEnabled>true</QueueEnabled>
+    <Auth>alice:pwd,bob:secret</Auth>
+    <Peers>127.0.0.1:19001,127.0.0.1:19002</Peers>
+    <View>orders_view:orders:/region = 'US'::</View>
+    <Action>on-publish:orders:log:archive</Action>
+  </FakeAMPS>
+</Extensions>
+```
+
+`/admin/status` now exposes the resolved effective config summary when XML startup is used.
+
+Intentional validation limits:
+
+- Custom AMPS modules with `<Library>` are rejected.
+- Module-backed `<UserDefinedFunctions>` are rejected.
+- Only built-in module names are accepted in the `Modules` graph.
+- XML is the only supported config-file format in this repo.
 
 ## Architecture
 
@@ -154,6 +209,10 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 
 ```
 -addr            listen address (default "127.0.0.1:19000")
+-config          load AMPS XML configuration from this file (default "")
+-sample-config   print a sample AMPS XML configuration and exit (default false)
+-verify-config   verify the provided AMPS XML configuration and exit (default "")
+-dump-config     expand includes and environment variables and print the resulting XML (default "")
 -version         AMPS server version in logon ack (default "6.3.1.0")
 -fanout          fan-out publishes to subscribers (default true)
 -echo            echo publishes back to same connection (default false)
@@ -238,3 +297,4 @@ Still intentionally limited (single-process parity harness focus):
 - Deep multi-format server-side parsing/validation (FIX/XML/BSON/Protobuf)
 - Pluggable enterprise identity providers (PAM/LDAP/Kerberos)
 - Field-level/row-level security policies beyond configured topic/filter entitlements
+- Arbitrary custom AMPS modules or module-backed UDF loading from XML

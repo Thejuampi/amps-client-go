@@ -102,8 +102,24 @@ func handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 			"queue":       *flagQueue,
 			"echo":        *flagEcho,
 			"auth":        *flagAuth != "",
+			"effective":   effectiveConfigSummary(),
 		},
 	})
+}
+
+func effectiveConfigSummary() map[string]interface{} {
+	if effectiveConfig == nil {
+		return nil
+	}
+
+	return map[string]interface{}{
+		"source":          effectiveConfig.Path,
+		"name":            effectiveConfig.Runtime.Name,
+		"group":           effectiveConfig.Runtime.Group,
+		"description":     effectiveConfig.Runtime.Description,
+		"transport_count": len(effectiveConfig.Runtime.Transports),
+		"admin_addr":      effectiveConfig.Runtime.Admin.InetAddr,
+	}
 }
 
 func handleAdminStats(w http.ResponseWriter, r *http.Request) {

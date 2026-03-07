@@ -125,6 +125,19 @@ go run ./cmd/gofer ping -server localhost:9007 -type json
 go run ./cmd/gofer publish -server localhost:9007 -type json -topic orders -data '{"id":1}'
 ```
 
+## Fake AMPS Harness
+
+`tools/fakeamps` now supports AMPS-style XML server configuration in addition to flags.
+
+```bash
+go run ./tools/fakeamps --sample-config
+go run ./tools/fakeamps --verify-config config.xml
+go run ./tools/fakeamps --dump-config config.xml
+go run ./tools/fakeamps --config config.xml
+```
+
+See [tools/fakeamps/README.md](tools/fakeamps/README.md) for the supported XML sections, the `Extensions/FakeAMPS` runtime block, and the deterministic validation rules for unsupported custom modules and UDFs.
+
 ## Quick Start
 
 ```go
