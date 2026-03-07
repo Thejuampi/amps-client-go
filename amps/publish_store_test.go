@@ -11,6 +11,15 @@ import (
 	"github.com/Thejuampi/amps-client-go/amps/internal/wal"
 )
 
+func isPublishStoreSignalClosed(signal <-chan struct{}) bool {
+	select {
+	case <-signal:
+		return true
+	default:
+		return false
+	}
+}
+
 func TestMemoryPublishStoreReplayAndDiscard(t *testing.T) {
 	store := NewMemoryPublishStore()
 	first := NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`))
@@ -136,6 +145,85 @@ func TestMemoryPublishStoreAdditionalCoverage(t *testing.T) {
 	_, _ = store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":12}`)))
 	if err := store.Flush(5 * time.Millisecond); err == nil {
 		t.Fatalf("expected timed flush error when entries remain")
+	}
+}
+
+func TestMemoryPublishStoreDrainSignalLifecycle(t *testing.T) {
+	var store = NewMemoryPublishStore()
+	if !isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected initial drain signal to be closed for empty store")
+	}
+
+	var initialSignal = store.drainedCh
+	var sequence, err = store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":21}`)))
+	if err != nil {
+		t.Fatalf("store failed: %v", err)
+	}
+	if isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected drain signal to remain open while entries are pending")
+	}
+	if store.drainedCh == initialSignal {
+		t.Fatalf("expected non-empty transition to replace the closed drain signal")
+	}
+
+	err = store.DiscardUpTo(sequence)
+	if err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+	if !isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected drain signal to close when store becomes empty")
+	}
+
+	var drainedSignal = store.drainedCh
+	_, err = store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":22}`)))
+	if err != nil {
+		t.Fatalf("second store failed: %v", err)
+	}
+	if store.drainedCh == drainedSignal {
+		t.Fatalf("expected refill to reopen the drain signal")
+	}
+	if isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected reopened drain signal to be open until discard")
+	}
+}
+
+func TestMemoryPublishStoreFlushReleasesConcurrentWaiters(t *testing.T) {
+	var store = NewMemoryPublishStore()
+	var sequence, err = store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":23}`)))
+	if err != nil {
+		t.Fatalf("store failed: %v", err)
+	}
+
+	var results = make(chan error, 2)
+	go func() {
+		results <- store.Flush(250 * time.Millisecond)
+	}()
+	go func() {
+		results <- store.Flush(250 * time.Millisecond)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	err = store.DiscardUpTo(sequence)
+	if err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	select {
+	case err = <-results:
+		if err != nil {
+			t.Fatalf("first waiter failed: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("timed out waiting for first flush waiter")
+	}
+
+	select {
+	case err = <-results:
+		if err != nil {
+			t.Fatalf("second waiter failed: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("timed out waiting for second flush waiter")
 	}
 }
 
