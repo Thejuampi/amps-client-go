@@ -1479,10 +1479,10 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 		}
 	}
 
-	cmdID, err := client.ExecuteAsync(command, func(message *Message) error {
+	cmdID, err := client.executeAsync(command, func(message *Message) error {
 
 		return messageStream.messageHandler(message)
-	})
+	}, false)
 
 	if isStatsOnly {
 		messageStream.setStatsOnly()
@@ -1585,12 +1585,38 @@ func (client *Client) SowAndDeltaSubscribe(topic string, filter ...string) (*Mes
 	return client.Execute(cmd)
 }
 
+func copyMessageHandler(messageHandler func(message *Message) error) func(message *Message) error {
+	if messageHandler == nil {
+		return nil
+	}
+
+	return func(message *Message) error {
+		if message == nil {
+			return nil
+		}
+
+		var copiedMessage = message.Copy()
+		var err = messageHandler(copiedMessage)
+		message.ignoreAutoAck = copiedMessage.ignoreAutoAck
+		return err
+	}
+}
+
 // ExecuteAsync sends a command and routes resulting messages to a callback.
 // Message callbacks may execute concurrently with other client callbacks;
 // handlers should be thread-safe.
 func (client *Client) ExecuteAsync(command *Command, messageHandler func(message *Message) error) (string, error) {
+	return client.executeAsync(command, messageHandler, true)
+}
+
+func (client *Client) executeAsync(command *Command, messageHandler func(message *Message) error, copyRoutedMessages bool) (string, error) {
 	if command == nil || command.header.command == CommandUnknown {
 		return "", NewError(CommandError, "Invalid Command provided")
+	}
+
+	var routeMessageHandler = messageHandler
+	if copyRoutedMessages {
+		routeMessageHandler = copyMessageHandler(messageHandler)
 	}
 
 	retryCommandOnDisconnect := client.shouldRetryCommand(command.header.command)
@@ -1688,11 +1714,11 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 
 		var err error
 		if isSubscribe && systemAcks == AckTypeNone {
-			err = client.addSubscribeRouteDirect(routeID, messageHandler, userAcks, isReplace)
+			err = client.addSubscribeRouteDirect(routeID, routeMessageHandler, userAcks, isReplace)
 		} else if !isSubscribe && systemAcks == AckTypeNone && hasUserAcks {
-			err = client.addCommandRouteDirect(routeID, messageHandler, userAcks)
+			err = client.addCommandRouteDirect(routeID, routeMessageHandler, userAcks)
 		} else {
-			err = client.addRoute(routeID, messageHandler, systemAcks, userAcks, isSubscribe, isReplace)
+			err = client.addRoute(routeID, routeMessageHandler, systemAcks, userAcks, isSubscribe, isReplace)
 		}
 		if err != nil {
 			return commandID, err
@@ -1735,7 +1761,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		client.setSyncAckProcessing(make(chan _Result, 1))
 		routeID = commandID
 
-		err := client.addRoute(commandID, messageHandler, systemAcks, userAcks, false, false)
+		err := client.addRoute(commandID, routeMessageHandler, systemAcks, userAcks, false, false)
 		if err != nil {
 			return commandID, err
 		}
@@ -1763,7 +1789,7 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 		if hasUserAcks {
 			routeID = commandID
 
-			err := client.addRoute(commandID, messageHandler, AckTypeNone, userAcks, false, false)
+			err := client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false)
 			if err != nil {
 				return commandID, err
 			}

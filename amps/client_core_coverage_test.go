@@ -144,6 +144,32 @@ func buildSOWFrame(t *testing.T, routeID string, data []byte) []byte {
 	return append([]byte(nil), frame...)
 }
 
+func buildMultiSOWFrame(t *testing.T, routeID string, rows ...[]byte) []byte {
+	t.Helper()
+	var outer = NewCommand("sow")
+	var buffer = bytes.NewBuffer(nil)
+	if _, err := buffer.WriteString("    "); err != nil {
+		t.Fatalf("frame prefix write failed: %v", err)
+	}
+	if err := outer.header.write(buffer); err != nil {
+		t.Fatalf("outer header write failed: %v", err)
+	}
+
+	for _, row := range rows {
+		var innerHeader = fmt.Sprintf(`{"c":"p","sub_id":"%s","l":%d}`, routeID, len(row))
+		if _, err := buffer.WriteString(innerHeader); err != nil {
+			t.Fatalf("inner header write failed: %v", err)
+		}
+		if _, err := buffer.Write(row); err != nil {
+			t.Fatalf("inner payload write failed: %v", err)
+		}
+	}
+
+	var frame = buffer.Bytes()
+	binary.BigEndian.PutUint32(frame[:4], uint32(len(frame)-4))
+	return append([]byte(nil), frame...)
+}
+
 func buildFramePrefix(length uint32) []byte {
 	frame := make([]byte, 4)
 	binary.BigEndian.PutUint32(frame, length)
@@ -422,6 +448,124 @@ func TestClientReadRoutineAdditionalBranches(t *testing.T) {
 	command := NewCommand("publish").SetSubID("sub-invalid").SetData([]byte("x"))
 	conn.enqueueRead(buildFrameFromCommand(t, command))
 	client.readRoutine()
+}
+
+func TestClientSowAndSubscribeAsyncReadRoutineCopiesRetainedMessages(t *testing.T) {
+	var client = NewClient("read-routine-sow-copy")
+	var conn = newTestConn()
+	client.connection = conn
+	client.connected.Store(true)
+	client.stopped.Store(false)
+	client.SetErrorHandler(func(error) {})
+
+	var retained []*Message
+	var executeResult = make(chan error, 1)
+	go func() {
+		_, err := client.SowAndSubscribeAsync(func(message *Message) error {
+			retained = append(retained, message)
+			return nil
+		}, "orders", "/id > 0")
+		executeResult <- err
+	}()
+
+	routeID, handler := waitForAnyRouteHandler(t, client)
+	var ack = AckTypeProcessed
+	_ = handler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ack,
+		status:  []byte("success"),
+	}})
+
+	if err := <-executeResult; err != nil {
+		t.Fatalf("expected sow_and_subscribe async registration success: %v", err)
+	}
+
+	conn.enqueueRead(buildMultiSOWFrame(t, routeID, []byte(`{"id":1}`), []byte(`{"id":2}`)))
+	client.readRoutine()
+
+	if len(retained) != 2 || string(retained[0].Data()) != `{"id":1}` || string(retained[1].Data()) != `{"id":2}` || retained[0] == retained[1] {
+		t.Fatalf("expected retained async messages to remain distinct and stable, got %#v %#v", retained, retained)
+	}
+}
+
+func TestClientExecuteAsyncDirectSubscribeRouteCopiesRetainedMessages(t *testing.T) {
+	var client = NewClient("direct-route-copy")
+	var conn = newTestConn()
+	client.connection = conn
+	client.connected.Store(true)
+
+	var retained []*Message
+	var command = NewCommand("sow_and_subscribe").
+		SetTopic("orders").
+		SetSubID("sub-copy").
+		AddAckType(AckTypeProcessed)
+
+	if _, err := client.ExecuteAsync(command, func(message *Message) error {
+		retained = append(retained, message)
+		return nil
+	}); err != nil {
+		t.Fatalf("expected execute async success: %v", err)
+	}
+
+	var handler = waitForRouteHandler(t, client, "sub-copy")
+	var message = &Message{header: &_Header{
+		command: CommandSOW,
+		subID:   []byte("sub-copy"),
+		topic:   []byte("orders-a"),
+	}, data: []byte(`{"id":1}`)}
+	if err := handler(message); err != nil {
+		t.Fatalf("first handler call failed: %v", err)
+	}
+
+	message.header.topic = []byte("orders-b")
+	message.data = []byte(`{"id":2}`)
+	if err := handler(message); err != nil {
+		t.Fatalf("second handler call failed: %v", err)
+	}
+
+	if len(retained) != 2 || string(retained[0].Data()) != `{"id":1}` || string(retained[1].Data()) != `{"id":2}` || retained[0] == retained[1] {
+		t.Fatalf("expected direct async route to retain copied messages, got %#v %#v", retained, retained)
+	}
+}
+
+func TestClientSubscribeAsyncIgnoreAutoAckSkipsAutoAck(t *testing.T) {
+	var client = NewClient("subscribe-async-ignore-auto-ack")
+	var conn = newTestConn()
+	client.connection = conn
+	client.connected.Store(true)
+	client.SetAutoAck(true).SetAckBatchSize(1).SetAckTimeout(5 * time.Second)
+
+	var executeResult = make(chan error, 1)
+	go func() {
+		_, err := client.SubscribeAsync(func(message *Message) error {
+			message.SetIgnoreAutoAck(true)
+			return nil
+		}, "queue://orders")
+		executeResult <- err
+	}()
+
+	routeID, handler := waitForAnyRouteHandler(t, client)
+	var ack = AckTypeProcessed
+	_ = handler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ack,
+		status:  []byte("success"),
+	}})
+
+	if err := <-executeResult; err != nil {
+		t.Fatalf("expected subscribe async registration success: %v", err)
+	}
+
+	var writtenBefore = len(conn.WrittenBytes())
+	var queueMessage = makeAutoAckMessage("9|1|")
+	queueMessage.header.subID = []byte(routeID)
+	if err := client.onMessage(queueMessage); err != nil {
+		t.Fatalf("expected routed queue message success: %v", err)
+	}
+
+	if writtenAfter := len(conn.WrittenBytes()); writtenAfter != writtenBefore {
+		t.Fatalf("expected ignore auto ack to suppress ack send, bytes before=%d after=%d", writtenBefore, writtenAfter)
+	}
 }
 
 func TestClientReadRoutineOversizedFrameCoverage(t *testing.T) {

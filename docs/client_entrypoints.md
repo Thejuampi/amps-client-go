@@ -45,6 +45,7 @@ Execution semantics:
 - Route registration occurs before send for APIs that expect acknowledgements.
 - Command failure acks are surfaced as returned errors for sync flows.
 - Async flows dispatch callback errors through configured error/exception paths.
+- Route callbacks registered through `ExecuteAsync(...)` and async convenience APIs receive a copied `Message`, so handlers may retain the callback argument after return.
 
 ## Expected Acks and Events
 
