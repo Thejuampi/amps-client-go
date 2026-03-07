@@ -38,6 +38,7 @@ Common getters include:
 Utility:
 
 - `Copy()` creates deep copy for safe retention outside handler call path.
+- Route callbacks registered through `ExecuteAsync(...)` and async convenience APIs are invoked with a copied `Message`.
 
 ## MessageStream
 
