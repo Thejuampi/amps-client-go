@@ -315,9 +315,12 @@ func (client *Client) buildConnectionInfo() ConnectionInfo {
 			info["uri"] = client.url.String()
 		}
 	}
-	if client.connection != nil {
-		local := client.connection.LocalAddr()
-		remote := client.connection.RemoteAddr()
+	client.connectionStateLock.Lock()
+	var connection = client.connection
+	client.connectionStateLock.Unlock()
+	if connection != nil {
+		local := connection.LocalAddr()
+		remote := connection.RemoteAddr()
 		if local != nil {
 			info["local_addr"] = local.String()
 		}

@@ -57,6 +57,7 @@ type Client struct {
 	heartbeatLock      sync.Mutex
 	disconnectCh       chan struct{}
 	disconnectLock     sync.Mutex
+	connectionStateLock sync.Mutex
 
 	// Preferred lock order when multiple locks are required:
 	// client.lock -> client parity state lock -> store-specific locks.
@@ -404,6 +405,12 @@ func (client *Client) readRoutine() {
 	if client.stopped.Load() {
 		return
 	}
+	client.connectionStateLock.Lock()
+	var connection = client.connection
+	client.connectionStateLock.Unlock()
+	if connection == nil {
+		return
+	}
 	client.callReceiveRoutineStartedCallback()
 	defer client.callReceiveRoutineStoppedCallback()
 
@@ -431,7 +438,7 @@ func (client *Client) readRoutine() {
 				}
 			}
 
-			count, err := client.connection.Read(client.receiveBuffer[client.receivePosition:])
+			count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
 			client.receivePosition += count
 			if err != nil {
 				if client.connected.Load() {
@@ -960,14 +967,22 @@ func (client *Client) onError(err error) {
 }
 
 func (client *Client) onConnectionError(err error) {
-	if client.connection != nil {
-		_ = client.connection.Close()
+	client.connectionStateLock.Lock()
+	if client.stopped.Load() && !client.connected.Load() {
+		client.connectionStateLock.Unlock()
+		return
 	}
+	var connection = client.connection
 	client.connection = nil
 
 	client.connected.Store(false)
 	client.stopped.Store(true)
 	client.logging = false
+	client.connectionStateLock.Unlock()
+
+	if connection != nil {
+		_ = connection.Close()
+	}
 	client.signalDisconnect()
 	client.notifyConnectionState(ConnectionStateDisconnected)
 	if state := ensureClientState(client); state != nil {
@@ -2171,9 +2186,11 @@ func (client *Client) Disconnect() (err error) {
 		state.lock.Unlock()
 	}
 
+	client.connectionStateLock.Lock()
 	client.connected.Store(false)
 	client.logging = false
 	client.stopped.Store(true)
+	client.connectionStateLock.Unlock()
 	client.signalDisconnect()
 	client.notifyConnectionState(ConnectionStateShutdown)
 
@@ -2189,9 +2206,13 @@ func (client *Client) Disconnect() (err error) {
 	client.heartbeatTimestamp = 0
 	client.heartbeatLock.Unlock()
 
-	if client.connection != nil {
-		err = client.connection.Close()
-		client.connection = nil
+	client.connectionStateLock.Lock()
+	var connection = client.connection
+	client.connection = nil
+	client.connectionStateLock.Unlock()
+
+	if connection != nil {
+		err = connection.Close()
 		if err != nil {
 			return NewError(ConnectionError, err)
 		}
