@@ -876,6 +876,47 @@ func TestClientOnErrorAndConnectionErrorCoverage(t *testing.T) {
 	client.onError(NewError(CommandError, "manual"))
 }
 
+func TestClientOnConnectionErrorAlreadyStoppedCoverage(t *testing.T) {
+	client := NewClient("error-paths-stopped")
+	conn := newTestConn()
+	client.connection = conn
+	client.connected.Store(false)
+	client.stopped.Store(true)
+
+	var disconnectCalled = 0
+	var errorCalled = 0
+	client.SetDisconnectHandler(func(*Client, error) { disconnectCalled++ })
+	client.SetErrorHandler(func(error) { errorCalled++ })
+
+	client.onConnectionError(NewError(ConnectionError, "ignored"))
+
+	if client.connection != conn {
+		t.Fatalf("expected existing connection to remain untouched on already-disconnected client")
+	}
+	if disconnectCalled != 0 {
+		t.Fatalf("expected no disconnect callback for already-disconnected client")
+	}
+	if errorCalled != 0 {
+		t.Fatalf("expected no error callback for already-disconnected client")
+	}
+}
+
+func TestClientReadRoutineReturnsWhenConnectionMissingCoverage(t *testing.T) {
+	client := NewClient("read-missing-connection")
+	client.connected.Store(true)
+
+	var started = 0
+	var stopped = 0
+	client.SetReceiveRoutineStartedCallback(func() { started++ })
+	client.SetReceiveRoutineStoppedCallback(func() { stopped++ })
+
+	client.readRoutine()
+
+	if started != 0 || stopped != 0 {
+		t.Fatalf("expected readRoutine to return before callbacks when connection is missing, started=%d stopped=%d", started, stopped)
+	}
+}
+
 func TestClientExecuteAsyncSyncAckCoverage(t *testing.T) {
 	successClient := NewClient("execute-async-success")
 	successConn := newTestConn()
