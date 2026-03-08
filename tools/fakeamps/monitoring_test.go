@@ -2126,4 +2126,6 @@ func resetWorkspaceSessionsForTest() {
 	workspaceSessions.mu.Lock()
 	workspaceSessions.queries = make(map[*websocketConn]workspaceLiveQuery)
 	workspaceSessions.mu.Unlock()
+	commandDedupe.reset()
+	publishSequenceDedupe.reset()
 }

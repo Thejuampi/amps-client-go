@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -20,14 +21,18 @@ import (
 // ---------------------------------------------------------------------------
 
 type connWriter struct {
-	ch    chan []byte
-	done  chan struct{}
-	stats *connStats
+	ch        chan []byte
+	done      chan struct{}
+	stats     *connStats
+	closeOnce sync.Once
 
 	// Compression
 	compress    bool
 	compressBuf *bytes.Buffer
 	zlibWriter  *zlib.Writer
+
+	overflow sync.Once
+	onSlow   func()
 }
 
 func newConnWriter(conn interface{ Write([]byte) (int, error) }, stats *connStats) *connWriter {
@@ -35,6 +40,11 @@ func newConnWriter(conn interface{ Write([]byte) (int, error) }, stats *connStat
 		ch:    make(chan []byte, *flagOutDepth),
 		done:  make(chan struct{}),
 		stats: stats,
+	}
+	if closer, ok := conn.(interface{ Close() error }); ok {
+		cw.onSlow = func() {
+			_ = closer.Close()
+		}
 	}
 	go cw.run(conn)
 	return cw
@@ -51,7 +61,9 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 			frame = cw.compressFrame(frame)
 		}
 
-		_, _ = bw.Write(frame)
+		if _, err := bw.Write(frame); err != nil {
+			return
+		}
 		cw.stats.messagesOut.Add(1)
 		cw.stats.bytesOut.Add(uint64(len(frame)))
 
@@ -71,7 +83,9 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 				if cw.compress && len(f) > 64 {
 					f = cw.compressFrame(f)
 				}
-				_, _ = bw.Write(f)
+				if _, err := bw.Write(f); err != nil {
+					return
+				}
 				cw.stats.messagesOut.Add(1)
 				cw.stats.bytesOut.Add(uint64(len(f)))
 			default:
@@ -79,7 +93,9 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 			}
 		}
 
-		_ = bw.Flush()
+		if err := bw.Flush(); err != nil {
+			return
+		}
 		if channelClosed {
 			return
 		}
@@ -123,23 +139,42 @@ func (cw *connWriter) send(data []byte) {
 	if data == nil {
 		return
 	}
-	select {
-	case cw.ch <- data:
-	default:
-		// Channel full — back-pressure / slow consumer.
-	}
+	var frame = append([]byte(nil), data...)
+	cw.enqueue(frame)
 }
 
 // sendDirect enqueues without copy — caller guarantees slice won't be reused.
 func (cw *connWriter) sendDirect(data []byte) {
+	if data == nil {
+		return
+	}
+	cw.enqueue(data)
+}
+
+func (cw *connWriter) enqueue(data []byte) {
+	defer func() {
+		_ = recover()
+	}()
+
 	select {
 	case cw.ch <- data:
 	default:
+		cw.failSlowConsumer()
 	}
 }
 
+func (cw *connWriter) failSlowConsumer() {
+	cw.overflow.Do(func() {
+		if cw.onSlow != nil {
+			cw.onSlow()
+		}
+	})
+}
+
 func (cw *connWriter) close() {
-	close(cw.ch)
+	cw.closeOnce.Do(func() {
+		close(cw.ch)
+	})
 	<-cw.done
 }
 

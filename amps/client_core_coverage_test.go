@@ -779,7 +779,6 @@ func TestClientAddCommandRouteDirectCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("addCommandRouteDirect AckTypeNone failed: %v", err)
 	}
-
 	var noneRouteValue, noneExists = client.routes.Load("cmd-direct-none")
 	if !noneExists {
 		t.Fatalf("expected ack-none command direct route")
@@ -788,6 +787,63 @@ func TestClientAddCommandRouteDirectCoverage(t *testing.T) {
 	err = noneRouteValue.(func(*Message) error)(&Message{header: &_Header{command: CommandPublish}})
 	if err != nil {
 		t.Fatalf("command direct non-ack callback failed: %v", err)
+	}
+}
+
+func TestExecuteAsyncReusedSubscriptionRoutesProcessedAckByNewCommandID(t *testing.T) {
+	var client = NewClient("resubscribe-processed-ack")
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	var command = NewCommand("sow_and_subscribe").
+		SetTopic("orders").
+		SetSubID("sub-reused").
+		SetQueryID("query-reused").
+		AddAckType(AckTypeCompleted)
+
+	type executeResult struct {
+		routeID string
+		err     error
+	}
+
+	var resultCh = make(chan executeResult, 1)
+	go func() {
+		var routeID, err = client.ExecuteAsync(command, nil)
+		resultCh <- executeResult{routeID: routeID, err: err}
+	}()
+
+	_ = waitForRouteHandler(t, client, "query-reused")
+	_ = waitForRouteHandler(t, client, "0")
+
+	var ackType = AckTypeProcessed
+	var ackErr = client.onMessage(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte("0"),
+		ackType:   &ackType,
+		status:    []byte("success"),
+	}})
+	if ackErr != nil {
+		t.Fatalf("processed ack routing failed: %v", ackErr)
+	}
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("ExecuteAsync failed: %v", result.err)
+		}
+		if result.routeID != "query-reused" {
+			t.Fatalf("routeID = %q, want query-reused", result.routeID)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatalf("timed out waiting for ExecuteAsync to receive processed ack")
+	}
+
+	if _, exists := client.routes.Load("0"); exists {
+		t.Fatalf("expected temporary processed ack alias route removal")
+	}
+	if _, exists := client.routes.Load("query-reused"); !exists {
+		t.Fatalf("expected stable query route to remain after processed ack")
 	}
 }
 

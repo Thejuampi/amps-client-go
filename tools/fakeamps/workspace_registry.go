@@ -108,7 +108,7 @@ func (registry *workspaceSessionRegistry) NotifyRow(topic string, previousPayloa
 					"bookmark":   bookmark,
 					"reason":     "match",
 				})
-				if _, err := conn.WriteText(removeMessage); err != nil {
+				if err := conn.QueueText(removeMessage); err != nil {
 					registry.Remove(conn)
 				}
 			}
@@ -120,7 +120,7 @@ func (registry *workspaceSessionRegistry) NotifyRow(topic string, previousPayloa
 			"request_id": query.RequestID,
 			"row":        workspaceRow(topic, sowKey, bookmark, timestamp, "record", payload),
 		})
-		if _, err := conn.WriteText(message); err != nil {
+		if err := conn.QueueText(message); err != nil {
 			registry.Remove(conn)
 		}
 	}
@@ -157,7 +157,7 @@ func (registry *workspaceSessionRegistry) NotifyRemove(topic string, sowKey stri
 			"bookmark":   bookmark,
 			"reason":     reason,
 		})
-		if _, err := conn.WriteText(message); err != nil {
+		if err := conn.QueueText(message); err != nil {
 			registry.Remove(conn)
 		}
 	}
@@ -193,7 +193,7 @@ func (registry *workspaceSessionRegistry) writeWorkspaceSnapshot(conn *websocket
 		"mode":       query.Mode,
 		"rows":       rows,
 	})
-	if _, err := conn.WriteText(message); err != nil {
+	if err := conn.QueueText(message); err != nil {
 		return err
 	}
 

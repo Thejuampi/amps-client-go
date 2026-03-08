@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"io"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,37 @@ func (c *testConn) Bytes() []byte {
 		out = append(out, w...)
 	}
 	return out
+}
+
+type blockingWriteConn struct {
+	writeStarted chan struct{}
+	release      chan struct{}
+	closeOnce    sync.Once
+}
+
+func newBlockingWriteConn() *blockingWriteConn {
+	return &blockingWriteConn{
+		writeStarted: make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+}
+
+func (c *blockingWriteConn) Write(p []byte) (int, error) {
+	select {
+	case <-c.writeStarted:
+	default:
+		close(c.writeStarted)
+	}
+
+	<-c.release
+	return 0, net.ErrClosed
+}
+
+func (c *blockingWriteConn) Close() error {
+	c.closeOnce.Do(func() {
+		close(c.release)
+	})
+	return nil
 }
 
 func TestConnWriterCompressFrame(t *testing.T) {
@@ -67,11 +99,40 @@ func TestConnWriterEnableAndQueueSend(t *testing.T) {
 	if len(cw.ch) != 1 {
 		t.Fatalf("expected one queued frame")
 	}
+}
 
-	// queue full: this send should be dropped
-	cw.send([]byte("b"))
-	if len(cw.ch) != 1 {
-		t.Fatalf("expected queue size unchanged on overflow")
+func TestConnWriterOverflowClosesConnection(t *testing.T) {
+	var oldOutDepth = *flagOutDepth
+	var oldWriteBuf = *flagWriteBuf
+	*flagOutDepth = 1
+	*flagWriteBuf = 1
+	defer func() {
+		*flagOutDepth = oldOutDepth
+		*flagWriteBuf = oldWriteBuf
+	}()
+
+	var conn = newBlockingWriteConn()
+	var cw = newConnWriter(conn, &connStats{})
+	defer func() {
+		_ = conn.Close()
+		cw.close()
+	}()
+
+	cw.send([]byte("frame-1"))
+
+	select {
+	case <-conn.writeStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected writer to start flushing first frame")
+	}
+
+	cw.send([]byte("frame-2"))
+	cw.send([]byte("frame-3"))
+
+	select {
+	case <-conn.release:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected queue overflow to close slow connection")
 	}
 }
 

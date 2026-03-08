@@ -1692,6 +1692,7 @@ func (client *Client) executeAsync(command *Command, messageHandler func(message
 
 	var notSow, isSubscribe, isPublish, isReplace bool
 	var routeID string
+	var syncAckRouteID string
 	var systemAcks int
 	userAcks, hasUserAcks := command.AckType()
 	var waitForProcessedAck = true
@@ -1756,6 +1757,9 @@ func (client *Client) executeAsync(command *Command, messageHandler func(message
 
 		if systemAcks != AckTypeNone {
 			client.setSyncAckProcessing(make(chan _Result, 1))
+			if isSubscribe && routeID != commandID {
+				syncAckRouteID = commandID
+			}
 		}
 
 		var err error
@@ -1768,6 +1772,11 @@ func (client *Client) executeAsync(command *Command, messageHandler func(message
 		}
 		if err != nil {
 			return commandID, err
+		}
+		if syncAckRouteID != "" {
+			if syncAckHandler, exists := client.routes.Load(routeID); exists {
+				client.routes.Store(syncAckRouteID, syncAckHandler)
+			}
 		}
 		if retryCommandOnDisconnect && subscriptionManager != nil {
 			subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
@@ -1854,6 +1863,9 @@ func (client *Client) executeAsync(command *Command, messageHandler func(message
 
 			sendErr := client.send(command)
 			if sendErr != nil {
+				if syncAckRouteID != "" {
+					client.routes.Delete(syncAckRouteID)
+				}
 				if retryCommandOnDisconnect {
 					unlockClient()
 					client.queueRetryCommand(command, messageHandler)
@@ -1874,6 +1886,9 @@ func (client *Client) executeAsync(command *Command, messageHandler func(message
 
 			result, ok := <-syncAckProcessing
 			client.closeSyncAckProcessing()
+			if syncAckRouteID != "" {
+				client.routes.Delete(syncAckRouteID)
+			}
 			if !ok {
 				routeErr := client.deleteRoute(routeID)
 				if routeErr != nil {
