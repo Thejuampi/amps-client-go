@@ -173,7 +173,7 @@ func writeTempZIP(t *testing.T, name string, files map[string]string) string {
 	return writeTempFile(t, name, buffer.Bytes())
 }
 
-func TestMainHelpAndUnknownCommand(t *testing.T) {
+func TestIntegrationMainHelpAndUnknownCommand(t *testing.T) {
 	var stdout, stderr, code = runMain(t, "", nil, "help")
 	if code != 0 {
 		t.Fatalf("help exit code = %d, stderr = %q", code, stderr)
@@ -199,7 +199,7 @@ func TestMainHelpAndUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestMainPingAndUnsupportedScheme(t *testing.T) {
+func TestIntegrationMainPingAndUnsupportedScheme(t *testing.T) {
 	var broker = startBroker(t)
 
 	var stdout, stderr, code = runMain(t, "", nil,
@@ -239,7 +239,7 @@ func TestMainPingAndUnsupportedScheme(t *testing.T) {
 	}
 }
 
-func TestMainPublishSOWAndDeleteFlows(t *testing.T) {
+func TestIntegrationMainPublishSOWAndDeleteFlows(t *testing.T) {
 	var broker = startBroker(t)
 	var input = writeTempFile(t, "orders.txt", []byte("{\"id\":1}\n{\"id\":2}\n"))
 
@@ -285,7 +285,7 @@ func TestMainPublishSOWAndDeleteFlows(t *testing.T) {
 	}
 }
 
-func TestMainCommandHelpFlagsAndDeltaPublish(t *testing.T) {
+func TestIntegrationMainCommandHelpFlagsAndDeltaPublish(t *testing.T) {
 	var commands = []string{"ping", "publish", "subscribe", "sow", "sow_and_subscribe", "sow_delete"}
 	for _, command := range commands {
 		var stdout, stderr, code = runMain(t, "", nil, command, "-help")
@@ -323,7 +323,7 @@ func TestMainCommandHelpFlagsAndDeltaPublish(t *testing.T) {
 	}
 }
 
-func TestMainCopyAndZIPPublish(t *testing.T) {
+func TestIntegrationMainCopyAndZIPPublish(t *testing.T) {
 	var source = startBroker(t)
 	var target = startBroker(t)
 	var archive = writeTempZIP(t, "orders.zip", map[string]string{
@@ -356,7 +356,7 @@ func TestMainCopyAndZIPPublish(t *testing.T) {
 	}
 }
 
-func TestMainSubscribeQueueAckBacklog(t *testing.T) {
+func TestIntegrationMainSubscribeQueueAckBacklog(t *testing.T) {
 	var broker = startBroker(t)
 	var done = make(chan struct {
 		stdout string
@@ -407,7 +407,7 @@ func TestMainSubscribeQueueAckBacklog(t *testing.T) {
 	}
 }
 
-func TestMainSubscribeReportsAckFailure(t *testing.T) {
+func TestIntegrationMainSubscribeReportsAckFailure(t *testing.T) {
 	var broker = startBrokerWithArgs(t, "-auth", "alice:secret")
 
 	_, stderr, code := runMain(t, "", nil,
@@ -426,7 +426,7 @@ func TestMainSubscribeReportsAckFailure(t *testing.T) {
 	}
 }
 
-func TestMainSOWAndSubscribeAndFormatFailure(t *testing.T) {
+func TestIntegrationMainSOWAndSubscribeAndFormatFailure(t *testing.T) {
 	var broker = startBroker(t)
 
 	_, stderr, code := runMain(t, "", nil,
