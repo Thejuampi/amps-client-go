@@ -13,24 +13,50 @@ Integration tests:
 ## Commands
 
 ```bash
+make static-scan
+make test-race
 make test
 make integration-test
 make parity-check
 make coverage-check
 make perf-check
+make vuln-scan
 make release
 ```
 
 Equivalent direct commands:
 
 ```bash
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks=SA* ./...
+go run github.com/gordonklaus/ineffassign@v0.2.0 ./...
+go run github.com/kisielk/errcheck@v1.10.0 -ignoretests ./...
+go test -race ./... -skip Integration
 go test ./... -skip Integration
 go test ./... -run Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
 go run ./tools/perfgate -baseline tools/perf_baseline.json
+go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
+
+## Static Analysis Gate
+
+Blocking static-analysis policy:
+
+- `go vet ./...`
+- `staticcheck` correctness checks only (`SA*`)
+- `ineffassign` for ineffectual assignments
+- `errcheck` on non-test packages
+
+This gate is exposed locally via `make static-scan` and is required in CI and release validation.
+
+Race coverage is enforced separately with `make test-race` in CI and release validation.
+
+The repository also runs a separate GitHub CodeQL workflow with `security-and-quality` queries for deeper code scanning on pull requests, pushes to `main`, and a weekly schedule.
+
+`make vuln-scan` runs `govulncheck` as an advisory scan. Standard-library findings are toolchain-sensitive, so the workflow records them without turning them into a required merge gate.
 
 ## Coverage Gate (`./amps/...`)
 
@@ -83,16 +109,18 @@ Required output:
 ## Validation Checklist for Parity-Sensitive Changes
 
 1. Confirm no exported API signature regressions.
-2. Run full unit suite.
-3. Run parity check and verify `OPEN_GAPS=0`.
-4. Run coverage gate for `./amps/...`.
-5. Run performance gate against locked baseline.
-6. Run integration suite with target endpoint if available.
-7. Validate handler order expectations.
-8. Validate retry and replay behaviors under disconnect.
-9. Validate queue auto-ack batching and timeout behavior.
-10. Update parity matrix and relevant workflow docs.
-11. Confirm support matrix statements still match observed behavior.
+2. Run `make static-scan`.
+3. Run `make test-race`.
+4. Run full unit suite.
+5. Run parity check and verify `OPEN_GAPS=0`.
+6. Run coverage gate for `./amps/...`.
+7. Run performance gate against locked baseline.
+8. Run integration suite with target endpoint if available.
+9. Validate handler order expectations.
+10. Validate retry and replay behaviors under disconnect.
+11. Validate queue auto-ack batching and timeout behavior.
+12. Update parity matrix and relevant workflow docs.
+13. Confirm support matrix statements still match observed behavior.
 
 ## Link and Documentation Integrity
 

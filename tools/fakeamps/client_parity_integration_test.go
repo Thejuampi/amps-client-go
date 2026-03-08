@@ -2,6 +2,7 @@ package main
 
 import (
 	"net"
+	"sync"
 	"strings"
 	"testing"
 	"time"
@@ -82,18 +83,14 @@ func TestBookmarkSubscribePersistsMostRecentOnCompletedAck(t *testing.T) {
 	var oldJournal = journal
 	sow = newSOWCache()
 	journal = newMessageJournal(1000)
-	defer func() {
-		sow = oldSow
-		journal = oldJournal
-	}()
 
 	var listener, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
-	defer listener.Close()
 
 	var serverDone = make(chan struct{})
+	var handlerDone sync.WaitGroup
 	go func() {
 		defer close(serverDone)
 		for {
@@ -101,7 +98,11 @@ func TestBookmarkSubscribePersistsMostRecentOnCompletedAck(t *testing.T) {
 			if acceptErr != nil {
 				return
 			}
-			go handleConnection(conn)
+			handlerDone.Add(1)
+			go func() {
+				defer handlerDone.Done()
+				handleConnection(conn)
+			}()
 		}
 	}()
 
@@ -118,7 +119,6 @@ func TestBookmarkSubscribePersistsMostRecentOnCompletedAck(t *testing.T) {
 	if err := client.Connect(uri); err != nil {
 		t.Fatalf("connect failed: %v", err)
 	}
-	defer func() { _ = client.Close() }()
 	if err := client.Logon(); err != nil {
 		t.Fatalf("logon failed: %v", err)
 	}
@@ -151,7 +151,32 @@ func TestBookmarkSubscribePersistsMostRecentOnCompletedAck(t *testing.T) {
 	if subErr != nil {
 		t.Fatalf("bookmark subscribe failed: %v", subErr)
 	}
-	defer func() { _ = client.Unsubscribe(subID) }()
+	defer func() {
+		_ = client.Unsubscribe(subID)
+		_ = client.Close()
+		_ = listener.Close()
+
+		select {
+		case <-serverDone:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("accept loop did not exit in time")
+		}
+
+		var handlersExited = make(chan struct{})
+		go func() {
+			handlerDone.Wait()
+			close(handlersExited)
+		}()
+
+		select {
+		case <-handlersExited:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("handleConnection did not exit in time")
+		}
+
+		sow = oldSow
+		journal = oldJournal
+	}()
 
 	var deliveredBookmark string
 	select {

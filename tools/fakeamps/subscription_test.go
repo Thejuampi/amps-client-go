@@ -16,7 +16,7 @@ func TestQueueLeaseFunctions(t *testing.T) {
 	// Test getQueueLease
 	lease := getQueueLease("order-1")
 	if lease == nil {
-		t.Error("expected lease")
+		t.Fatal("expected lease")
 	}
 	if lease.topic != "orders" {
 		t.Errorf("topic = %q, want %q", lease.topic, "orders")

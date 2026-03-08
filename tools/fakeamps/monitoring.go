@@ -858,7 +858,11 @@ func (service *monitoringService) handleSQLWebSocket(w http.ResponseWriter, r *h
 		Conn:   conn,
 		reader: rw.Reader,
 	}
-	defer ws.Close()
+	defer func() {
+		if closeErr := ws.Close(); closeErr != nil {
+			log.Printf("fakeamps: websocket close failed: %v", closeErr)
+		}
+	}()
 	defer workspaceSessions.Remove(ws)
 
 	for {

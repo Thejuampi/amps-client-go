@@ -758,8 +758,7 @@ func evaluateStringFunction(filter string, payload []byte, fn string) bool {
 }
 
 func evaluateLenFunction(filter string, payload []byte) bool {
-	rest := filter
-	rest = strings.TrimPrefix(strings.TrimPrefix(filter, "LEN("), "len(")
+	rest := strings.TrimPrefix(strings.TrimPrefix(filter, "LEN("), "len(")
 
 	// Find the closing parenthesis
 	closeIdx := strings.Index(rest, ")")

@@ -10,12 +10,17 @@ import (
 	"unsafe"
 )
 
-func mmapReadFile(path string) ([]byte, error) {
+func mmapReadFile(path string) (_ []byte, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		closeErr := file.Close()
+		if err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	info, err := file.Stat()
 	if err != nil {

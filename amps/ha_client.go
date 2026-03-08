@@ -45,13 +45,10 @@ func (ha *HAClient) handleDisconnect(err error) {
 		return
 	}
 
-	for {
-		if ha.stopped.Load() {
-			return
-		}
-		if ha.reconnecting.CompareAndSwap(false, true) {
-			break
-		}
+	if ha.stopped.Load() {
+		return
+	}
+	if !ha.reconnecting.CompareAndSwap(false, true) {
 		return
 	}
 

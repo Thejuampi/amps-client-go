@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -163,8 +164,7 @@ func TestSOWDeletePersistedAckEchoesSequence(t *testing.T) {
 	sendFrame(t, client, buildCommandFrame(`{"c":"sow_delete","cid":"del-1","t":"orders","a":"processed,persisted","s":"55","k":"order-1"}`, nil))
 
 	var foundPersistedSeq = false
-	var attempts = 0
-	for attempts = 0; attempts < 3; attempts++ {
+	for attempts := 0; attempts < 3; attempts++ {
 		var body = readFrameBody(t, client, 500*time.Millisecond)
 		if strings.Contains(body, `"cid":"del-1"`) && strings.Contains(body, `"a":"persisted"`) && strings.Contains(body, `"s":55`) {
 			foundPersistedSeq = true
@@ -235,8 +235,7 @@ func TestPublishSyncAckReturnsFailureWhenReplicationWriteFails(t *testing.T) {
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"sync-1","t":"orders","a":"processed,persisted,sync","s":"77","k":"order-1","mt":"json"}`, []byte(`{"id":1}`)))
 
 	var persistedFailure = false
-	var readCount = 0
-	for readCount = 0; readCount < 3; readCount++ {
+	for readCount := 0; readCount < 3; readCount++ {
 		var body = readFrameBody(t, client, 500*time.Millisecond)
 		if strings.Contains(body, `"cid":"sync-1"`) && strings.Contains(body, `"a":"persisted"`) && strings.Contains(body, `"status":"failure"`) {
 			persistedFailure = true
@@ -346,8 +345,7 @@ func TestPublishSyncAckReturnsFailureWhenReplicaRejectsApply(t *testing.T) {
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"sync-2","t":"orders","a":"processed,persisted,sync","s":"78","k":"order-1","mt":"json"}`, []byte(`{"id":1}`)))
 
 	var persistedFailure = false
-	var readCount = 0
-	for readCount = 0; readCount < 6; readCount++ {
+	for readCount := 0; readCount < 6; readCount++ {
 		var body = readFrameBody(t, client, 500*time.Millisecond)
 		if strings.Contains(body, `"cid":"sync-2"`) && strings.Contains(body, `"a":"persisted"`) && strings.Contains(body, `"status":"failure"`) {
 			persistedFailure = true
@@ -1315,19 +1313,13 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 	journal = newMessageJournal(1000)
 	*flagAuth = "alice:pwd:/owner = 'alice',writer:pwd"
 
-	defer func() {
-		sow = oldSow
-		journal = oldJournal
-		*flagAuth = oldAuthFlag
-		resetAuthForTest()
-	}()
-
 	var listener, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
 
 	var serverDone = make(chan struct{})
+	var handlerDone sync.WaitGroup
 	go func() {
 		defer close(serverDone)
 		for {
@@ -1335,7 +1327,11 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 			if acceptErr != nil {
 				return
 			}
-			go handleConnection(conn)
+			handlerDone.Add(1)
+			go func() {
+				defer handlerDone.Done()
+				handleConnection(conn)
+			}()
 		}
 	}()
 
@@ -1343,13 +1339,39 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 	if subscriberErr != nil {
 		t.Fatalf("failed to dial subscriber: %v", subscriberErr)
 	}
-	defer subscriber.Close()
 
 	var publisher, publisherErr = net.Dial("tcp", listener.Addr().String())
 	if publisherErr != nil {
 		t.Fatalf("failed to dial publisher: %v", publisherErr)
 	}
-	defer publisher.Close()
+	defer func() {
+		_ = subscriber.Close()
+		_ = publisher.Close()
+		_ = listener.Close()
+
+		select {
+		case <-serverDone:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("accept loop did not exit in time")
+		}
+
+		var handlersExited = make(chan struct{})
+		go func() {
+			handlerDone.Wait()
+			close(handlersExited)
+		}()
+
+		select {
+		case <-handlersExited:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("handleConnection did not exit in time")
+		}
+
+		sow = oldSow
+		journal = oldJournal
+		*flagAuth = oldAuthFlag
+		resetAuthForTest()
+	}()
 
 	sendFrame(t, subscriber, buildCommandFrame(`{"c":"logon","cid":"s-log","a":"processed","user_id":"alice","pw":"pwd","client_name":"alice-sub"}`, nil))
 	_ = readFrameBody(t, subscriber, 500*time.Millisecond)
@@ -1376,7 +1398,4 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 	if leaked {
 		t.Fatalf("expected no bob payload delivery under entitlement filter, got %s", leakedBody)
 	}
-
-	_ = listener.Close()
-	<-serverDone
 }

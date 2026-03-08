@@ -2,8 +2,12 @@ GO ?= go
 PKG ?= ./...
 GOFLAGS ?=
 VERSION ?= $(strip $(file < VERSION))
+STATICCHECK_VERSION ?= v0.7.0
+INEFFASSIGN_VERSION ?= v0.2.0
+ERRCHECK_VERSION ?= v1.10.0
+GOVULNCHECK_VERSION ?= v1.1.4
 
-.PHONY: help build test test-race integration-test install fmt vet tidy clean parity-check coverage-check perf-check release
+.PHONY: help build test test-race integration-test install fmt vet static-scan vuln-scan tidy clean parity-check coverage-check perf-check release
 
 help:
 	@echo Available targets:
@@ -14,6 +18,8 @@ help:
 	@echo   make install          Install packages with go install
 	@echo   make fmt              Format Go source files
 	@echo   make vet              Run go vet
+	@echo   make static-scan      Run blocking static analysis (vet, staticcheck, ineffassign, errcheck)
+	@echo   make vuln-scan        Run advisory vulnerability scan
 	@echo   make tidy             Run go mod tidy
 	@echo   make clean            Clean Go build/test caches
 	@echo   make parity-check     Validate C++->Go parity manifest mappings
@@ -42,6 +48,15 @@ fmt:
 vet:
 	$(GO) vet $(PKG)
 
+static-scan:
+	$(GO) vet $(PKG)
+	$(GO) run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) -checks=SA* $(PKG)
+	$(GO) run github.com/gordonklaus/ineffassign@$(INEFFASSIGN_VERSION) $(PKG)
+	$(GO) run github.com/kisielk/errcheck@$(ERRCHECK_VERSION) -ignoretests $(PKG)
+
+vuln-scan:
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
+
 tidy:
 	$(GO) mod tidy
 
@@ -59,5 +74,5 @@ coverage-check:
 perf-check:
 	$(GO) run ./tools/perfgate -baseline tools/perf_baseline.json
 
-release: vet test build parity-check coverage-check perf-check
+release: static-scan test-race test build parity-check coverage-check perf-check
 	@echo Release checks passed for $(VERSION).

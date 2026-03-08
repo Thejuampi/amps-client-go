@@ -38,6 +38,7 @@ Copilot-specific rules:
 Preferred Make targets:
 ```bash
 make build
+make static-scan
 make test
 make test-race
 make integration-test
@@ -52,6 +53,10 @@ make release
 Equivalent direct commands:
 ```bash
 go build ./...
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks=SA* ./...
+go run github.com/gordonklaus/ineffassign@v0.2.0 ./...
+go run github.com/kisielk/errcheck@v1.10.0 -ignoretests ./...
 go test ./...
 go test -race ./...
 go test ./... -run Integration
@@ -60,6 +65,7 @@ go vet ./...
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
+go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 go run ./tools/perfgate -baseline tools/perf_baseline.json
 ```
 
@@ -159,6 +165,7 @@ Never skip RED.
 ## Agent Completion Checklist
 - RED test added and verified failing.
 - GREEN implementation added and tests passing.
+- `make static-scan` run.
 - Focused tests run.
 - `go test ./...` run.
 - Coverage gate verified (`make coverage-check` or equivalent).
