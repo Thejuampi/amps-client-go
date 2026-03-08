@@ -19,7 +19,7 @@ import (
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.5.3"
+	ClientVersion = "0.5.4"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
@@ -766,6 +766,7 @@ func (client *Client) addRoute(
 	requestedAcks int,
 	isSubscribe bool,
 	isReplace bool,
+	beforeStore ...func(),
 ) (routeErr error) {
 	success := systemAcks == AckTypeNone
 
@@ -783,6 +784,10 @@ func (client *Client) addRoute(
 		if messageHandler == nil {
 			messageHandler = previousMessageHandler.(func(*Message) error)
 		}
+	}
+
+	if len(beforeStore) > 0 && beforeStore[0] != nil {
+		beforeStore[0]()
 	}
 
 	client.routes.Store(routeID, func(message *Message) error {
@@ -1802,7 +1807,12 @@ func (client *Client) executeAsync(
 		} else if !isSubscribe && systemAcks == AckTypeNone && hasUserAcks {
 			err = client.addCommandRouteDirect(routeID, routeMessageHandler, userAcks)
 		} else {
-			err = client.addRoute(routeID, routeMessageHandler, systemAcks, userAcks, isSubscribe, isReplace)
+			err = client.addRoute(routeID, routeMessageHandler, systemAcks, userAcks, isSubscribe, isReplace, func() {
+				if onRouteReady != nil {
+					onRouteReady(commandID, routeID)
+					onRouteReady = nil
+				}
+			})
 		}
 		if err != nil {
 			return commandID, err
@@ -1814,6 +1824,7 @@ func (client *Client) executeAsync(
 		}
 		if onRouteReady != nil {
 			onRouteReady(commandID, routeID)
+			onRouteReady = nil
 		}
 		if retryCommandOnDisconnect && subscriptionManager != nil {
 			subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
@@ -1845,7 +1856,7 @@ func (client *Client) executeAsync(
 		client.setSyncAckProcessing(make(chan _Result, 1))
 		routeID = commandID
 
-		err := client.addRoute(commandID, routeMessageHandler, systemAcks, userAcks, false, false)
+		err := client.addRoute(commandID, routeMessageHandler, systemAcks, userAcks, false, false, nil)
 		if err != nil {
 			return commandID, err
 		}
@@ -1873,7 +1884,7 @@ func (client *Client) executeAsync(
 		if hasUserAcks {
 			routeID = commandID
 
-			err := client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false)
+			err := client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false, nil)
 			if err != nil {
 				return commandID, err
 			}
