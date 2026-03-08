@@ -27,6 +27,37 @@ func (client *Client) reportException(err error) {
 	}
 }
 
+func bookmarkStoreLog(store BookmarkStore, message *Message) (uint64, error) {
+	if store == nil {
+		return 0, nil
+	}
+	if storeWithErrors, ok := store.(BookmarkStoreWithErrors); ok {
+		return storeWithErrors.LogWithError(message)
+	}
+	return store.Log(message), nil
+}
+
+func bookmarkStorePersisted(store BookmarkStore, subID string, bookmark string) (string, error) {
+	if store == nil {
+		return "", nil
+	}
+	if storeWithErrors, ok := store.(BookmarkStoreWithErrors); ok {
+		return storeWithErrors.PersistedWithError(subID, bookmark)
+	}
+	return store.Persisted(subID, bookmark), nil
+}
+
+func bookmarkStoreSetServerVersion(store BookmarkStore, version string) error {
+	if store == nil {
+		return nil
+	}
+	if storeWithErrors, ok := store.(BookmarkStoreWithErrors); ok {
+		return storeWithErrors.SetServerVersionWithError(version)
+	}
+	store.SetServerVersion(version)
+	return nil
+}
+
 func (client *Client) notifyConnectionState(connectionState ConnectionState) {
 	state := ensureClientState(client)
 	if state == nil {
@@ -251,7 +282,9 @@ func (client *Client) applyAckBookkeeping(message *Message) {
 	if bookmarkStore != nil && status == "success" && (ackType&AckTypeCompleted) > 0 {
 		if subID, hasSubID := message.SubID(); hasSubID {
 			if bookmark, hasBookmark := message.Bookmark(); hasBookmark {
-				bookmarkStore.Persisted(subID, bookmark)
+				if _, err := bookmarkStorePersisted(bookmarkStore, subID, bookmark); err != nil {
+					client.reportException(err)
+				}
 			}
 		}
 	}
@@ -293,7 +326,9 @@ func (client *Client) detectAndTrackDuplicate(message *Message) bool {
 		return false
 	}
 
-	bookmarkStore.Log(message)
+	if _, err := bookmarkStoreLog(bookmarkStore, message); err != nil {
+		client.reportException(err)
+	}
 	return bookmarkStore.IsDiscarded(message)
 }
 

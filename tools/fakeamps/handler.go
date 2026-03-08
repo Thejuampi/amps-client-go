@@ -142,6 +142,8 @@ func handleConnection(conn net.Conn) {
 	var heartbeatTickerStop chan struct{}
 	var pendingChallengeUser string
 	var pendingChallengeNonce string
+	var connCommandDedupe = newCommandDedupeTracker(4096)
+	var connPublishSequenceDedupe = newPublishSequenceTracker()
 
 	defer func() {
 		if heartbeatTickerStop != nil {
@@ -670,8 +672,8 @@ func handleConnection(conn net.Conn) {
 			var isReplicatedCommand = header.repl != ""
 			var needsPostApplyProcessedAck = isReplicatedCommand && (header.replSync == "1" || strings.EqualFold(header.replSync, "true"))
 			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
-			var isDuplicateCommand = commandDedupe.seenBefore(dedupeClientID, commandID)
-			var isDuplicateSequence = publishSequenceDedupe.seenBefore(dedupeClientID, seqID)
+			var isDuplicateCommand = connCommandDedupe.seenBefore(dedupeClientID, commandID)
+			var isDuplicateSequence = connPublishSequenceDedupe.seenBefore(dedupeClientID, seqID)
 
 			if wantProcessed && !needsPostApplyProcessedAck {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
@@ -788,7 +790,7 @@ func handleConnection(conn net.Conn) {
 
 			filter = applyEntitlementFilter(connUserID, filter)
 			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
-			var isDuplicateCommand = commandDedupe.seenBefore(dedupeClientID, commandID)
+			var isDuplicateCommand = connCommandDedupe.seenBefore(dedupeClientID, commandID)
 			var topicMatches = 0
 			if sow != nil {
 				topicMatches = sow.count(topic)

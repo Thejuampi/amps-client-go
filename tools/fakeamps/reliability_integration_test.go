@@ -441,6 +441,72 @@ func TestPublishSequenceReplaySkipsSecondApply(t *testing.T) {
 	}
 }
 
+func TestPublishReconnectReusesIdentityWithoutSuppressingValidCommands(t *testing.T) {
+	commandDedupe.reset()
+	publishSequenceDedupe.reset()
+
+	var oldSow = sow
+	var oldJournal = journal
+	sow = newSOWCache()
+	journal = newMessageJournal(1000)
+	defer func() {
+		sow = oldSow
+		journal = oldJournal
+		commandDedupe.reset()
+		publishSequenceDedupe.reset()
+	}()
+
+	var listener, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer listener.Close()
+
+	var done = make(chan struct{})
+	go func() {
+		defer close(done)
+		for accepted := 0; accepted < 2; accepted++ {
+			var conn, acceptErr = listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			handleConnection(conn)
+		}
+	}()
+
+	var runClient = func(commandJSON string, payload []byte) {
+		var client, dialErr = net.Dial("tcp", listener.Addr().String())
+		if dialErr != nil {
+			t.Fatalf("failed to dial test server: %v", dialErr)
+		}
+
+		var readDone = make(chan struct{})
+		go func() {
+			defer close(readDone)
+			_, _ = io.Copy(io.Discard, client)
+		}()
+
+		sendFrame(t, client, buildCommandFrame(`{"c":"logon","cid":"log-1","a":"processed","client_name":"stable-client"}`, nil))
+		sendFrame(t, client, buildCommandFrame(commandJSON, payload))
+		_ = client.Close()
+		<-readDone
+	}
+
+	runClient(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"10","k":"order-1","mt":"json"}`, []byte(`{"id":1}`))
+	runClient(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"10","k":"order-2","mt":"json"}`, []byte(`{"id":2}`))
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("handleConnection did not exit in time")
+	}
+
+	var result = sow.query("orders", "", -1, "")
+	if result.totalCount != 2 {
+		t.Fatalf("expected reconnect with same logical identity to apply both publishes, got %d", result.totalCount)
+	}
+}
+
 func TestLogonRedirectReturnsRedirectFrame(t *testing.T) {
 	var oldRedirect = *flagRedirectURI
 	*flagRedirectURI = "tcp://127.0.0.1:19001/amps/json"

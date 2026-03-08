@@ -547,7 +547,7 @@ func (c *sowCache) query(topic, filter string, topN int, orderBy string) queryRe
 		return queryResult{}
 	}
 	t := raw.(*topicSOW)
-	t.mu.RLock()
+	t.mu.Lock()
 	var matching []sowRecord
 	for _, r := range t.records {
 		if r.isExpired() {
@@ -559,7 +559,7 @@ func (c *sowCache) query(topic, filter string, topN int, orderBy string) queryRe
 		r.lastAccess = time.Now() // update LRU timestamp on read
 		matching = append(matching, *r)
 	}
-	t.mu.RUnlock()
+	t.mu.Unlock()
 
 	totalCount := len(matching)
 

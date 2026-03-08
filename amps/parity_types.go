@@ -126,6 +126,18 @@ type BookmarkStore interface {
 	SetServerVersion(version string)
 }
 
+// BookmarkStoreWithErrors optionally exposes persistence failures without
+// breaking the legacy BookmarkStore API.
+type BookmarkStoreWithErrors interface {
+	BookmarkStore
+	LogWithError(message *Message) (uint64, error)
+	DiscardWithError(subID string, bookmarkSeqNo uint64) error
+	DiscardMessageWithError(message *Message) error
+	PurgeWithError(subID ...string) error
+	PersistedWithError(subID string, bookmark string) (string, error)
+	SetServerVersionWithError(version string) error
+}
+
 // TransportFilterDirection identifies inbound or outbound filter execution.
 type TransportFilterDirection int
 

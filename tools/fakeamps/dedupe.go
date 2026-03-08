@@ -59,6 +59,16 @@ func (tracker *commandDedupeTracker) seenBefore(clientID string, commandID strin
 	return false
 }
 
+func (tracker *commandDedupeTracker) reset() {
+	if tracker == nil {
+		return
+	}
+
+	tracker.mu.Lock()
+	tracker.clients = make(map[string]*commandDedupeClientState)
+	tracker.mu.Unlock()
+}
+
 var commandDedupe = newCommandDedupeTracker(4096)
 
 type publishSequenceTracker struct {
@@ -90,6 +100,16 @@ func (tracker *publishSequenceTracker) seenBefore(clientID string, sequenceID st
 
 	tracker.lastByClient[clientID] = seq
 	return false
+}
+
+func (tracker *publishSequenceTracker) reset() {
+	if tracker == nil {
+		return
+	}
+
+	tracker.mu.Lock()
+	tracker.lastByClient = make(map[string]uint64)
+	tracker.mu.Unlock()
 }
 
 var publishSequenceDedupe = newPublishSequenceTracker()

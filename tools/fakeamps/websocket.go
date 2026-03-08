@@ -10,9 +10,20 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 const websocketAcceptGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+const (
+	workspaceWriteQueueDepth = 128
+	websocketWriteTimeout    = 250 * time.Millisecond
+)
+
+type websocketQueuedFrame struct {
+	opcode  byte
+	payload []byte
+}
 
 type bufferedConn struct {
 	net.Conn
@@ -30,6 +41,11 @@ type websocketConn struct {
 
 	readBuf []byte
 	readPos int
+
+	workspaceMu     sync.Mutex
+	workspaceQueue  chan websocketQueuedFrame
+	workspaceDone   chan struct{}
+	workspaceClosed bool
 }
 
 func (c *websocketConn) Read(p []byte) (int, error) {
@@ -71,20 +87,84 @@ func (c *websocketConn) Read(p []byte) (int, error) {
 }
 
 func (c *websocketConn) Write(p []byte) (int, error) {
-	return c.writeDataFrame(0x2, p)
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.writeDataFrameLocked(0x2, p)
 }
 
 func (c *websocketConn) WriteText(p []byte) (int, error) {
-	return c.writeDataFrame(0x1, p)
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.writeDataFrameLocked(0x1, p)
 }
 
-func (c *websocketConn) writeDataFrame(opcode byte, p []byte) (int, error) {
+func (c *websocketConn) QueueText(p []byte) error {
+	if len(p) == 0 {
+		return nil
+	}
+
+	var frame = append([]byte(nil), p...)
+
+	c.workspaceMu.Lock()
+	if c.workspaceClosed {
+		c.workspaceMu.Unlock()
+		return net.ErrClosed
+	}
+	if c.workspaceQueue == nil {
+		c.workspaceQueue = make(chan websocketQueuedFrame, workspaceWriteQueueDepth)
+		c.workspaceDone = make(chan struct{})
+		go c.runWorkspaceWriter(c.workspaceQueue, c.workspaceDone)
+	}
+
+	select {
+	case c.workspaceQueue <- websocketQueuedFrame{opcode: 0x1, payload: frame}:
+		c.workspaceMu.Unlock()
+		return nil
+	default:
+		c.workspaceMu.Unlock()
+		_ = c.Close()
+		return errors.New("workspace websocket queue full")
+	}
+}
+
+func (c *websocketConn) Close() error {
+	if c == nil {
+		return nil
+	}
+
+	c.workspaceMu.Lock()
+	var queue = c.workspaceQueue
+	var done = c.workspaceDone
+	var alreadyClosed = c.workspaceClosed
+	c.workspaceClosed = true
+	c.workspaceQueue = nil
+	c.workspaceDone = nil
+	c.workspaceMu.Unlock()
+
+	var err error
+	if !alreadyClosed && c.Conn != nil {
+		err = c.Conn.Close()
+	}
+	if queue != nil {
+		close(queue)
+		if done != nil {
+			<-done
+		}
+	}
+	return err
+}
+
+func (c *websocketConn) writeDataFrameLocked(opcode byte, p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
 
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
+	if err := c.setWriteDeadline(); err != nil {
+		return 0, err
+	}
+	defer func() {
+		_ = c.clearWriteDeadline()
+	}()
 
 	var header []byte
 	var length = len(p)
@@ -112,6 +192,13 @@ func (c *websocketConn) writeControlFrame(opcode byte, payload []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
+	if err := c.setWriteDeadline(); err != nil {
+		return err
+	}
+	defer func() {
+		_ = c.clearWriteDeadline()
+	}()
+
 	var header []byte
 	var length = len(payload)
 	if length <= 125 {
@@ -129,6 +216,38 @@ func (c *websocketConn) writeControlFrame(opcode byte, payload []byte) error {
 		}
 	}
 	return nil
+}
+
+func (c *websocketConn) setWriteDeadline() error {
+	if c == nil || c.Conn == nil {
+		return nil
+	}
+	return c.Conn.SetWriteDeadline(time.Now().Add(websocketWriteTimeout))
+}
+
+func (c *websocketConn) clearWriteDeadline() error {
+	if c == nil || c.Conn == nil {
+		return nil
+	}
+	return c.Conn.SetWriteDeadline(time.Time{})
+}
+
+func (c *websocketConn) runWorkspaceWriter(queue <-chan websocketQueuedFrame, done chan struct{}) {
+	defer close(done)
+
+	for frame := range queue {
+		c.writeMu.Lock()
+		var _, err = c.writeDataFrameLocked(frame.opcode, frame.payload)
+		c.writeMu.Unlock()
+		if err != nil {
+			c.workspaceMu.Lock()
+			c.workspaceClosed = true
+			c.workspaceQueue = nil
+			c.workspaceMu.Unlock()
+			_ = c.Conn.Close()
+			return
+		}
+	}
 }
 
 func (c *websocketConn) readFrame() ([]byte, byte, error) {

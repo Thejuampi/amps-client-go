@@ -844,7 +844,6 @@ func (service *monitoringService) handleSQLWebSocket(w http.ResponseWriter, r *h
 		jsonError(w, http.StatusInternalServerError, "websocket hijack failed")
 		return
 	}
-	defer conn.Close()
 
 	var acceptRaw = sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + websocketAcceptGUID))
 	var accept = base64.StdEncoding.EncodeToString(acceptRaw[:])
@@ -859,6 +858,7 @@ func (service *monitoringService) handleSQLWebSocket(w http.ResponseWriter, r *h
 		Conn:   conn,
 		reader: rw.Reader,
 	}
+	defer ws.Close()
 	defer workspaceSessions.Remove(ws)
 
 	for {
@@ -963,7 +963,7 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 
 	workspaceSessions.Remove(ws)
 
-	_, _ = ws.WriteText(mustJSON(map[string]interface{}{
+	var readyMessage = mustJSON(map[string]interface{}{
 		"type":       "workspace_ready",
 		"request_id": request.RequestID,
 		"mode":       mode,
@@ -971,7 +971,7 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 		"filter":     request.Filter,
 		"delta":      request.Options.Delta,
 		"live":       request.Options.Live,
-	}))
+	})
 
 	switch mode {
 	case "sow":
@@ -982,6 +982,7 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 			request.Options.OrderBy,
 			request.Options.Bookmark,
 		)
+		_, _ = ws.WriteText(readyMessage)
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
 			"type":       "workspace_snapshot",
 			"request_id": request.RequestID,
@@ -995,12 +996,12 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 		}))
 	case "subscribe":
 		var rows = []map[string]interface{}{}
-		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
+		var snapshotMessage = mustJSON(map[string]interface{}{
 			"type":       "workspace_snapshot",
 			"request_id": request.RequestID,
 			"mode":       mode,
 			"rows":       rows,
-		}))
+		})
 		if request.Options.Live {
 			var query = workspaceLiveQuery{
 				RequestID: request.RequestID,
@@ -1012,9 +1013,13 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 			if workspaceQueryUsesSnapshots(query) {
 				query.Signature = workspaceRowsSignature(rows)
 			}
-			workspaceSessions.Set(ws, query)
+			if err := writeLiveWorkspaceBootstrap(ws, query, readyMessage, snapshotMessage); err != nil {
+				workspaceSessions.Remove(ws)
+			}
 			return
 		}
+		_, _ = ws.WriteText(readyMessage)
+		_, _ = ws.WriteText(snapshotMessage)
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
 			"type":       "workspace_complete",
 			"request_id": request.RequestID,
@@ -1028,12 +1033,12 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 			request.Options.OrderBy,
 			request.Options.Bookmark,
 		)
-		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
+		var snapshotMessage = mustJSON(map[string]interface{}{
 			"type":       "workspace_snapshot",
 			"request_id": request.RequestID,
 			"mode":       mode,
 			"rows":       rows,
-		}))
+		})
 		if request.Options.Live {
 			var query = workspaceLiveQuery{
 				RequestID: request.RequestID,
@@ -1045,15 +1050,37 @@ func (service *monitoringService) handleSQLWorkspaceRun(ws *websocketConn, reque
 			if workspaceQueryUsesSnapshots(query) {
 				query.Signature = workspaceRowsSignature(rows)
 			}
-			workspaceSessions.Set(ws, query)
+			if err := writeLiveWorkspaceBootstrap(ws, query, readyMessage, snapshotMessage); err != nil {
+				workspaceSessions.Remove(ws)
+			}
 			return
 		}
+		_, _ = ws.WriteText(readyMessage)
+		_, _ = ws.WriteText(snapshotMessage)
 		_, _ = ws.WriteText(mustJSON(map[string]interface{}{
 			"type":       "workspace_complete",
 			"request_id": request.RequestID,
 			"reason":     "snapshot_complete",
 		}))
 	}
+}
+
+func writeLiveWorkspaceBootstrap(ws *websocketConn, query workspaceLiveQuery, readyMessage []byte, snapshotMessage []byte) error {
+	if ws == nil {
+		return nil
+	}
+
+	ws.writeMu.Lock()
+	defer ws.writeMu.Unlock()
+
+	workspaceSessions.Set(ws, query)
+	if _, err := ws.writeDataFrameLocked(0x1, readyMessage); err != nil {
+		return err
+	}
+	if _, err := ws.writeDataFrameLocked(0x1, snapshotMessage); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (service *monitoringService) handleSQLWorkspaceStop(ws *websocketConn, request sqlWorkspaceRequest) {

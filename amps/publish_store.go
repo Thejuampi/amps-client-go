@@ -337,6 +337,9 @@ func (store *FilePublishStore) appendWalNoLock(record publishStoreWalRecord) err
 	if store == nil || store.walPath == "" || !store.options.UseWAL {
 		return nil
 	}
+	if currentFileStoreTestHooks.publishWalBeforeAppend != nil {
+		currentFileStoreTestHooks.publishWalBeforeAppend()
+	}
 	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
 }
 
@@ -347,9 +350,7 @@ func (store *FilePublishStore) bumpMutationAndMaybeCheckpoint() error {
 
 	ops := atomic.AddUint64(&store.opsSinceCheckpoint, 1)
 	if store.options.UseWAL && ops >= store.options.CheckpointInterval {
-		if atomic.CompareAndSwapUint64(&store.opsSinceCheckpoint, ops, 0) {
-			return store.saveCheckpoint()
-		}
+		return store.saveCheckpoint()
 	}
 	return nil
 }
@@ -380,28 +381,33 @@ func (store *FilePublishStore) saveCheckpoint() error {
 		ErrorOnGap:    store.errorOnPublishGap,
 		Records:       records,
 	}
-	store.lock.Unlock()
+	if currentFileStoreTestHooks.publishCheckpointBeforeCommit != nil {
+		currentFileStoreTestHooks.publishCheckpointBeforeCommit()
+	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
+		store.lock.Unlock()
 		return err
 	}
 	if store.options.MMap.Enabled {
 		if err = mmapWriteFile(store.path, data, 0600, store.options.MMap.InitialSize); err != nil {
+			store.lock.Unlock()
 			return err
 		}
 	} else {
 		if err = wal.WriteAtomic(store.path, data, 0600); err != nil {
+			store.lock.Unlock()
 			return err
 		}
 	}
 	if store.options.UseWAL {
 		if err = wal.Truncate(store.walPath); err != nil {
+			store.lock.Unlock()
 			return err
 		}
 	}
 
-	store.lock.Lock()
 	store.opsSinceCheckpoint = 0
 	store.lock.Unlock()
 	return nil

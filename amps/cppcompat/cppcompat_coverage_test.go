@@ -66,6 +66,141 @@ func (store *fakePublishStore) SetErrorOnPublishGap(enabled bool) {
 }
 func (store *fakePublishStore) ErrorOnPublishGap() bool { return false }
 
+type fakeBookmarkStoreWithErrors struct {
+	inner                    *amps.MemoryBookmarkStore
+	logErr                   error
+	discardErr               error
+	discardMessageErr        error
+	purgeErr                 error
+	persistedErr             error
+	setServerVersionErr      error
+	logWithErrorCalls        int
+	discardWithErrorCalls    int
+	discardMessageErrorCalls int
+	purgeWithErrorCalls      int
+	persistedWithErrorCalls  int
+	setServerVersionErrCalls int
+}
+
+func newFakeBookmarkStoreWithErrors() *fakeBookmarkStoreWithErrors {
+	return &fakeBookmarkStoreWithErrors{inner: amps.NewMemoryBookmarkStore()}
+}
+
+type legacyBookmarkStore struct {
+	inner *amps.MemoryBookmarkStore
+}
+
+func newLegacyBookmarkStore() *legacyBookmarkStore {
+	return &legacyBookmarkStore{inner: amps.NewMemoryBookmarkStore()}
+}
+
+func (store *legacyBookmarkStore) Log(message *amps.Message) uint64 {
+	return store.inner.Log(message)
+}
+
+func (store *legacyBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
+	store.inner.Discard(subID, bookmarkSeqNo)
+}
+
+func (store *legacyBookmarkStore) DiscardMessage(message *amps.Message) {
+	store.inner.DiscardMessage(message)
+}
+
+func (store *legacyBookmarkStore) GetMostRecent(subID string) string {
+	return store.inner.GetMostRecent(subID)
+}
+
+func (store *legacyBookmarkStore) IsDiscarded(message *amps.Message) bool {
+	return store.inner.IsDiscarded(message)
+}
+
+func (store *legacyBookmarkStore) Purge(subID ...string) {
+	store.inner.Purge(subID...)
+}
+
+func (store *legacyBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
+	return store.inner.GetOldestBookmarkSeq(subID)
+}
+
+func (store *legacyBookmarkStore) Persisted(subID string, bookmark string) string {
+	return store.inner.Persisted(subID, bookmark)
+}
+
+func (store *legacyBookmarkStore) SetServerVersion(version string) {
+	store.inner.SetServerVersion(version)
+}
+
+func (store *fakeBookmarkStoreWithErrors) Log(message *amps.Message) uint64 {
+	return store.inner.Log(message)
+}
+
+func (store *fakeBookmarkStoreWithErrors) Discard(subID string, bookmarkSeqNo uint64) {
+	store.inner.Discard(subID, bookmarkSeqNo)
+}
+
+func (store *fakeBookmarkStoreWithErrors) DiscardMessage(message *amps.Message) {
+	store.inner.DiscardMessage(message)
+}
+
+func (store *fakeBookmarkStoreWithErrors) GetMostRecent(subID string) string {
+	return store.inner.GetMostRecent(subID)
+}
+
+func (store *fakeBookmarkStoreWithErrors) IsDiscarded(message *amps.Message) bool {
+	return store.inner.IsDiscarded(message)
+}
+
+func (store *fakeBookmarkStoreWithErrors) Purge(subID ...string) {
+	store.inner.Purge(subID...)
+}
+
+func (store *fakeBookmarkStoreWithErrors) GetOldestBookmarkSeq(subID string) uint64 {
+	return store.inner.GetOldestBookmarkSeq(subID)
+}
+
+func (store *fakeBookmarkStoreWithErrors) Persisted(subID string, bookmark string) string {
+	return store.inner.Persisted(subID, bookmark)
+}
+
+func (store *fakeBookmarkStoreWithErrors) SetServerVersion(version string) {
+	store.inner.SetServerVersion(version)
+}
+
+func (store *fakeBookmarkStoreWithErrors) LogWithError(message *amps.Message) (uint64, error) {
+	store.logWithErrorCalls++
+	var sequence = store.inner.Log(message)
+	return sequence, store.logErr
+}
+
+func (store *fakeBookmarkStoreWithErrors) DiscardWithError(subID string, bookmarkSeqNo uint64) error {
+	store.discardWithErrorCalls++
+	store.inner.Discard(subID, bookmarkSeqNo)
+	return store.discardErr
+}
+
+func (store *fakeBookmarkStoreWithErrors) DiscardMessageWithError(message *amps.Message) error {
+	store.discardMessageErrorCalls++
+	store.inner.DiscardMessage(message)
+	return store.discardMessageErr
+}
+
+func (store *fakeBookmarkStoreWithErrors) PurgeWithError(subID ...string) error {
+	store.purgeWithErrorCalls++
+	store.inner.Purge(subID...)
+	return store.purgeErr
+}
+
+func (store *fakeBookmarkStoreWithErrors) PersistedWithError(subID string, bookmark string) (string, error) {
+	store.persistedWithErrorCalls++
+	return store.inner.Persisted(subID, bookmark), store.persistedErr
+}
+
+func (store *fakeBookmarkStoreWithErrors) SetServerVersionWithError(version string) error {
+	store.setServerVersionErrCalls++
+	store.inner.SetServerVersion(version)
+	return store.setServerVersionErr
+}
+
 type testRecoveryPoint struct {
 	values []string
 	index  int
@@ -456,4 +591,85 @@ func TestStoresCoverage(t *testing.T) {
 		t.Fatalf("nil memory subscription manager should noop")
 	}
 	nilManager.SetFailedResubscribeHandler(nil)
+}
+
+func TestLoggedBookmarkStoreErrorAdaptersCoverage(t *testing.T) {
+	var errorStore = newFakeBookmarkStoreWithErrors()
+	errorStore.logErr = errors.New("log failed")
+	errorStore.discardErr = errors.New("discard failed")
+	errorStore.discardMessageErr = errors.New("discard message failed")
+	errorStore.purgeErr = errors.New("purge failed")
+	errorStore.persistedErr = errors.New("persisted failed")
+	errorStore.setServerVersionErr = errors.New("version failed")
+
+	var logged = NewLoggedBookmarkStore(errorStore)
+	var message = amps.NewCommand("publish").
+		SetSubID("sub-error").
+		SetBookmark("9|9|").
+		SetTopic("orders").
+		SetData([]byte(`{"id":9}`)).
+		GetMessage()
+
+	if sequence, err := logged.LogWithError(message); err == nil || sequence == 0 {
+		t.Fatalf("expected LogWithError to propagate store error, seq=%d err=%v", sequence, err)
+	}
+	if err := logged.DiscardWithError("sub-error", 1); err == nil {
+		t.Fatalf("expected DiscardWithError to propagate store error")
+	}
+	if err := logged.DiscardMessageWithError(message); err == nil {
+		t.Fatalf("expected DiscardMessageWithError to propagate store error")
+	}
+	if err := logged.PurgeWithError("sub-error"); err == nil {
+		t.Fatalf("expected PurgeWithError to propagate store error")
+	}
+	if persisted, err := logged.PersistedWithError("sub-error", "9|9|"); err == nil || persisted == "" {
+		t.Fatalf("expected PersistedWithError to propagate store error, persisted=%q err=%v", persisted, err)
+	}
+	if err := logged.SetServerVersionWithError("5.3.5.1"); err == nil {
+		t.Fatalf("expected SetServerVersionWithError to propagate store error")
+	}
+
+	if errorStore.logWithErrorCalls != 1 ||
+		errorStore.discardWithErrorCalls != 1 ||
+		errorStore.discardMessageErrorCalls != 1 ||
+		errorStore.purgeWithErrorCalls != 1 ||
+		errorStore.persistedWithErrorCalls != 1 ||
+		errorStore.setServerVersionErrCalls != 1 {
+		t.Fatalf("expected each error-aware adapter to delegate exactly once: %+v", errorStore)
+	}
+
+	var logs = logged.Logs()
+	if len(logs) != 6 {
+		t.Fatalf("expected six logged events, got %d", len(logs))
+	}
+}
+
+func TestLoggedBookmarkStoreErrorAdapterFallbackCoverage(t *testing.T) {
+	var logged = NewLoggedBookmarkStore(newLegacyBookmarkStore())
+	var message = amps.NewCommand("publish").
+		SetSubID("sub-fallback").
+		SetBookmark("7|7|").
+		SetTopic("orders").
+		SetData([]byte(`{"id":7}`)).
+		GetMessage()
+
+	var sequence, err = logged.LogWithError(message)
+	if err != nil || sequence == 0 {
+		t.Fatalf("expected fallback LogWithError success, seq=%d err=%v", sequence, err)
+	}
+	if err := logged.DiscardWithError("sub-fallback", sequence); err != nil {
+		t.Fatalf("expected fallback DiscardWithError success, err=%v", err)
+	}
+	if err := logged.DiscardMessageWithError(message); err != nil {
+		t.Fatalf("expected fallback DiscardMessageWithError success, err=%v", err)
+	}
+	if err := logged.PurgeWithError("sub-fallback"); err != nil {
+		t.Fatalf("expected fallback PurgeWithError success, err=%v", err)
+	}
+	if persisted, err := logged.PersistedWithError("sub-fallback", "7|7|"); err != nil || persisted != "7|7|" {
+		t.Fatalf("expected fallback PersistedWithError success, persisted=%q err=%v", persisted, err)
+	}
+	if err := logged.SetServerVersionWithError("5.3.5.1"); err != nil {
+		t.Fatalf("expected fallback SetServerVersionWithError success, err=%v", err)
+	}
 }
