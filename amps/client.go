@@ -681,6 +681,51 @@ func (client *Client) deleteRoute(routeID string) (routeErr error) {
 	return
 }
 
+func (client *Client) clearRoutes() error {
+	if client == nil {
+		return nil
+	}
+
+	var routeErr error
+	client.messageStreams.Range(func(key interface{}, _ interface{}) bool {
+		routeID, ok := key.(string)
+		if !ok {
+			return true
+		}
+		routeErr = client.deleteRoute(routeID)
+		return routeErr == nil
+	})
+	if routeErr != nil {
+		return routeErr
+	}
+
+	client.routes.Range(func(key interface{}, _ interface{}) bool {
+		routeID, ok := key.(string)
+		if ok {
+			client.routes.Delete(routeID)
+		}
+		return true
+	})
+
+	return nil
+}
+
+func (client *Client) registerMessageStream(stream *MessageStream) {
+	if client == nil || stream == nil {
+		return
+	}
+
+	routeID := stream.commandID
+	if routeID == "" {
+		routeID = stream.queryID
+	}
+	if routeID == "" {
+		return
+	}
+
+	client.messageStreams.Store(routeID, stream)
+}
+
 func (client *Client) addRoute(
 	routeID string,
 	messageHandler func(*Message) error,
@@ -900,8 +945,7 @@ func (client *Client) onConnectionError(err error) {
 
 	client.closeSyncAckProcessing()
 
-	client.routes = new(sync.Map)
-	client.messageStreams = new(sync.Map)
+	_ = client.clearRoutes()
 
 	client.onError(err)
 	client.onInternalDisconnect(err)
@@ -1341,7 +1385,9 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		client.lock.Unlock()
 		client.notifyConnectionState(ConnectionStateLoggedOn)
 		if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
-			bookmarkStore.SetServerVersion(client.serverVersion)
+			if err = bookmarkStoreSetServerVersion(bookmarkStore, client.serverVersion); err != nil {
+				client.reportException(err)
+			}
 		}
 		client.heartbeatLock.Lock()
 		hasHeartbeatTimeout := client.heartbeatTimeout != 0
@@ -1483,9 +1529,12 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 
 		return messageStream.messageHandler(message)
 	}, false)
+	if err != nil {
+		return nil, err
+	}
 
 	if isStatsOnly {
-		messageStream.setStatsOnly()
+		messageStream.SetStatsOnly(cmdID)
 	} else if isSow && isSubscribe {
 		var subID, _ = command.SubID()
 		var queryID, _ = command.QueryID()
@@ -1498,10 +1547,7 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 	} else if isSubscribe && !isSow {
 		messageStream.setSubID(cmdID)
 	}
-
-	if err != nil {
-		return nil, err
-	}
+	client.registerMessageStream(messageStream)
 
 	return messageStream, err
 }
@@ -1733,17 +1779,9 @@ func (client *Client) executeAsync(command *Command, messageHandler func(message
 		client.closeSyncAckProcessing()
 		subID, hasSubID := command.SubID()
 		if !hasSubID || subID == "all" {
-
-			var closeErr error
-			client.messageStreams.Range(func(key interface{}, ms interface{}) bool {
-
-				closeErr = client.deleteRoute(key.(string))
-				return closeErr == nil
-			})
-			if closeErr != nil {
+			if err := client.clearRoutes(); err != nil {
 				return subID, errors.New("Error deleting routes")
 			}
-			client.routes = new(sync.Map)
 		} else {
 
 			err := client.deleteRoute(subID)
@@ -2076,8 +2114,9 @@ func (client *Client) Disconnect() (err error) {
 	client.signalDisconnect()
 	client.notifyConnectionState(ConnectionStateShutdown)
 
-	client.routes = new(sync.Map)
-	client.messageStreams = new(sync.Map)
+	if err = client.clearRoutes(); err != nil {
+		return NewError(ConnectionError, err)
+	}
 
 	client.heartbeatLock.Lock()
 	if client.heartbeatTimeoutID != nil {

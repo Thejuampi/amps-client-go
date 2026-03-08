@@ -310,6 +310,12 @@ func (ms *MessageStream) Close() (err error) {
 		ms.unsubscribeID = ""
 	} else {
 		if len(ms.commandID) > 0 {
+			ms.client.messageStreams.Delete(ms.commandID)
+		}
+		if len(ms.queryID) > 0 {
+			ms.client.messageStreams.Delete(ms.queryID)
+		}
+		if len(ms.commandID) > 0 {
 
 			if atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed {
 				if ms.queryID != "" && ms.queryID != ms.unsubscribeID {

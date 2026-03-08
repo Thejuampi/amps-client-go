@@ -301,6 +301,64 @@ func (store *LoggedBookmarkStore) SetServerVersion(version string) {
 	store.store.SetServerVersion(version)
 }
 
+// LogWithError stores bookmark and returns mutation errors when supported.
+func (store *LoggedBookmarkStore) LogWithError(message *amps.Message) (uint64, error) {
+	store.appendLog("log")
+	if errorStore, ok := store.store.(amps.BookmarkStoreWithErrors); ok {
+		return errorStore.LogWithError(message)
+	}
+	return store.store.Log(message), nil
+}
+
+// DiscardWithError marks bookmark sequence discarded and returns mutation errors when supported.
+func (store *LoggedBookmarkStore) DiscardWithError(subID string, bookmarkSeqNo uint64) error {
+	store.appendLog("discard")
+	if errorStore, ok := store.store.(amps.BookmarkStoreWithErrors); ok {
+		return errorStore.DiscardWithError(subID, bookmarkSeqNo)
+	}
+	store.store.Discard(subID, bookmarkSeqNo)
+	return nil
+}
+
+// DiscardMessageWithError discards message bookmark and returns mutation errors when supported.
+func (store *LoggedBookmarkStore) DiscardMessageWithError(message *amps.Message) error {
+	store.appendLog("discard_message")
+	if errorStore, ok := store.store.(amps.BookmarkStoreWithErrors); ok {
+		return errorStore.DiscardMessageWithError(message)
+	}
+	store.store.DiscardMessage(message)
+	return nil
+}
+
+// PurgeWithError clears state for subscriptions and returns mutation errors when supported.
+func (store *LoggedBookmarkStore) PurgeWithError(subID ...string) error {
+	store.appendLog("purge")
+	if errorStore, ok := store.store.(amps.BookmarkStoreWithErrors); ok {
+		return errorStore.PurgeWithError(subID...)
+	}
+	store.store.Purge(subID...)
+	return nil
+}
+
+// PersistedWithError marks bookmark persisted and returns mutation errors when supported.
+func (store *LoggedBookmarkStore) PersistedWithError(subID string, bookmark string) (string, error) {
+	store.appendLog("persisted")
+	if errorStore, ok := store.store.(amps.BookmarkStoreWithErrors); ok {
+		return errorStore.PersistedWithError(subID, bookmark)
+	}
+	return store.store.Persisted(subID, bookmark), nil
+}
+
+// SetServerVersionWithError sets server version metadata and returns mutation errors when supported.
+func (store *LoggedBookmarkStore) SetServerVersionWithError(version string) error {
+	store.appendLog("set_server_version")
+	if errorStore, ok := store.store.(amps.BookmarkStoreWithErrors); ok {
+		return errorStore.SetServerVersionWithError(version)
+	}
+	store.store.SetServerVersion(version)
+	return nil
+}
+
 // MemorySubscriptionManager adapts default Go subscription manager with C++ naming.
 type MemorySubscriptionManager struct {
 	inner *amps.DefaultSubscriptionManager
