@@ -240,6 +240,10 @@ func (c *websocketConn) runWorkspaceWriter(queue <-chan websocketQueuedFrame, do
 		var _, err = c.writeDataFrameLocked(frame.opcode, frame.payload)
 		c.writeMu.Unlock()
 		if err != nil {
+			c.workspaceMu.Lock()
+			c.workspaceClosed = true
+			c.workspaceQueue = nil
+			c.workspaceMu.Unlock()
 			_ = c.Conn.Close()
 			return
 		}

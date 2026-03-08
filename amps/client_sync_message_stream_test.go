@@ -55,3 +55,40 @@ func TestClientExecuteRegistersSynchronousSubscribeStreamForCleanup(t *testing.T
 		t.Fatalf("expected synchronous subscribe stream to be registered for cleanup")
 	}
 }
+
+func TestClientExecuteRegistersSynchronousSubscribeStreamBeforeProcessedAck(t *testing.T) {
+	var client = NewClient("execute-sync-register-before-ack")
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	type executeResult struct {
+		stream *MessageStream
+		err    error
+	}
+
+	var resultCh = make(chan executeResult, 1)
+	go func() {
+		var stream, err = client.Execute(
+			NewCommand("subscribe").SetTopic("orders").SetSubID("sync-register-before-ack"),
+		)
+		resultCh <- executeResult{stream: stream, err: err}
+	}()
+
+	var handler = waitForRouteHandler(t, client, "sync-register-before-ack")
+	if _, exists := client.messageStreams.Load("sync-register-before-ack"); !exists {
+		t.Fatalf("expected synchronous subscribe stream to be registered before processed ack")
+	}
+
+	var ack = AckTypeProcessed
+	_ = handler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ack,
+		status:  []byte("success"),
+	}})
+
+	var result = <-resultCh
+	if result.err != nil || result.stream == nil {
+		t.Fatalf("expected execute success, stream=%v err=%v", result.stream, result.err)
+	}
+}

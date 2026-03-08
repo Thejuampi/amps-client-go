@@ -67,23 +67,67 @@ func (store *fakePublishStore) SetErrorOnPublishGap(enabled bool) {
 func (store *fakePublishStore) ErrorOnPublishGap() bool { return false }
 
 type fakeBookmarkStoreWithErrors struct {
-	inner                     *amps.MemoryBookmarkStore
-	logErr                    error
-	discardErr                error
-	discardMessageErr         error
-	purgeErr                  error
-	persistedErr              error
-	setServerVersionErr       error
-	logWithErrorCalls         int
-	discardWithErrorCalls     int
-	discardMessageErrorCalls  int
-	purgeWithErrorCalls       int
-	persistedWithErrorCalls   int
-	setServerVersionErrCalls  int
+	inner                    *amps.MemoryBookmarkStore
+	logErr                   error
+	discardErr               error
+	discardMessageErr        error
+	purgeErr                 error
+	persistedErr             error
+	setServerVersionErr      error
+	logWithErrorCalls        int
+	discardWithErrorCalls    int
+	discardMessageErrorCalls int
+	purgeWithErrorCalls      int
+	persistedWithErrorCalls  int
+	setServerVersionErrCalls int
 }
 
 func newFakeBookmarkStoreWithErrors() *fakeBookmarkStoreWithErrors {
 	return &fakeBookmarkStoreWithErrors{inner: amps.NewMemoryBookmarkStore()}
+}
+
+type legacyBookmarkStore struct {
+	inner *amps.MemoryBookmarkStore
+}
+
+func newLegacyBookmarkStore() *legacyBookmarkStore {
+	return &legacyBookmarkStore{inner: amps.NewMemoryBookmarkStore()}
+}
+
+func (store *legacyBookmarkStore) Log(message *amps.Message) uint64 {
+	return store.inner.Log(message)
+}
+
+func (store *legacyBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
+	store.inner.Discard(subID, bookmarkSeqNo)
+}
+
+func (store *legacyBookmarkStore) DiscardMessage(message *amps.Message) {
+	store.inner.DiscardMessage(message)
+}
+
+func (store *legacyBookmarkStore) GetMostRecent(subID string) string {
+	return store.inner.GetMostRecent(subID)
+}
+
+func (store *legacyBookmarkStore) IsDiscarded(message *amps.Message) bool {
+	return store.inner.IsDiscarded(message)
+}
+
+func (store *legacyBookmarkStore) Purge(subID ...string) {
+	store.inner.Purge(subID...)
+}
+
+func (store *legacyBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
+	return store.inner.GetOldestBookmarkSeq(subID)
+}
+
+func (store *legacyBookmarkStore) Persisted(subID string, bookmark string) string {
+	return store.inner.Persisted(subID, bookmark)
+}
+
+func (store *legacyBookmarkStore) SetServerVersion(version string) {
+	store.inner.SetServerVersion(version)
 }
 
 func (store *fakeBookmarkStoreWithErrors) Log(message *amps.Message) uint64 {
@@ -601,7 +645,7 @@ func TestLoggedBookmarkStoreErrorAdaptersCoverage(t *testing.T) {
 }
 
 func TestLoggedBookmarkStoreErrorAdapterFallbackCoverage(t *testing.T) {
-	var logged = NewLoggedBookmarkStore(amps.NewMemoryBookmarkStore())
+	var logged = NewLoggedBookmarkStore(newLegacyBookmarkStore())
 	var message = amps.NewCommand("publish").
 		SetSubID("sub-fallback").
 		SetBookmark("7|7|").

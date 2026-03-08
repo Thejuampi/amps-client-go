@@ -71,6 +71,55 @@ func (c *recordingWebsocketConn) DeadlineCount() int {
 	return len(c.deadlines)
 }
 
+type failingWorkspaceConn struct {
+	writeStarted chan struct{}
+	closeOnce    sync.Once
+}
+
+func newFailingWorkspaceConn() *failingWorkspaceConn {
+	return &failingWorkspaceConn{
+		writeStarted: make(chan struct{}),
+	}
+}
+
+func (c *failingWorkspaceConn) Read(_ []byte) (int, error) {
+	return 0, net.ErrClosed
+}
+
+func (c *failingWorkspaceConn) Write(_ []byte) (int, error) {
+	select {
+	case <-c.writeStarted:
+	default:
+		close(c.writeStarted)
+	}
+	return 0, net.ErrClosed
+}
+
+func (c *failingWorkspaceConn) Close() error {
+	c.closeOnce.Do(func() {})
+	return nil
+}
+
+func (c *failingWorkspaceConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{}
+}
+
+func (c *failingWorkspaceConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{}
+}
+
+func (c *failingWorkspaceConn) SetDeadline(_ time.Time) error {
+	return nil
+}
+
+func (c *failingWorkspaceConn) SetReadDeadline(_ time.Time) error {
+	return nil
+}
+
+func (c *failingWorkspaceConn) SetWriteDeadline(_ time.Time) error {
+	return nil
+}
+
 func TestWebsocketQueueTextWritesAsyncFrame(t *testing.T) {
 	var conn = &recordingWebsocketConn{}
 	var ws = &websocketConn{
@@ -129,6 +178,37 @@ func TestWebsocketQueueTextQueueFullClosesConnection(t *testing.T) {
 	case <-conn.release:
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("expected QueueText overflow to close websocket connection")
+	}
+}
+
+func TestWebsocketQueueTextRejectsFramesAfterAsyncWriterFailure(t *testing.T) {
+	var conn = newFailingWorkspaceConn()
+	var ws = &websocketConn{
+		Conn:   conn,
+		reader: bufio.NewReader(bytes.NewReader(nil)),
+	}
+	defer func() {
+		_ = ws.Close()
+	}()
+
+	if err := ws.QueueText([]byte("first")); err != nil {
+		t.Fatalf("QueueText first error = %v", err)
+	}
+
+	select {
+	case <-conn.writeStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected async writer to attempt the first frame")
+	}
+
+	select {
+	case <-ws.workspaceDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected async writer to stop after write failure")
+	}
+
+	if err := ws.QueueText([]byte("second")); err == nil {
+		t.Fatalf("expected QueueText to reject frames after async writer failure")
 	}
 }
 

@@ -726,6 +726,39 @@ func (client *Client) registerMessageStream(stream *MessageStream) {
 	client.messageStreams.Store(routeID, stream)
 }
 
+func (client *Client) configureExecuteMessageStream(
+	command *Command,
+	stream *MessageStream,
+	commandID string,
+	routeID string,
+	isSow bool,
+	isSubscribe bool,
+	isStatsOnly bool,
+) {
+	if stream == nil {
+		return
+	}
+
+	if isStatsOnly {
+		stream.SetStatsOnly(commandID)
+	} else if isSow && isSubscribe {
+		var subID, _ = command.SubID()
+		var queryID, _ = command.QueryID()
+		stream.SetSubscription(routeID, subID, queryID)
+	} else if isSow {
+		stream.setQueryID(routeID)
+		if !isSubscribe {
+			stream.setSowOnly()
+		}
+	} else if isSubscribe && !isSow {
+		stream.setSubID(routeID)
+	} else {
+		return
+	}
+
+	client.registerMessageStream(stream)
+}
+
 func (client *Client) addRoute(
 	routeID string,
 	messageHandler func(*Message) error,
@@ -1525,29 +1558,25 @@ func (client *Client) Execute(command *Command) (*MessageStream, error) {
 		}
 	}
 
+	var streamRegistered bool
 	cmdID, err := client.executeAsync(command, func(message *Message) error {
 
 		return messageStream.messageHandler(message)
-	}, false)
+	}, false, func(commandID string, routeID string) {
+		if streamRegistered {
+			return
+		}
+		client.configureExecuteMessageStream(command, messageStream, commandID, routeID, isSow, isSubscribe, isStatsOnly)
+		streamRegistered = true
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	if isStatsOnly {
-		messageStream.SetStatsOnly(cmdID)
-	} else if isSow && isSubscribe {
-		var subID, _ = command.SubID()
-		var queryID, _ = command.QueryID()
-		messageStream.SetSubscription(cmdID, subID, queryID)
-	} else if isSow {
-		messageStream.setQueryID(cmdID)
-		if !isSubscribe {
-			messageStream.setSowOnly()
-		}
-	} else if isSubscribe && !isSow {
-		messageStream.setSubID(cmdID)
+	if !streamRegistered {
+		var commandID, _ = command.CommandID()
+		client.configureExecuteMessageStream(command, messageStream, commandID, cmdID, isSow, isSubscribe, isStatsOnly)
 	}
-	client.registerMessageStream(messageStream)
 
 	return messageStream, err
 }
@@ -1652,10 +1681,15 @@ func copyMessageHandler(messageHandler func(message *Message) error) func(messag
 // Message callbacks may execute concurrently with other client callbacks;
 // handlers should be thread-safe.
 func (client *Client) ExecuteAsync(command *Command, messageHandler func(message *Message) error) (string, error) {
-	return client.executeAsync(command, messageHandler, true)
+	return client.executeAsync(command, messageHandler, true, nil)
 }
 
-func (client *Client) executeAsync(command *Command, messageHandler func(message *Message) error, copyRoutedMessages bool) (string, error) {
+func (client *Client) executeAsync(
+	command *Command,
+	messageHandler func(message *Message) error,
+	copyRoutedMessages bool,
+	onRouteReady func(commandID string, routeID string),
+) (string, error) {
 	if command == nil || command.header.command == CommandUnknown {
 		return "", NewError(CommandError, "Invalid Command provided")
 	}
@@ -1777,6 +1811,9 @@ func (client *Client) executeAsync(command *Command, messageHandler func(message
 			if syncAckHandler, exists := client.routes.Load(routeID); exists {
 				client.routes.Store(syncAckRouteID, syncAckHandler)
 			}
+		}
+		if onRouteReady != nil {
+			onRouteReady(commandID, routeID)
 		}
 		if retryCommandOnDisconnect && subscriptionManager != nil {
 			subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
