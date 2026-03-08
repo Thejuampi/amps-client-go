@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1312,19 +1313,13 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 	journal = newMessageJournal(1000)
 	*flagAuth = "alice:pwd:/owner = 'alice',writer:pwd"
 
-	defer func() {
-		sow = oldSow
-		journal = oldJournal
-		*flagAuth = oldAuthFlag
-		resetAuthForTest()
-	}()
-
 	var listener, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
 
 	var serverDone = make(chan struct{})
+	var handlerDone sync.WaitGroup
 	go func() {
 		defer close(serverDone)
 		for {
@@ -1332,7 +1327,11 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 			if acceptErr != nil {
 				return
 			}
-			go handleConnection(conn)
+			handlerDone.Add(1)
+			go func() {
+				defer handlerDone.Done()
+				handleConnection(conn)
+			}()
 		}
 	}()
 
@@ -1340,13 +1339,39 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 	if subscriberErr != nil {
 		t.Fatalf("failed to dial subscriber: %v", subscriberErr)
 	}
-	defer subscriber.Close()
 
 	var publisher, publisherErr = net.Dial("tcp", listener.Addr().String())
 	if publisherErr != nil {
 		t.Fatalf("failed to dial publisher: %v", publisherErr)
 	}
-	defer publisher.Close()
+	defer func() {
+		_ = subscriber.Close()
+		_ = publisher.Close()
+		_ = listener.Close()
+
+		select {
+		case <-serverDone:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("accept loop did not exit in time")
+		}
+
+		var handlersExited = make(chan struct{})
+		go func() {
+			handlerDone.Wait()
+			close(handlersExited)
+		}()
+
+		select {
+		case <-handlersExited:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("handleConnection did not exit in time")
+		}
+
+		sow = oldSow
+		journal = oldJournal
+		*flagAuth = oldAuthFlag
+		resetAuthForTest()
+	}()
 
 	sendFrame(t, subscriber, buildCommandFrame(`{"c":"logon","cid":"s-log","a":"processed","user_id":"alice","pw":"pwd","client_name":"alice-sub"}`, nil))
 	_ = readFrameBody(t, subscriber, 500*time.Millisecond)
@@ -1373,7 +1398,4 @@ func TestEntitlementFilterAppliedToSubscribeDelivery(t *testing.T) {
 	if leaked {
 		t.Fatalf("expected no bob payload delivery under entitlement filter, got %s", leakedBody)
 	}
-
-	_ = listener.Close()
-	<-serverDone
 }
