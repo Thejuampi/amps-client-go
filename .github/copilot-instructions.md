@@ -27,8 +27,8 @@ This is a Go reimplementation of the C++ AMPS client (target: v5.3.5.1), maintai
 
 ```bash
 make build            # go build ./...
-make test             # go test ./...
-make test-race        # go test -race ./...
+make test             # go test ./... -skip Integration
+make test-race        # go test -race ./... -skip Integration
 make integration-test # go test ./... -run Integration
 make vet              # go vet
 make fmt              # go fmt

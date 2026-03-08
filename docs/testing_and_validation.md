@@ -24,7 +24,7 @@ make release
 Equivalent direct commands:
 
 ```bash
-go test ./...
+go test ./... -skip Integration
 go test ./... -run Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out

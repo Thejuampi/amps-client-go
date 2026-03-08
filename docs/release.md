@@ -29,7 +29,7 @@ pwsh -File .\release.local.ps1
 4. The script performs:
    - Preflight checks (tools, branch, clean tree, sync with `origin/main`, tags)
    - Version updates in `VERSION`, `README.md`, and `amps/client.go`
-   - Release gates (`vet`, `test`, `build`, parity, coverage gate)
+   - Release gates (`vet`, unit tests with `-skip Integration`, `build`, parity, coverage gate)
    - Commit, annotated tag, and push
 
 ## What Happens After Push

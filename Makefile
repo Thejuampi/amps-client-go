@@ -25,10 +25,10 @@ build:
 	$(GO) build $(GOFLAGS) $(PKG)
 
 test:
-	$(GO) test $(GOFLAGS) $(PKG)
+	$(GO) test $(GOFLAGS) $(PKG) -skip Integration
 
 test-race:
-	$(GO) test -race $(GOFLAGS) $(PKG)
+	$(GO) test -race $(GOFLAGS) $(PKG) -skip Integration
 
 integration-test:
 	$(GO) test $(GOFLAGS) $(PKG) -run Integration
