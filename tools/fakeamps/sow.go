@@ -137,7 +137,11 @@ func (c *sowCache) loadTopicFromDisk(topic, path string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.Printf("fakeamps: sow load: close failed for %s: %v", path, closeErr)
+		}
+	}()
 
 	ts := c.getOrCreateTopic(topic)
 
@@ -248,7 +252,11 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 		log.Printf("fakeamps: sow save: create failed: %v", err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			log.Printf("fakeamps: sow save: close failed for %s: %v", path, closeErr)
+		}
+	}()
 
 	writer := &syncWriter{f: f}
 	for _, r := range records {
@@ -294,9 +302,14 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 		pos += 4
 		copy(buf[pos:pos+int(payloadLen)], r.payload)
 
-		writer.Write(buf)
+		if err := writer.Write(buf); err != nil {
+			log.Printf("fakeamps: sow save: write failed for topic=%s: %v", topic, err)
+			return
+		}
 	}
-	writer.Sync()
+	if err := writer.Sync(); err != nil {
+		log.Printf("fakeamps: sow save: sync failed for topic=%s: %v", topic, err)
+	}
 }
 
 // syncWriter buffers writes and syncs on demand.
@@ -307,26 +320,34 @@ type syncWriter struct {
 	size int
 }
 
-func (w *syncWriter) Write(p []byte) {
+func (w *syncWriter) Write(p []byte) error {
 	if w.pos+len(p) > cap(w.buf) {
-		w.Sync()
+		if err := w.Sync(); err != nil {
+			return err
+		}
 	}
 	if len(p) > cap(w.buf) {
-		w.f.Write(p)
-		return
+		_, err := w.f.Write(p)
+		return err
 	}
 	w.buf = w.buf[:cap(w.buf)]
 	copy(w.buf[w.pos:], p)
 	w.pos += len(p)
 	w.size += len(p)
+	return nil
 }
 
-func (w *syncWriter) Sync() {
+func (w *syncWriter) Sync() error {
 	if w.pos > 0 {
-		w.f.Write(w.buf[:w.pos])
-		w.f.Sync()
+		if _, err := w.f.Write(w.buf[:w.pos]); err != nil {
+			return err
+		}
+		if err := w.f.Sync(); err != nil {
+			return err
+		}
 		w.pos = 0
 	}
+	return nil
 }
 
 func (c *sowCache) getOrCreateTopic(topic string) *topicSOW {

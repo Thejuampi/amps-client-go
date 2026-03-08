@@ -115,7 +115,10 @@ func (j *messageJournal) loadFromDisk() {
 		return
 	}
 
-	j.diskSeqFile.Seek(0, io.SeekStart)
+	if _, err := j.diskSeqFile.Seek(0, io.SeekStart); err != nil {
+		log.Printf("fakeamps: journal load: seek seq file failed: %v", err)
+		return
+	}
 	var seqBuf [8]byte
 	if _, err := io.ReadFull(j.diskSeqFile, seqBuf[:]); err == nil {
 		maxSeq := binary.BigEndian.Uint64(seqBuf[:])
@@ -125,7 +128,10 @@ func (j *messageJournal) loadFromDisk() {
 		}
 	}
 
-	j.diskFile.Seek(0, io.SeekStart)
+	if _, err := j.diskFile.Seek(0, io.SeekStart); err != nil {
+		log.Printf("fakeamps: journal load: seek journal file failed: %v", err)
+		return
+	}
 	reader := bufio.NewReader(j.diskFile)
 
 	for {
@@ -269,7 +275,9 @@ func (j *messageJournal) writeToDisk(topic, sowKey string, payload []byte, times
 	// Write current max sequence.
 	seqBuf := [8]byte{}
 	binary.BigEndian.PutUint64(seqBuf[:], seqNum)
-	j.diskSeqFile.WriteAt(seqBuf[:], 0)
+	if _, err := j.diskSeqFile.WriteAt(seqBuf[:], 0); err != nil {
+		log.Printf("fakeamps: journal write: seq write failed: %v", err)
+	}
 	j.diskFlushMu.Unlock()
 }
 
@@ -277,8 +285,12 @@ func (j *messageJournal) writeToDisk(topic, sowKey string, payload []byte, times
 func (j *messageJournal) FlushDisk() {
 	if j.diskWriter != nil {
 		j.diskFlushMu.Lock()
-		j.diskWriter.Flush()
-		j.diskFile.Sync()
+		if err := j.diskWriter.Flush(); err != nil {
+			log.Printf("fakeamps: journal flush failed: %v", err)
+		}
+		if err := j.diskFile.Sync(); err != nil {
+			log.Printf("fakeamps: journal sync failed: %v", err)
+		}
 		j.diskFlushMu.Unlock()
 	}
 }
@@ -289,12 +301,20 @@ func (j *messageJournal) Close() {
 		close(j.diskSyncDone)
 	}
 	if j.diskWriter != nil {
-		j.diskWriter.Flush()
-		j.diskFile.Sync()
-		j.diskFile.Close()
+		if err := j.diskWriter.Flush(); err != nil {
+			log.Printf("fakeamps: journal close flush failed: %v", err)
+		}
+		if err := j.diskFile.Sync(); err != nil {
+			log.Printf("fakeamps: journal close sync failed: %v", err)
+		}
+		if err := j.diskFile.Close(); err != nil {
+			log.Printf("fakeamps: journal close disk file failed: %v", err)
+		}
 	}
 	if j.diskSeqFile != nil {
-		j.diskSeqFile.Close()
+		if err := j.diskSeqFile.Close(); err != nil {
+			log.Printf("fakeamps: journal close sequence file failed: %v", err)
+		}
 	}
 }
 

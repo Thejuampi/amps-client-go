@@ -40,7 +40,7 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmpPath, path)
 }
 
-func Append(path string, data []byte, syncWrite bool) error {
+func Append(path string, data []byte, syncWrite bool) (err error) {
 	if path == "" {
 		return errors.New("wal path is required")
 	}
@@ -57,7 +57,12 @@ func Append(path string, data []byte, syncWrite bool) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		closeErr := file.Close()
+		if err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	if _, err = file.Write(data); err != nil {
 		return err
 	}
@@ -88,7 +93,7 @@ func ReplayNoCopy(path string, apply func([]byte) error) error {
 	return replay(path, apply, false)
 }
 
-func replay(path string, apply func([]byte) error, copyLine bool) error {
+func replay(path string, apply func([]byte) error, copyLine bool) (err error) {
 	if path == "" {
 		return errors.New("wal path is required")
 	}
@@ -103,7 +108,12 @@ func replay(path string, apply func([]byte) error, copyLine bool) error {
 		}
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		closeErr := file.Close()
+		if err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	reader := bufio.NewReader(file)
 	for {

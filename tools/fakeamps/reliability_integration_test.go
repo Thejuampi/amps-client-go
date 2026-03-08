@@ -163,8 +163,7 @@ func TestSOWDeletePersistedAckEchoesSequence(t *testing.T) {
 	sendFrame(t, client, buildCommandFrame(`{"c":"sow_delete","cid":"del-1","t":"orders","a":"processed,persisted","s":"55","k":"order-1"}`, nil))
 
 	var foundPersistedSeq = false
-	var attempts = 0
-	for attempts = 0; attempts < 3; attempts++ {
+	for attempts := 0; attempts < 3; attempts++ {
 		var body = readFrameBody(t, client, 500*time.Millisecond)
 		if strings.Contains(body, `"cid":"del-1"`) && strings.Contains(body, `"a":"persisted"`) && strings.Contains(body, `"s":55`) {
 			foundPersistedSeq = true
@@ -235,8 +234,7 @@ func TestPublishSyncAckReturnsFailureWhenReplicationWriteFails(t *testing.T) {
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"sync-1","t":"orders","a":"processed,persisted,sync","s":"77","k":"order-1","mt":"json"}`, []byte(`{"id":1}`)))
 
 	var persistedFailure = false
-	var readCount = 0
-	for readCount = 0; readCount < 3; readCount++ {
+	for readCount := 0; readCount < 3; readCount++ {
 		var body = readFrameBody(t, client, 500*time.Millisecond)
 		if strings.Contains(body, `"cid":"sync-1"`) && strings.Contains(body, `"a":"persisted"`) && strings.Contains(body, `"status":"failure"`) {
 			persistedFailure = true
@@ -346,8 +344,7 @@ func TestPublishSyncAckReturnsFailureWhenReplicaRejectsApply(t *testing.T) {
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"sync-2","t":"orders","a":"processed,persisted,sync","s":"78","k":"order-1","mt":"json"}`, []byte(`{"id":1}`)))
 
 	var persistedFailure = false
-	var readCount = 0
-	for readCount = 0; readCount < 6; readCount++ {
+	for readCount := 0; readCount < 6; readCount++ {
 		var body = readFrameBody(t, client, 500*time.Millisecond)
 		if strings.Contains(body, `"cid":"sync-2"`) && strings.Contains(body, `"a":"persisted"`) && strings.Contains(body, `"status":"failure"`) {
 			persistedFailure = true

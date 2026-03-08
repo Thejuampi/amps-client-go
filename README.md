@@ -198,10 +198,13 @@ func main() {
 
 ```bash
 make build
+make static-scan
+make test-race
 make test
 make integration-test
 make parity-check
 make coverage-check
+make vuln-scan
 make release
 ```
 
@@ -209,10 +212,24 @@ make release
 <summary>Equivalent direct commands</summary>
 
 ```bash
+go vet ./...
+go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks=SA* ./...
+go run github.com/gordonklaus/ineffassign@v0.2.0 ./...
+go run github.com/kisielk/errcheck@v1.10.0 -ignoretests ./...
+go test -race ./... -skip Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
+go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
+
+Static analysis is enforced in CI with `make static-scan`, which now includes `errcheck` on non-test packages in addition to vet, staticcheck correctness checks, and ineffassign.
+
+Race coverage is enforced with `make test-race` in CI and release validation.
+
+`make vuln-scan` runs `govulncheck` as an advisory scan. Standard-library findings depend on the Go patch version in use, so the workflow records those results without making them a required merge blocker.
+
+GitHub CodeQL runs a separate `security-and-quality` code-scanning workflow on pull requests and scheduled scans.
 
 Coverage gating is expected before merge for `./amps/...`: aggregate `>=90.0%`, pure-functional files `100.0%`, and I/O/stateful files `>=80.0%` as enforced by `tools/coveragegate/main.go`.
 

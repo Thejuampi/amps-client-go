@@ -17,12 +17,17 @@ import (
 // decompressFrame decompresses a zlib-compressed frame.
 // ---------------------------------------------------------------------------
 
-func decompressFrame(data []byte) ([]byte, error) {
+func decompressFrame(data []byte) (_ []byte, err error) {
 	r, err := zlib.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
-	defer r.Close()
+	defer func() {
+		closeErr := r.Close()
+		if err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	return io.ReadAll(r)
 }
 

@@ -59,12 +59,17 @@ var ioFiles = []string{
 	"amps/internal/wal/wal.go",
 }
 
-func parseProfile(path string) (map[string]coverage, error) {
+func parseProfile(path string) (_ map[string]coverage, err error) {
 	file, err := os.Open(path) // #nosec G304 -- path is explicitly provided by local CI/operator input
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		closeErr := file.Close()
+		if err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
 	result := map[string]coverage{}
 	scanner := bufio.NewScanner(file)
