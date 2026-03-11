@@ -13,14 +13,21 @@ type HAClient struct {
 	connectAndLogonLock    sync.Mutex
 	client                 *Client
 	timeout                time.Duration
+	timeoutNanos           atomic.Int64
 	reconnectDelay         time.Duration
+	reconnectDelayNanos    atomic.Int64
 	reconnectDelayStrategy ReconnectDelayStrategy
 	logonOptions           LogonParams
 	hasLogonOptions        bool
+	logonOptionsRead       atomic.Pointer[logonOptionsSnapshot]
 	serverChooser          ServerChooser
 	reconnecting           atomic.Bool
 	stopped                atomic.Bool
 	reconnectCancel        context.CancelFunc
+}
+
+type logonOptionsSnapshot struct {
+	value LogonParams
 }
 
 // NewHAClient returns a new HAClient.
@@ -34,10 +41,20 @@ func NewHAClient(clientName ...string) *HAClient {
 		reconnectDelayStrategy: NewFixedDelayStrategy(time.Second),
 		serverChooser:          NewDefaultServerChooser(),
 	}
+	ha.timeoutNanos.Store(0)
+	ha.reconnectDelayNanos.Store(int64(time.Second))
+	ha.storeLogonOptionsSnapshot()
 	client.setInternalDisconnectHandler(func(err error) {
 		ha.handleDisconnect(err)
 	})
 	return ha
+}
+
+func (ha *HAClient) storeLogonOptionsSnapshot() {
+	if ha == nil {
+		return
+	}
+	ha.logonOptionsRead.Store(&logonOptionsSnapshot{value: ha.logonOptions})
 }
 
 func (ha *HAClient) handleDisconnect(err error) {
@@ -133,12 +150,12 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	ha.lock.Lock()
-	chooser := ha.serverChooser
-	timeout := ha.timeout
-	strategy := ha.reconnectDelayStrategy
-	delay := ha.reconnectDelay
-	options := ha.logonOptions
-	hasLogonOptions := ha.hasLogonOptions
+	var chooser = ha.serverChooser
+	var timeout = ha.timeout
+	var strategy = ha.reconnectDelayStrategy
+	var delay = ha.reconnectDelay
+	var options = ha.logonOptions
+	var hasLogonOptions = ha.hasLogonOptions
 	ha.lock.Unlock()
 
 	ha.connectAndLogonLock.Lock()
@@ -257,8 +274,14 @@ func (ha *HAClient) SetTimeout(timeout time.Duration) *HAClient {
 		timeout = 0
 	}
 	ha.lock.Lock()
+	if ha.timeout == timeout {
+		ha.lock.Unlock()
+		ha.timeoutNanos.Store(int64(timeout))
+		return ha
+	}
 	ha.timeout = timeout
 	ha.lock.Unlock()
+	ha.timeoutNanos.Store(int64(timeout))
 	return ha
 }
 
@@ -267,9 +290,7 @@ func (ha *HAClient) Timeout() time.Duration {
 	if ha == nil {
 		return 0
 	}
-	ha.lock.Lock()
-	defer ha.lock.Unlock()
-	return ha.timeout
+	return time.Duration(ha.timeoutNanos.Load())
 }
 
 // SetReconnectDelay sets reconnect delay on the receiver.
@@ -282,8 +303,14 @@ func (ha *HAClient) SetReconnectDelay(delay time.Duration) *HAClient {
 	}
 	ha.lock.Lock()
 	ha.reconnectDelay = delay
+	if fixed, ok := ha.reconnectDelayStrategy.(*FixedDelayStrategy); ok && fixed != nil && fixed.Delay == delay {
+		ha.lock.Unlock()
+		ha.reconnectDelayNanos.Store(int64(delay))
+		return ha
+	}
 	ha.reconnectDelayStrategy = NewFixedDelayStrategy(delay)
 	ha.lock.Unlock()
+	ha.reconnectDelayNanos.Store(int64(delay))
 	return ha
 }
 
@@ -292,9 +319,7 @@ func (ha *HAClient) ReconnectDelay() time.Duration {
 	if ha == nil {
 		return 0
 	}
-	ha.lock.Lock()
-	defer ha.lock.Unlock()
-	return ha.reconnectDelay
+	return time.Duration(ha.reconnectDelayNanos.Load())
 }
 
 // SetReconnectDelayStrategy sets reconnect delay strategy on the receiver.
@@ -326,6 +351,7 @@ func (ha *HAClient) SetLogonOptions(options LogonParams) *HAClient {
 	ha.lock.Lock()
 	ha.logonOptions = options
 	ha.hasLogonOptions = true
+	ha.storeLogonOptionsSnapshot()
 	ha.lock.Unlock()
 	return ha
 }
@@ -334,6 +360,10 @@ func (ha *HAClient) SetLogonOptions(options LogonParams) *HAClient {
 func (ha *HAClient) LogonOptions() LogonParams {
 	if ha == nil {
 		return LogonParams{}
+	}
+	var snapshot = ha.logonOptionsRead.Load()
+	if snapshot != nil {
+		return snapshot.value
 	}
 	ha.lock.Lock()
 	defer ha.lock.Unlock()

@@ -351,3 +351,15 @@ func TestHAConnectAndLogonObservesChooserEndpointMutation(t *testing.T) {
 		t.Fatalf("expected second reconnect attempt to use updated chooser endpoint, got %s", strategy.uris[1])
 	}
 }
+
+func TestHASetReconnectDelayPreservesEquivalentFixedStrategy(t *testing.T) {
+	var ha = NewHAClient("ha-fixed-strategy-preserved")
+	var strategy = NewFixedDelayStrategy(25 * time.Millisecond)
+
+	ha.SetReconnectDelayStrategy(strategy)
+	ha.SetReconnectDelay(25 * time.Millisecond)
+
+	if ha.ReconnectDelayStrategy() != strategy {
+		t.Fatalf("expected fixed reconnect strategy pointer to be preserved when delay is unchanged")
+	}
+}

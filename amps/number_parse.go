@@ -25,8 +25,21 @@ func parseUintBytes(value []byte) (uint64, bool) {
 }
 
 func parseUint32Value(value []byte) (uint, bool) {
-	parsed, ok := parseUintBytes(value)
-	return uint(parsed), ok && parsed <= (1<<32)-1
+	if len(value) == 0 {
+		return 0, false
+	}
+	var result uint64
+	for index := 0; index < len(value); index++ {
+		var digit = value[index]
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+		result = (result * 10) + uint64(digit-'0')
+		if result > (1<<32)-1 {
+			return 0, false
+		}
+	}
+	return uint(result), true
 }
 
 func parseUint64Value(value []byte) (uint64, bool) {
