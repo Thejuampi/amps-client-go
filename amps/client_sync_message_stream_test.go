@@ -318,4 +318,56 @@ func TestClientWarningHelpersCoverage(t *testing.T) {
 	if signal := client.startSyncAckWarning(nil, "cid-3", "route-3"); signal != nil {
 		t.Fatalf("expected nil signal for nil command")
 	}
+
+	var previousInitialDelay = syncAckWarningInitialDelay
+	var previousMaxDelay = syncAckWarningMaxDelay
+	syncAckWarningInitialDelay = 20 * time.Millisecond
+	syncAckWarningMaxDelay = 10 * time.Millisecond
+	t.Cleanup(func() {
+		syncAckWarningInitialDelay = previousInitialDelay
+		syncAckWarningMaxDelay = previousMaxDelay
+	})
+	var warnings = make(chan error, 1)
+	client.SetErrorHandler(func(err error) {
+		select {
+		case warnings <- err:
+		default:
+		}
+	})
+	var unknownCommand = &Command{header: &_Header{command: -1}}
+	var unknownDone = client.startSyncAckWarning(unknownCommand, "cid-4", "route-4")
+	if unknownDone == nil {
+		t.Fatalf("expected warning goroutine signal for unknown command")
+	}
+	select {
+	case err := <-warnings:
+		if err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Fatalf("expected unknown command warning, got %v", err)
+		}
+	case <-time.After(80 * time.Millisecond):
+		t.Fatalf("expected unknown command warning")
+	}
+	closeSignal(unknownDone)
+
+	client.clientNameBytes = []byte("stale")
+	client.clientNameDirty = false
+	if bytes := string(client.effectiveClientNameBytes()); bytes != "stale" {
+		t.Fatalf("expected cached client name bytes reuse, got %q", bytes)
+	}
+	client.SetClientName("warning-renamed")
+	if client.ClientName() != "warning-renamed" {
+		t.Fatalf("expected client name setter to update name")
+	}
+	client.SetLogonCorrelationID("corr-helpers")
+	if client.LogonCorrelationID() != "corr-helpers" {
+		t.Fatalf("expected logon correlation setter to update id")
+	}
+
+	var nilClient *Client
+	if nilClient.SetClientName("noop") != nil {
+		t.Fatalf("expected nil SetClientName receiver to remain nil")
+	}
+	if nilClient.SetLogonCorrelationID("noop") != nil {
+		t.Fatalf("expected nil SetLogonCorrelationID receiver to remain nil")
+	}
 }

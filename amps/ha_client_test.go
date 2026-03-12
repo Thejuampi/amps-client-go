@@ -364,3 +364,8 @@ func TestHASetReconnectDelayPreservesEquivalentFixedStrategy(t *testing.T) {
 		t.Fatalf("expected fixed reconnect strategy pointer to be preserved when delay is unchanged")
 	}
 }
+
+func TestHAStoreLogonOptionsSnapshotNilCoverage(t *testing.T) {
+	var nilHA *HAClient
+	nilHA.storeLogonOptionsSnapshot()
+}
