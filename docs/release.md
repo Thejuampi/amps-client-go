@@ -1,71 +1,75 @@
-# Release Process (GitHub Actions, Tag Driven)
+# Release Process (GitHub Actions, One Click)
 
-This project releases from git tags named `vX.Y.Z` on branch `main`.
+This repository releases from a single manual GitHub Actions workflow run on `main`.
 
-No PGP keys are required for this flow.
+The workflow does all of the release work:
+
+1. Updates `VERSION`, `README.md`, and `amps/client.go`
+2. Runs release gates
+3. Commits the version bump
+4. Creates and pushes annotated tag `vX.Y.Z`
+5. Publishes the GitHub Release
+
+No local script, local tag creation, or local push is required for the normal path.
 
 ## One-time Setup
 
-1. Commit and push release automation files:
-   - `.github/workflows/ci.yml`
-   - `.github/workflows/release.yml`
-   - `.gitignore`
-   - `docs/release.md`
-2. Ensure GitHub Actions is enabled for the repository.
-3. Confirm default branch is `main`.
+1. GitHub Actions must be enabled.
+2. Default branch must be `main`.
+3. The workflow token must be allowed to push the release commit to `main`.
+   If `main` is protected, add GitHub Actions to the bypass list or otherwise allow the workflow's `GITHUB_TOKEN` to push release commits.
 
-## Every Release (Easy Path)
+## Every Release
 
-1. Open PowerShell in the repository root.
-2. Run:
+1. Open `Actions` in GitHub.
+2. Choose the `Release` workflow.
+3. Click `Run workflow` on branch `main`.
+4. Enter the version in `X.Y.Z` format.
+5. Click `Run workflow`.
 
-```powershell
-pwsh -File .\release.local.ps1
-```
+That is the full release path.
 
-3. Follow prompts in order:
-   - Enter version in `X.Y.Z` format.
-   - Confirm release when asked.
-4. The script performs:
-   - Preflight checks (tools, branch, clean tree, sync with `origin/main`, tags)
-   - Version updates in `VERSION`, `README.md`, and `amps/client.go`
-   - Release gates (`vet`, unit tests with `-skip Integration`, `build`, parity, coverage gate)
-   - Commit, annotated tag, and push
+## What The Workflow Checks
 
-## What Happens After Push
+- The workflow is running from the latest `origin/main` commit.
+- The version matches `X.Y.Z`.
+- Tag `vX.Y.Z` does not already exist.
+- Static analysis passes.
+- Unit tests pass.
+- Race tests pass.
+- Build passes.
+- Coverage gate passes.
+- Parity check passes when the C++ reference tree is present.
 
-1. Pushing tag `vX.Y.Z` triggers `.github/workflows/release.yml`.
-2. Workflow verifies `VERSION` matches tag.
-3. Workflow reruns release gates.
-4. Workflow creates a GitHub Release with generated notes.
-5. Workflow sends best-effort requests to:
-   - `https://proxy.golang.org/github.com/Thejuampi/amps-client-go/@v/vX.Y.Z.info`
-   - `https://pkg.go.dev/github.com/Thejuampi/amps-client-go/amps@vX.Y.Z`
+## What Gets Published
+
+- Commit on `main`: `release: vX.Y.Z`
+- Annotated tag: `vX.Y.Z`
+- GitHub Release with generated notes
+- Best-effort warm-up requests for Go proxy and `pkg.go.dev`
 
 ## Troubleshooting
 
-- Dirty working tree:
-  - Commit, stash, or discard local changes, then rerun script.
-- Not on `main`:
-  - Switch with `git checkout main`.
-- Local branch not in sync with `origin/main`:
-  - Pull fast-forward only:
-    - `git pull --ff-only origin main`
-  - Or push pending commits before releasing.
-- Tag already exists:
-  - Use a new version and tag.
-- Coverage/parity gate failure:
-  - Fix code/tests first, then rerun `release.local.ps1`.
-- Release workflow failed:
-  - Open GitHub Actions run logs and fix the failing step.
+- Workflow says it is not running from latest `main`:
+  - Re-run it from the newest `main` commit.
+- Workflow says tag already exists:
+  - Use a new version.
+- Push to `main` fails from the workflow:
+  - Update branch protection so GitHub Actions can push release commits.
+- Validation fails:
+  - Fix the failing code or tests, then rerun the workflow.
 
-## Verification Commands
+## Legacy Fallback
+
+`release.local.ps1` is still available as a manual fallback, but it is no longer the primary release path.
+
+## Verification
 
 ```powershell
 go list -m -versions github.com/Thejuampi/amps-client-go
 ```
 
-Open in browser after release:
+Published release pages:
 
 - `https://github.com/Thejuampi/amps-client-go/releases`
 - `https://pkg.go.dev/github.com/Thejuampi/amps-client-go/amps`

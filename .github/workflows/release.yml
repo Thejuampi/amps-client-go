@@ -1,43 +1,75 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Existing release tag to publish (e.g., v0.1.1)"
+      version:
+        description: "Release version in X.Y.Z format"
         required: true
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+      RELEASE_VERSION: ${{ github.event.inputs.version }}
+      RELEASE_TAG: v${{ github.event.inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Validate tag matches VERSION
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Validate release input and repository state
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${RELEASE_TAG#v}"
-          VERSION_FILE="$(tr -d '[:space:]' < VERSION)"
-          if [[ "$TAG" != "$VERSION_FILE" ]]; then
-            echo "Tag/version mismatch: tag=$TAG VERSION=$VERSION_FILE (release tag: ${RELEASE_TAG})"
+
+          if [[ ! "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must match X.Y.Z, got '${RELEASE_VERSION}'."
+            exit 1
+          fi
+
+          git fetch origin main --tags --prune
+
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+            echo "Run this workflow from the latest main commit."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "Tag ${RELEASE_TAG} already exists."
+            exit 1
+          fi
+
+      - name: Update version files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s\n' "${RELEASE_VERSION}" > VERSION
+          perl -0pi -e "s/^Version:\s*`[^`]+`$/Version: \`${RELEASE_VERSION}\`/m" README.md
+          perl -0pi -e "s/^(\s*ClientVersion\s*=\s*)\"[^\"]+\"/\${1}\"${RELEASE_VERSION}\"/m" amps/client.go
+
+          if git diff --quiet -- VERSION README.md amps/client.go; then
+            echo "Release version files did not change."
             exit 1
           fi
 
@@ -51,13 +83,13 @@ jobs:
         run: make test-race
 
       - name: Build
-        run: go build ./...
+        run: make build
 
       - name: Parity check (if C++ headers are available)
         shell: bash
         run: |
           if [ -d "../amps-c++-client-5.3.5.1-Windows" ]; then
-            go run ./tools/paritycheck -manifest tools/parity_manifest.json
+            go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
           else
             echo "Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found on runner."
           fi
@@ -71,6 +103,23 @@ jobs:
       - name: Vulnerability scan (advisory)
         continue-on-error: true
         run: make vuln-scan
+
+      - name: Commit release bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add VERSION README.md amps/client.go
+          git commit -m "release: ${RELEASE_TAG}"
+
+      - name: Create annotated tag
+        run: git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}"
+
+      - name: Push branch and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:main
+          git push origin "${RELEASE_TAG}"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -91,3 +140,14 @@ jobs:
             curl -fsS --retry 3 --retry-delay 2 "${URL}" || true
           done
           exit 0
+
+      - name: Release summary
+        shell: bash
+        run: |
+          {
+            echo "## Release created"
+            echo
+            echo "- Version: ${RELEASE_VERSION}"
+            echo "- Tag: ${RELEASE_TAG}"
+            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
