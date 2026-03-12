@@ -71,8 +71,8 @@ jobs:
           set -euo pipefail
 
           printf '%s\n' "${RELEASE_VERSION}" > VERSION
-          perl -0pi -e "s/^Version:\s*`[^`]+`$/Version: \`${RELEASE_VERSION}\`/m" README.md
-          perl -0pi -e "s/^(\s*ClientVersion\s*=\s*)\"[^\"]+\"/\${1}\"${RELEASE_VERSION}\"/m" amps/client.go
+          RELEASE_VERSION="${RELEASE_VERSION}" perl -0pi -e 's/^Version:\s*`[^`]+`$/"Version: `" . $ENV{RELEASE_VERSION} . "`"/me' README.md
+          RELEASE_VERSION="${RELEASE_VERSION}" perl -0pi -e 's/^(\s*ClientVersion\s*=\s*)"[^"]+"/$1 . "\"" . $ENV{RELEASE_VERSION} . "\""/me' amps/client.go
 
           if git diff --quiet -- VERSION README.md amps/client.go; then
             echo "Release version files did not change."
