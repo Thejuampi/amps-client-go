@@ -2,6 +2,7 @@ package amps
 
 import (
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -33,6 +34,42 @@ func trackedSubscriptionID(command *Command) string {
 		return commandID
 	}
 	return ""
+}
+
+func removeReplayOnlyOptions(options string) string {
+	if options == "" {
+		return ""
+	}
+
+	var parts = strings.Split(options, ",")
+	var kept = make([]string, 0, len(parts))
+	for _, part := range parts {
+		var token = strings.TrimSpace(part)
+		if token == "" || token == "replace" {
+			continue
+		}
+		kept = append(kept, token)
+	}
+
+	return strings.Join(kept, ",")
+}
+
+func prepareResubscribeCommand(client *Client, subscription trackedSubscription) *Command {
+	var command = cloneCommand(subscription.command)
+
+	command.SetAckType(subscription.requestedAckTypes)
+
+	if options, hasOptions := command.Options(); hasOptions {
+		command.SetOptions(removeReplayOnlyOptions(options))
+	}
+
+	if _, hasBookmark := command.Bookmark(); hasBookmark && client != nil {
+		if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
+			command.SetBookmark(bookmarkStore.GetMostRecent(trackedSubscriptionID(command)))
+		}
+	}
+
+	return command
 }
 
 // Subscribe executes a subscription command and returns a MessageStream.
@@ -151,7 +188,7 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 	}
 
 	for _, subscription := range subscriptions {
-		command := cloneCommand(subscription.command)
+		command := prepareResubscribeCommand(client, subscription)
 		subID := trackedSubscriptionID(command)
 		if _, blocked := noResubscribe[subID]; blocked {
 			continue

@@ -354,8 +354,9 @@ func TestReconnectAndChooserCoverage(t *testing.T) {
 	capped := NewExponentialDelayStrategy(100*time.Millisecond, 150*time.Millisecond, 3)
 	firstCapped, _ := capped.GetConnectWaitDuration("cap")
 	secondCapped, _ := capped.GetConnectWaitDuration("cap")
-	if firstCapped != 100*time.Millisecond || secondCapped != 150*time.Millisecond {
-		t.Fatalf("expected capped exponential delay progression, got %v then %v", firstCapped, secondCapped)
+	thirdCapped, _ := capped.GetConnectWaitDuration("cap")
+	if firstCapped != 0 || secondCapped != 100*time.Millisecond || thirdCapped != 150*time.Millisecond {
+		t.Fatalf("expected capped exponential delay progression, got %v then %v then %v", firstCapped, secondCapped, thirdCapped)
 	}
 
 	manualExp := &ExponentialDelayStrategy{
@@ -366,6 +367,9 @@ func TestReconnectAndChooserCoverage(t *testing.T) {
 	}
 	if wait, err := manualExp.GetConnectWaitDuration("u"); err != nil || wait != 0 {
 		t.Fatalf("expected negative-delay clamp to zero, wait=%v err=%v", wait, err)
+	}
+	if wait, err := manualExp.GetConnectWaitDuration("u"); err != nil || wait != 0 {
+		t.Fatalf("expected negative max-delay path to clamp second attempt to zero, wait=%v err=%v", wait, err)
 	}
 
 	var chooser *DefaultServerChooser

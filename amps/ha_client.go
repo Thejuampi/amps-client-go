@@ -34,15 +34,16 @@ type logonOptionsSnapshot struct {
 func NewHAClient(clientName ...string) *HAClient {
 	client := NewClient(clientName...)
 	client.SetRetryOnDisconnect(true)
+	var defaultReconnectDelay = 200 * time.Millisecond
 	ha := &HAClient{
 		client:                 client,
 		timeout:                0,
-		reconnectDelay:         time.Second,
-		reconnectDelayStrategy: NewFixedDelayStrategy(time.Second),
+		reconnectDelay:         defaultReconnectDelay,
+		reconnectDelayStrategy: NewExponentialDelayStrategy(defaultReconnectDelay, 20*time.Second, 2),
 		serverChooser:          NewDefaultServerChooser(),
 	}
 	ha.timeoutNanos.Store(0)
-	ha.reconnectDelayNanos.Store(int64(time.Second))
+	ha.reconnectDelayNanos.Store(int64(defaultReconnectDelay))
 	ha.storeLogonOptionsSnapshot()
 	client.setInternalDisconnectHandler(func(err error) {
 		ha.handleDisconnect(err)
@@ -329,7 +330,9 @@ func (ha *HAClient) SetReconnectDelayStrategy(strategy ReconnectDelayStrategy) *
 	}
 	ha.lock.Lock()
 	ha.reconnectDelayStrategy = strategy
+	ha.reconnectDelay = 0
 	ha.lock.Unlock()
+	ha.reconnectDelayNanos.Store(0)
 	return ha
 }
 

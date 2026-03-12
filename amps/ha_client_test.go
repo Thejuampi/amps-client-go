@@ -87,6 +87,38 @@ func TestHAReconnectDelayStrategySetters(t *testing.T) {
 	if ha.ReconnectDelayStrategy() != strategy {
 		t.Fatalf("expected reconnect strategy to be set")
 	}
+	if delay := ha.ReconnectDelay(); delay != 0 {
+		t.Fatalf("expected reconnect delay getter to reset to zero when strategy is set, got %v", delay)
+	}
+}
+
+func TestHANewClientDefaultsMatchCPPParity(t *testing.T) {
+	ha := NewHAClient("ha-defaults")
+
+	if delay := ha.ReconnectDelay(); delay != 200*time.Millisecond {
+		t.Fatalf("expected default reconnect delay 200ms, got %v", delay)
+	}
+
+	strategy, ok := ha.ReconnectDelayStrategy().(*ExponentialDelayStrategy)
+	if !ok || strategy == nil {
+		t.Fatalf("expected default reconnect strategy to be exponential")
+	}
+
+	firstWait, err := strategy.GetConnectWaitDuration("tcp://127.0.0.1:9007/amps/json")
+	if err != nil {
+		t.Fatalf("unexpected exponential wait error: %v", err)
+	}
+	if firstWait != 0 {
+		t.Fatalf("expected first exponential wait to be zero for a new URI, got %v", firstWait)
+	}
+
+	secondWait, err := strategy.GetConnectWaitDuration("tcp://127.0.0.1:9007/amps/json")
+	if err != nil {
+		t.Fatalf("unexpected exponential wait error: %v", err)
+	}
+	if secondWait < 200*time.Millisecond {
+		t.Fatalf("expected second exponential wait to back off from 200ms, got %v", secondWait)
+	}
 }
 
 func TestHAClientAdditionalWrappers(t *testing.T) {

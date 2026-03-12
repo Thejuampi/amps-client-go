@@ -75,7 +75,11 @@ func (strategy *ExponentialDelayStrategy) GetConnectWaitDuration(uri string) (ti
 		uri = "_default"
 	}
 
-	attempt := strategy.attempts[uri]
+	attempt, exists := strategy.attempts[uri]
+	if !exists {
+		strategy.attempts[uri] = 0
+		return 0, nil
+	}
 	strategy.attempts[uri] = attempt + 1
 
 	delay := strategy.BaseDelay

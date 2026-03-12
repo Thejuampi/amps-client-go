@@ -3,7 +3,6 @@ package amps
 import (
 	"bytes"
 	"math"
-	"sync"
 	"testing"
 )
 
@@ -296,7 +295,7 @@ func TestFIXBuilderGrowthPreservesExistingBytes(t *testing.T) {
 
 func TestMessageRouterCoverage(t *testing.T) {
 	router := &MessageRouter{
-		routes: new(sync.Map),
+		routes: make(map[string]MessageRoute),
 		key:    "route-1",
 	}
 
@@ -305,7 +304,9 @@ func TestMessageRouterCoverage(t *testing.T) {
 		delivered++
 		return nil
 	}
-	router.AddRoute("route-1", handler, AckTypeReceived|AckTypeProcessed, AckTypeNone, false, false)
+	if added := router.AddRoute("route-1", handler, AckTypeReceived|AckTypeProcessed, AckTypeNone, CommandPublish); added != 1 {
+		t.Fatalf("expected initial route add to succeed, got %d", added)
+	}
 
 	route := router.FindRoute("route-1")
 	if route == nil {
@@ -357,43 +358,48 @@ func TestMessageRouterCoverage(t *testing.T) {
 	if got := router.DeliverAck(ackTerminate, AckTypeProcessed); got == 0 {
 		t.Fatalf("expected processed ack delivery")
 	}
-	if _, exists := router.routes.Load("route-1"); exists {
+	if _, exists := router.routes["route-1"]; exists {
 		t.Fatalf("expected route removal on termination ack")
 	}
 
-	router.AddRoute("route-2", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, true, false)
-	router.RemoveRoute("route-2")
-	if _, exists := router.routes.Load("route-2"); exists {
+	if added := router.AddRoute("route-2", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandSubscribe); added != 1 {
+		t.Fatalf("expected subscribe add to succeed, got %d", added)
+	}
+	if removed := router.RemoveRoute("route-2"); !removed {
+		t.Fatalf("expected explicit remove route")
+	}
+	if _, exists := router.routes["route-2"]; exists {
 		t.Fatalf("expected explicit remove route")
 	}
 
-	router.AddRoute("a", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, true, false)
-	router.AddRoute("b", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, true, false)
+	if added := router.AddRoute("a", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandSubscribe); added != 1 {
+		t.Fatalf("expected subscribe add to succeed, got %d", added)
+	}
+	if added := router.AddRoute("b", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandPublish); added != 1 {
+		t.Fatalf("expected publish add to succeed, got %d", added)
+	}
 	router.UnsubscribeAll()
-	remaining := 0
-	router.routes.Range(func(_, _ any) bool {
-		remaining++
-		return true
-	})
-	if remaining != 0 {
-		t.Fatalf("expected unsubscribe all to clear routes")
+	if _, exists := router.routes["a"]; exists {
+		t.Fatalf("expected unsubscribe all to remove subscribe routes")
+	}
+	if _, exists := router.routes["b"]; !exists {
+		t.Fatalf("expected unsubscribe all to preserve non-subscribe routes")
 	}
 
 	router.Clear()
-	if router.routes == nil {
-		t.Fatalf("clear should keep a map instance")
+	if router.routes == nil || len(router.routes) != 0 {
+		t.Fatalf("clear should keep an empty map instance")
 	}
 	if route := router.FindRoute("missing"); route != nil {
 		t.Fatalf("expected missing route lookup to return nil")
 	}
 
-	router.MessageRoute.messageHandler = nil
-	router.routes.Store("route-nil", func(*Message) error { return nil })
+	router.routes["route-nil"] = MessageRoute{}
 	router.processAckForRemoval(AckTypeProcessed, "route-nil")
 	router.processAckForRemoval(AckTypeProcessed, "missing")
 
-	router = &MessageRouter{routes: new(sync.Map), key: "route-q"}
-	router.AddRoute("route-q", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, false, false)
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "route-q"}
+	router.AddRoute("route-q", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, CommandPublish)
 	ackProcessed = AckTypeProcessed
 	if delivered := router.DeliverAck(&Message{header: &_Header{
 		command:   CommandAck,
@@ -405,8 +411,8 @@ func TestMessageRouterCoverage(t *testing.T) {
 		t.Fatalf("expected query-id ack delivery")
 	}
 
-	router = &MessageRouter{routes: new(sync.Map), key: "route-s"}
-	router.AddRoute("route-s", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, false, false)
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "route-s"}
+	router.AddRoute("route-s", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, CommandPublish)
 	if delivered := router.DeliverAck(&Message{header: &_Header{
 		command:   CommandAck,
 		commandID: []byte("route-s"),
@@ -416,8 +422,8 @@ func TestMessageRouterCoverage(t *testing.T) {
 	}}, AckTypeProcessed); delivered == 0 {
 		t.Fatalf("expected sub-id ack delivery")
 	}
-	router = &MessageRouter{routes: new(sync.Map), key: "route-q-only"}
-	router.AddRoute("route-q-only", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, false, false)
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "route-q-only"}
+	router.AddRoute("route-q-only", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, CommandPublish)
 	if delivered := router.DeliverAck(&Message{header: &_Header{
 		command: CommandAck,
 		queryID: []byte("route-q-only"),
@@ -426,8 +432,8 @@ func TestMessageRouterCoverage(t *testing.T) {
 	}}, AckTypeProcessed); delivered == 0 {
 		t.Fatalf("expected query-only ack delivery")
 	}
-	router = &MessageRouter{routes: new(sync.Map), key: "route-sub-only"}
-	router.AddRoute("route-sub-only", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, false, false)
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "route-sub-only"}
+	router.AddRoute("route-sub-only", func(*Message) error { return nil }, AckTypeProcessed, AckTypeNone, CommandPublish)
 	if delivered := router.DeliverAck(&Message{header: &_Header{
 		command: CommandAck,
 		subID:   []byte("route-sub-only"),
@@ -441,12 +447,12 @@ func TestMessageRouterCoverage(t *testing.T) {
 	if route := nilRouter.FindRoute("x"); route != nil {
 		t.Fatalf("expected nil router find route to return nil")
 	}
-	if delivered := nilRouter.deliverAck(&Message{header: new(_Header)}, AckTypeProcessed); delivered != 0 {
+	if delivered := nilRouter.deliverAckForKey(&Message{header: new(_Header)}, AckTypeProcessed, "x"); delivered != 0 {
 		t.Fatalf("expected nil router deliverAck to return zero")
 	}
 	nilRouter.processAckForRemoval(AckTypeProcessed, "x")
 
-	router = &MessageRouter{routes: new(sync.Map), key: "missing"}
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "missing"}
 	if delivered := router.DeliverAck(&Message{header: &_Header{
 		command:   CommandAck,
 		commandID: []byte("missing"),
@@ -459,18 +465,18 @@ func TestMessageRouterCoverage(t *testing.T) {
 	}}); delivered != 0 {
 		t.Fatalf("expected missing-route data delivery count of zero")
 	}
-	router = &MessageRouter{routes: new(sync.Map), key: "sub-data"}
-	router.AddRoute("sub-data", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, true, false)
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "sub-data"}
+	router.AddRoute("sub-data", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandSubscribe)
 	if delivered := router.DeliverData(&Message{header: &_Header{
 		command: CommandPublish,
 		subID:   []byte("sub-data"),
 	}}); delivered == 0 {
 		t.Fatalf("expected sub-id data delivery")
 	}
-	router.routes.Store("bad", 123)
+	router.routes["bad"] = MessageRoute{}
 	router.processAckForRemoval(AckTypeProcessed, "bad")
 	if route := router.FindRoute("bad"); route != nil {
-		t.Fatalf("expected non-function route lookup to return nil")
+		t.Fatalf("expected empty route lookup to return nil")
 	}
 }
 
@@ -481,7 +487,7 @@ func TestMessageRouterRouteMethodsCoverage(t *testing.T) {
 		called++
 		return nil
 	}
-	route.messageRoute(handler, AckTypeProcessed, AckTypeNone, false, false)
+	route.messageRoute(handler, AckTypeProcessed, AckTypeNone, CommandPublish)
 
 	if !route.isTerminationAck(AckTypeProcessed) {
 		t.Fatalf("expected processed as termination ack")
@@ -503,16 +509,137 @@ func TestMessageRouterRouteMethodsCoverage(t *testing.T) {
 	}
 
 	replaceRoute := &MessageRoute{}
-	replaceRoute.messageRoute(func(*Message) error { return nil }, AckTypeNone, AckTypeNone, true, true)
+	replaceRoute.messageRoute(func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandSubscribe)
 	if replaceRoute.isTerminationAck(1) {
 		t.Fatalf("subscribe route should not set termination ack")
 	}
 
+	sowRoute := &MessageRoute{}
+	sowRoute.messageRoute(func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandSOW)
+	if !sowRoute.isTerminationAck(AckTypeCompleted) {
+		t.Fatalf("standalone SOW route should terminate on completed ack")
+	}
+
 	// Error callback path in deliverAck/deliverData.
 	errRoute := &MessageRoute{}
-	errRoute.messageRoute(func(*Message) error { return NewError(CommandError, "boom") }, AckTypeProcessed, AckTypeNone, false, false)
+	errRoute.messageRoute(func(*Message) error { return NewError(CommandError, "boom") }, AckTypeProcessed, AckTypeNone, CommandPublish)
 	_ = errRoute.deliverAck(&Message{header: new(_Header)}, AckTypeProcessed)
 	_ = errRoute.deliverData(&Message{header: new(_Header)})
+}
+
+func TestMessageRouterSOWTerminationAndIndependentRouteState(t *testing.T) {
+	router := &MessageRouter{routes: make(map[string]MessageRoute), key: "sow-route"}
+	if added := router.AddRoute("sow-route", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandSOW); added != 1 {
+		t.Fatalf("expected sow route add to succeed, got %d", added)
+	}
+	if added := router.AddRoute("publish-route", func(*Message) error { return nil }, AckTypeReceived, AckTypeNone, CommandPublish); added != 1 {
+		t.Fatalf("expected publish route add to succeed, got %d", added)
+	}
+
+	ackCompleted := AckTypeCompleted
+	if delivered := router.DeliverAck(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte("sow-route"),
+		ackType:   &ackCompleted,
+	}}, AckTypeCompleted); delivered == 0 {
+		t.Fatalf("expected completed ack to remove sow route even without requested ack delivery")
+	}
+	if _, exists := router.routes["sow-route"]; exists {
+		t.Fatalf("expected completed ack to remove sow route")
+	}
+	if _, exists := router.routes["publish-route"]; !exists {
+		t.Fatalf("expected independent publish route state to remain intact")
+	}
+}
+
+func TestMessageRouterHelperCoverage(t *testing.T) {
+	if isSubscribeCommandType(CommandPublish) {
+		t.Fatalf("publish should not be classified as subscribe")
+	}
+	if !isSubscribeOrSOWCommandType(CommandSOW) {
+		t.Fatalf("sow should be classified as subscribe-or-sow")
+	}
+	if ack := terminationAckForRoute(AckTypeProcessed|AckTypeCompleted, AckTypeNone, CommandSOW); ack != AckTypeCompleted {
+		t.Fatalf("expected sow completed termination ack, got %d", ack)
+	}
+
+	var nilRouter *MessageRouter
+	if added := nilRouter.AddRoute("x", nil, AckTypeNone, AckTypeNone, CommandPublish); added != 0 {
+		t.Fatalf("expected nil router add route to fail, got %d", added)
+	}
+	if removed := nilRouter.RemoveRoute("x"); removed {
+		t.Fatalf("expected nil router remove route to fail")
+	}
+	nilRouter.Clear()
+	nilRouter.UnsubscribeAll()
+	if delivered := nilRouter.DeliverAck(nil, AckTypeProcessed); delivered != 0 {
+		t.Fatalf("expected nil router deliver ack to be zero, got %d", delivered)
+	}
+	if delivered := nilRouter.DeliverDataWithID(&Message{header: new(_Header)}, "x"); delivered != 0 {
+		t.Fatalf("expected nil router deliver data with id to be zero, got %d", delivered)
+	}
+
+	router := &MessageRouter{key: "replace-route"}
+	if added := router.AddRoute("replace-route", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandPublish); added != 1 {
+		t.Fatalf("expected initial add to succeed, got %d", added)
+	}
+	if added := router.AddRoute("replace-route", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandPublish); added != 0 {
+		t.Fatalf("expected duplicate non-subscribe add to fail, got %d", added)
+	}
+	if added := router.AddRoute("replace-route", func(*Message) error { return nil }, AckTypeNone, AckTypeNone, CommandSubscribe); added != 1 {
+		t.Fatalf("expected subscribe replacement add to succeed, got %d", added)
+	}
+	if removed := router.RemoveRoute("missing"); removed {
+		t.Fatalf("expected removing missing route to return false")
+	}
+
+	zeroRouter := &MessageRouter{}
+	if removed := zeroRouter.RemoveRoute("missing"); removed {
+		t.Fatalf("expected remove on nil routes map to return false")
+	}
+	if route := zeroRouter.FindRoute("missing"); route != nil {
+		t.Fatalf("expected find on nil routes map to return nil")
+	}
+	if delivered := zeroRouter.deliverAckForKey(&Message{header: new(_Header)}, AckTypeProcessed, "missing"); delivered != 0 {
+		t.Fatalf("expected deliverAckForKey on nil routes map to return zero, got %d", delivered)
+	}
+	zeroRouter.processAckForRemoval(AckTypeProcessed, "missing")
+	zeroRouter.ensureRoutes()
+	if zeroRouter.routes == nil {
+		t.Fatalf("expected ensureRoutes to allocate routes map")
+	}
+	zeroRouter.processAckForRemoval(AckTypeProcessed, "missing")
+	zeroRouter.routes["removable"] = MessageRoute{terminationAck: AckTypeProcessed}
+	zeroRouter.processAckForRemoval(AckTypeProcessed, "removable")
+	if _, exists := zeroRouter.routes["removable"]; exists {
+		t.Fatalf("expected processAckForRemoval to delete matching termination route")
+	}
+	if delivered := zeroRouter.DeliverAck(&Message{header: new(_Header)}, AckTypeProcessed); delivered != 0 {
+		t.Fatalf("expected zero-router ack delivery to be zero, got %d", delivered)
+	}
+
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "self-removing"}
+	if added := router.AddRoute("self-removing", func(*Message) error {
+		delete(router.routes, "self-removing")
+		return nil
+	}, AckTypeProcessed, AckTypeNone, CommandPublish); added != 1 {
+		t.Fatalf("expected self-removing route add to succeed, got %d", added)
+	}
+	ackProcessed := AckTypeProcessed
+	if delivered := router.deliverAckForKey(&Message{header: &_Header{ackType: &ackProcessed}}, AckTypeProcessed, "self-removing"); delivered != 1 {
+		t.Fatalf("expected self-removing termination path to report only handler delivery, got %d", delivered)
+	}
+
+	router = &MessageRouter{routes: make(map[string]MessageRoute), key: "mutating"}
+	if added := router.AddRoute("mutating", func(*Message) error {
+		router.routes["mutating"] = MessageRoute{terminationAck: AckTypeNone}
+		return nil
+	}, AckTypeProcessed, AckTypeNone, CommandPublish); added != 1 {
+		t.Fatalf("expected mutating route add to succeed, got %d", added)
+	}
+	if delivered := router.deliverAckForKey(&Message{header: &_Header{ackType: &ackProcessed}}, AckTypeProcessed, "mutating"); delivered != 1 {
+		t.Fatalf("expected mutating route termination path to keep only handler delivery, got %d", delivered)
+	}
 }
 
 func TestFixShredderFirstAndSubsequentFieldCoverage(t *testing.T) {
