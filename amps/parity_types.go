@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -177,6 +178,7 @@ type clientParityState struct {
 	retryOnDisconnect      bool
 	defaultMaxDepth        uint
 	autoAck                bool
+	autoAckValue           atomic.Bool
 	ackBatchSize           uint
 	ackTimeout             time.Duration
 	pendingAcks            map[string]*pendingAckBatch
@@ -211,16 +213,8 @@ type clientParityState struct {
 
 var clientParityStates sync.Map
 
-func ensureClientState(client *Client) *clientParityState {
-	if client == nil {
-		return nil
-	}
-
-	if state, ok := clientParityStates.Load(client); ok {
-		return state.(*clientParityState)
-	}
-
-	state := &clientParityState{
+func newClientParityState() *clientParityState {
+	var state = &clientParityState{
 		retryOnDisconnect:     false,
 		defaultMaxDepth:       0,
 		autoAck:               false,
@@ -231,10 +225,33 @@ func ensureClientState(client *Client) *clientParityState {
 		connectionListeners:   make(map[uintptr]ConnectionStateListener),
 		pendingPublishByCmdID: make(map[string]*Command),
 		noResubscribeRoutes:   make(map[string]struct{}),
+		subscriptionManager:   NewDefaultSubscriptionManager(),
+	}
+	state.autoAckValue.Store(false)
+	return state
+}
+
+func ensureClientState(client *Client) *clientParityState {
+	if client == nil {
+		return nil
 	}
 
+	if cached := client.parityState.Load(); cached != nil {
+		return cached
+	}
+
+	if state, ok := clientParityStates.Load(client); ok {
+		var typed = state.(*clientParityState)
+		client.parityState.Store(typed)
+		return typed
+	}
+
+	var state = newClientParityState()
+
 	actual, _ := clientParityStates.LoadOrStore(client, state)
-	return actual.(*clientParityState)
+	var typed = actual.(*clientParityState)
+	client.parityState.Store(typed)
+	return typed
 }
 
 func forgetClientState(client *Client) {
@@ -242,6 +259,7 @@ func forgetClientState(client *Client) {
 		return
 	}
 	clientParityStates.Delete(client)
+	client.parityState.Store((*clientParityState)(nil))
 }
 
 func listenerKey(listener ConnectionStateListener) uintptr {

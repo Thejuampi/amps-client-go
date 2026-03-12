@@ -599,7 +599,7 @@ func (client *Client) URI() string {
 		return ""
 	}
 	state.lock.Lock()
-	uri := state.uri
+	var uri = state.uri
 	state.lock.Unlock()
 	if uri != "" {
 		return uri
@@ -699,6 +699,7 @@ func (client *Client) SetAutoAck(enabled bool) *Client {
 	state.lock.Lock()
 	state.autoAck = enabled
 	state.lock.Unlock()
+	state.autoAckValue.Store(enabled)
 	return client
 }
 
@@ -708,9 +709,7 @@ func (client *Client) AutoAck() bool {
 	if state == nil {
 		return false
 	}
-	state.lock.Lock()
-	defer state.lock.Unlock()
-	return state.autoAck
+	return state.autoAckValue.Load()
 }
 
 // SetAckBatchSize sets ack batch size on the receiver.

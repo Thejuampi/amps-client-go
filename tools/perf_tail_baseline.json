@@ -1,215 +1,197 @@
 {
-  "generated_at_utc": "2026-02-28T18:01:03Z",
-  "source_command": "go test ./amps -bench=. -benchtime=1s -count=20",
+  "generated_at_utc": "2026-03-11T12:13:16Z",
+  "source_command": "go test ./amps -run ^$ -bench ^(BenchmarkHeaderHotWrite|BenchmarkHeaderHotParse|BenchmarkRouteHotSingle|BenchmarkRouteHotMultiSIDs|BenchmarkReadHotFrameDecodeDispatch|BenchmarkStreamHotDequeue|BenchmarkStreamHotTimeout|BenchmarkMessageCopy|BenchmarkHeaderReset|BenchmarkMessageReset|BenchmarkUnsafeStringFromBytes|BenchmarkTrimASCIISpaces|BenchmarkSyncMapLoad|BenchmarkSyncMapStore|BenchmarkPublishSendFull|BenchmarkSOWBatchParse|BenchmarkRouteHotManySubscriptions|BenchmarkStreamConcurrentDequeue|BenchmarkParseUintBytes|BenchmarkParseUint32Value|BenchmarkAckToString)$ -benchmem -benchtime=1s -count=20",
   "percentile_method": "nearest-rank",
   "samples_per_benchmark": 20,
   "benchmarks": {
-    "BenchmarkAckToString-20": {
+    "BenchmarkAckToString": {
       "n": 20,
-      "min_ns_op": 103.6,
-      "p50_ns_op": 111.2,
-      "p95_ns_op": 116.9,
-      "p99_ns_op": 120.8,
-      "max_ns_op": 120.8,
-      "mean_ns_op": 111.375
+      "min_ns_op": 0.1072,
+      "p50_ns_op": 0.1085,
+      "p95_ns_op": 0.111,
+      "p99_ns_op": 0.1125,
+      "max_ns_op": 0.1125,
+      "mean_ns_op": 0.1088
     },
-    "BenchmarkHeaderHotParse-20": {
+    "BenchmarkHeaderHotParse": {
       "n": 20,
-      "min_ns_op": 21.48,
-      "p50_ns_op": 21.86,
-      "p95_ns_op": 22.6,
-      "p99_ns_op": 23.53,
-      "max_ns_op": 23.53,
-      "mean_ns_op": 22.0135
+      "min_ns_op": 18.99,
+      "p50_ns_op": 19.11,
+      "p95_ns_op": 19.22,
+      "p99_ns_op": 19.27,
+      "max_ns_op": 19.27,
+      "mean_ns_op": 19.1105
     },
-    "BenchmarkHeaderHotWrite-20": {
+    "BenchmarkHeaderHotWrite": {
       "n": 20,
-      "min_ns_op": 227.3,
-      "p50_ns_op": 232.5,
-      "p95_ns_op": 236.2,
-      "p99_ns_op": 251.0,
-      "max_ns_op": 251.0,
-      "mean_ns_op": 233.06
+      "min_ns_op": 63.91,
+      "p50_ns_op": 64.15,
+      "p95_ns_op": 64.41,
+      "p99_ns_op": 66.35,
+      "max_ns_op": 66.35,
+      "mean_ns_op": 64.264
     },
-    "BenchmarkHeaderReset-20": {
+    "BenchmarkHeaderReset": {
       "n": 20,
-      "min_ns_op": 0.1115,
-      "p50_ns_op": 0.1183,
-      "p95_ns_op": 0.1309,
-      "p99_ns_op": 0.1528,
-      "max_ns_op": 0.1528,
-      "mean_ns_op": 0.1206
+      "min_ns_op": 0.1072,
+      "p50_ns_op": 0.1083,
+      "p95_ns_op": 0.1124,
+      "p99_ns_op": 0.1242,
+      "max_ns_op": 0.1242,
+      "mean_ns_op": 0.1096
     },
-    "BenchmarkMessageCopy-20": {
+    "BenchmarkMessageCopy": {
       "n": 20,
-      "min_ns_op": 333.7,
-      "p50_ns_op": 345.9,
-      "p95_ns_op": 367.7,
-      "p99_ns_op": 368.1,
-      "max_ns_op": 368.1,
-      "mean_ns_op": 350.135
+      "min_ns_op": 296.7,
+      "p50_ns_op": 299.2,
+      "p95_ns_op": 305.6,
+      "p99_ns_op": 318.9,
+      "max_ns_op": 318.9,
+      "mean_ns_op": 300.375
     },
-    "BenchmarkMessageReset-20": {
+    "BenchmarkMessageReset": {
       "n": 20,
-      "min_ns_op": 63.96,
-      "p50_ns_op": 64.99,
-      "p95_ns_op": 66.94,
-      "p99_ns_op": 70.13,
-      "max_ns_op": 70.13,
-      "mean_ns_op": 65.4485
+      "min_ns_op": 9.071,
+      "p50_ns_op": 9.094,
+      "p95_ns_op": 9.14,
+      "p99_ns_op": 9.175,
+      "max_ns_op": 9.175,
+      "mean_ns_op": 9.1052
     },
-    "BenchmarkParseUint32Value-20": {
+    "BenchmarkParseUint32Value": {
       "n": 20,
-      "min_ns_op": 8.386,
-      "p50_ns_op": 8.514,
-      "p95_ns_op": 8.635,
-      "p99_ns_op": 8.676,
-      "max_ns_op": 8.676,
-      "mean_ns_op": 8.5282
+      "min_ns_op": 5.533,
+      "p50_ns_op": 5.565,
+      "p95_ns_op": 5.604,
+      "p99_ns_op": 5.628,
+      "max_ns_op": 5.628,
+      "mean_ns_op": 5.5705
     },
-    "BenchmarkParseUintBytes-20": {
+    "BenchmarkParseUintBytes": {
       "n": 20,
-      "min_ns_op": 8.561,
-      "p50_ns_op": 8.667,
-      "p95_ns_op": 8.767,
-      "p99_ns_op": 8.778,
-      "max_ns_op": 8.778,
-      "mean_ns_op": 8.6732
+      "min_ns_op": 6.807,
+      "p50_ns_op": 6.881,
+      "p95_ns_op": 6.913,
+      "p99_ns_op": 7.01,
+      "max_ns_op": 7.01,
+      "mean_ns_op": 6.8781
     },
-    "BenchmarkPublishSendFull-20": {
+    "BenchmarkPublishSendFull": {
       "n": 20,
-      "min_ns_op": 45.77,
-      "p50_ns_op": 46.74,
-      "p95_ns_op": 48.11,
-      "p99_ns_op": 49.13,
-      "max_ns_op": 49.13,
-      "mean_ns_op": 46.862
+      "min_ns_op": 44.89,
+      "p50_ns_op": 45.08,
+      "p95_ns_op": 45.36,
+      "p99_ns_op": 45.45,
+      "max_ns_op": 45.45,
+      "mean_ns_op": 45.13
     },
-    "BenchmarkReadHotFrameDecodeDispatch-20": {
+    "BenchmarkReadHotFrameDecodeDispatch": {
       "n": 20,
-      "min_ns_op": 197.1,
-      "p50_ns_op": 199.4,
-      "p95_ns_op": 204.2,
-      "p99_ns_op": 207.2,
-      "max_ns_op": 207.2,
-      "mean_ns_op": 200.26
+      "min_ns_op": 75.9,
+      "p50_ns_op": 76.64,
+      "p95_ns_op": 77.28,
+      "p99_ns_op": 78.68,
+      "max_ns_op": 78.68,
+      "mean_ns_op": 76.6675
     },
-    "BenchmarkRouteHotManySubscriptions-20": {
+    "BenchmarkRouteHotManySubscriptions": {
       "n": 20,
-      "min_ns_op": 158.8,
-      "p50_ns_op": 161.6,
-      "p95_ns_op": 165.7,
-      "p99_ns_op": 172.5,
-      "max_ns_op": 172.5,
-      "mean_ns_op": 162.26
+      "min_ns_op": 54.55,
+      "p50_ns_op": 55.84,
+      "p95_ns_op": 57.09,
+      "p99_ns_op": 57.45,
+      "max_ns_op": 57.45,
+      "mean_ns_op": 55.907
     },
-    "BenchmarkRouteHotMultiSIDs-20": {
+    "BenchmarkRouteHotMultiSIDs": {
       "n": 20,
-      "min_ns_op": 200.9,
-      "p50_ns_op": 205.5,
-      "p95_ns_op": 207.2,
-      "p99_ns_op": 218.3,
-      "max_ns_op": 218.3,
-      "mean_ns_op": 205.905
+      "min_ns_op": 93.43,
+      "p50_ns_op": 94.25,
+      "p95_ns_op": 96.25,
+      "p99_ns_op": 96.28,
+      "max_ns_op": 96.28,
+      "mean_ns_op": 94.7305
     },
-    "BenchmarkRouteHotSingle-20": {
+    "BenchmarkRouteHotSingle": {
       "n": 20,
-      "min_ns_op": 158.4,
-      "p50_ns_op": 160.9,
-      "p95_ns_op": 165.0,
-      "p99_ns_op": 170.1,
-      "max_ns_op": 170.1,
-      "mean_ns_op": 161.445
+      "min_ns_op": 53.66,
+      "p50_ns_op": 53.98,
+      "p95_ns_op": 54.82,
+      "p99_ns_op": 55.25,
+      "max_ns_op": 55.25,
+      "mean_ns_op": 54.124
     },
-    "BenchmarkSOWBatchParse-20": {
+    "BenchmarkSOWBatchParse": {
       "n": 20,
-      "min_ns_op": 72.91,
-      "p50_ns_op": 73.47,
-      "p95_ns_op": 77.22,
-      "p99_ns_op": 98.22,
-      "max_ns_op": 98.22,
-      "mean_ns_op": 74.991
+      "min_ns_op": 71.81,
+      "p50_ns_op": 72.82,
+      "p95_ns_op": 73.66,
+      "p99_ns_op": 73.69,
+      "max_ns_op": 73.69,
+      "mean_ns_op": 72.8265
     },
-    "BenchmarkStreamConcurrentDequeue-20": {
+    "BenchmarkStreamConcurrentDequeue": {
       "n": 20,
-      "min_ns_op": 98.17,
-      "p50_ns_op": 101.2,
-      "p95_ns_op": 103.8,
-      "p99_ns_op": 105.4,
-      "max_ns_op": 105.4,
-      "mean_ns_op": 101.489
+      "min_ns_op": 41.03,
+      "p50_ns_op": 41.41,
+      "p95_ns_op": 44.33,
+      "p99_ns_op": 46.24,
+      "max_ns_op": 46.24,
+      "mean_ns_op": 41.7545
     },
-    "BenchmarkStreamHotDequeue-20": {
+    "BenchmarkStreamHotDequeue": {
       "n": 20,
-      "min_ns_op": 63.78,
-      "p50_ns_op": 69.48,
-      "p95_ns_op": 75.09,
-      "p99_ns_op": 79.52,
-      "max_ns_op": 79.52,
-      "mean_ns_op": 70.168
+      "min_ns_op": 31.59,
+      "p50_ns_op": 31.75,
+      "p95_ns_op": 32.29,
+      "p99_ns_op": 35.02,
+      "max_ns_op": 35.02,
+      "mean_ns_op": 31.922
     },
-    "BenchmarkStreamHotTimeout-20": {
+    "BenchmarkStreamHotTimeout": {
       "n": 20,
-      "min_ns_op": 12.55,
-      "p50_ns_op": 12.66,
-      "p95_ns_op": 12.84,
-      "p99_ns_op": 12.95,
-      "max_ns_op": 12.95,
-      "mean_ns_op": 12.685
+      "min_ns_op": 10.71,
+      "p50_ns_op": 10.77,
+      "p95_ns_op": 10.81,
+      "p99_ns_op": 10.83,
+      "max_ns_op": 10.83,
+      "mean_ns_op": 10.775
     },
-    "BenchmarkStrictParityHeaderHotParse-20": {
+    "BenchmarkSyncMapLoad": {
       "n": 20,
-      "min_ns_op": 21.1,
-      "p50_ns_op": 21.33,
-      "p95_ns_op": 21.51,
-      "p99_ns_op": 21.55,
-      "max_ns_op": 21.55,
-      "mean_ns_op": 21.3455
+      "min_ns_op": 8.487,
+      "p50_ns_op": 8.547,
+      "p95_ns_op": 9.351,
+      "p99_ns_op": 9.378,
+      "max_ns_op": 9.378,
+      "mean_ns_op": 8.6623
     },
-    "BenchmarkStrictParitySOWBatchParse-20": {
+    "BenchmarkSyncMapStore": {
       "n": 20,
-      "min_ns_op": 105.6,
-      "p50_ns_op": 107.3,
-      "p95_ns_op": 110.8,
-      "p99_ns_op": 115.2,
-      "max_ns_op": 115.2,
-      "mean_ns_op": 107.575
+      "min_ns_op": 221.8,
+      "p50_ns_op": 223.4,
+      "p95_ns_op": 227.6,
+      "p99_ns_op": 234.3,
+      "max_ns_op": 234.3,
+      "mean_ns_op": 224.225
     },
-    "BenchmarkSyncMapLoad-20": {
+    "BenchmarkTrimASCIISpaces": {
       "n": 20,
-      "min_ns_op": 8.627,
-      "p50_ns_op": 8.734,
-      "p95_ns_op": 9.471,
-      "p99_ns_op": 9.628,
-      "max_ns_op": 9.628,
-      "mean_ns_op": 8.8377
+      "min_ns_op": 2.938,
+      "p50_ns_op": 2.958,
+      "p95_ns_op": 2.965,
+      "p99_ns_op": 2.974,
+      "max_ns_op": 2.974,
+      "mean_ns_op": 2.9558
     },
-    "BenchmarkSyncMapStore-20": {
+    "BenchmarkUnsafeStringFromBytes": {
       "n": 20,
-      "min_ns_op": 210.7,
-      "p50_ns_op": 223.7,
-      "p95_ns_op": 239.0,
-      "p99_ns_op": 240.1,
-      "max_ns_op": 240.1,
-      "mean_ns_op": 225.105
-    },
-    "BenchmarkTrimASCIISpaces-20": {
-      "n": 20,
-      "min_ns_op": 3.032,
-      "p50_ns_op": 3.084,
-      "p95_ns_op": 3.178,
-      "p99_ns_op": 3.312,
-      "max_ns_op": 3.312,
-      "mean_ns_op": 3.0964
-    },
-    "BenchmarkUnsafeStringFromBytes-20": {
-      "n": 20,
-      "min_ns_op": 1.944,
-      "p50_ns_op": 1.973,
-      "p95_ns_op": 1.99,
-      "p99_ns_op": 2.034,
-      "max_ns_op": 2.034,
-      "mean_ns_op": 1.9759
+      "min_ns_op": 0.2185,
+      "p50_ns_op": 0.2203,
+      "p95_ns_op": 0.2218,
+      "p99_ns_op": 0.2236,
+      "max_ns_op": 0.2236,
+      "mean_ns_op": 0.2202
     }
   }
 }

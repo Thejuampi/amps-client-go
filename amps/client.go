@@ -40,23 +40,24 @@ var clientVersionBytes = []byte(ClientVersion)
 
 // Client manages a single AMPS connection, command execution, and message routing.
 type Client struct {
-	clientName         string
-	nameHash           string
-	nameHashValue      uint64
-	clientNameBytes    []byte
-	serverVersion      string
-	logonCorrelationID string
-	nextID             atomic.Uint64
-	messageType        []byte
-	errorHandler       func(err error)
-	disconnectHandler  func(client *Client, err error)
-	heartbeatInterval  uint
-	heartbeatTimeout   uint
-	heartbeatTimestamp uint
-	heartbeatTimeoutID *time.Timer
-	heartbeatLock      sync.Mutex
-	disconnectCh       chan struct{}
-	disconnectLock     sync.Mutex
+	clientName          string
+	nameHash            string
+	nameHashValue       uint64
+	clientNameBytes     []byte
+	clientNameDirty     bool
+	serverVersion       string
+	logonCorrelationID  string
+	nextID              atomic.Uint64
+	messageType         []byte
+	errorHandler        func(err error)
+	disconnectHandler   func(client *Client, err error)
+	heartbeatInterval   uint
+	heartbeatTimeout    uint
+	heartbeatTimestamp  uint
+	heartbeatTimeoutID  *time.Timer
+	heartbeatLock       sync.Mutex
+	disconnectCh        chan struct{}
+	disconnectLock      sync.Mutex
 	connectionStateLock sync.Mutex
 
 	// Preferred lock order when multiple locks are required:
@@ -67,6 +68,7 @@ type Client struct {
 	syncAckProcessing chan _Result
 	routes            *sync.Map
 	messageStreams    *sync.Map
+	parityState       atomic.Pointer[clientParityState]
 
 	connected  atomic.Bool
 	connection net.Conn
@@ -212,6 +214,9 @@ type _Stats struct {
 
 const defaultStatsAckTimeout = 30 * time.Second
 
+var syncAckWarningInitialDelay = 250 * time.Millisecond
+var syncAckWarningMaxDelay = 5 * time.Second
+
 func unsafeStringFromBytes(value []byte) string {
 	if len(value) == 0 {
 		return ""
@@ -223,6 +228,85 @@ func defaultErrorHandler(client *Client) func(err error) {
 	return func(err error) {
 		fmt.Println(time.Now().Local().String()+" ["+client.clientName+"] >>>", err)
 	}
+}
+
+func (client *Client) effectiveClientNameBytes() []byte {
+	if client == nil {
+		return nil
+	}
+	if !client.clientNameDirty && client.clientNameBytes != nil {
+		return client.clientNameBytes
+	}
+	if client.clientNameBytes == nil {
+		client.clientNameBytes = make([]byte, 0, len(client.clientName)+16)
+	}
+	client.clientNameBytes = append(client.clientNameBytes[:0], client.clientName...)
+	client.clientNameDirty = false
+	return client.clientNameBytes
+}
+
+func (client *Client) reportWarning(err error) {
+	if err == nil {
+		return
+	}
+	if client != nil && client.errorHandler != nil {
+		client.errorHandler(err)
+	}
+	client.reportException(err)
+}
+
+func (client *Client) startSyncAckWarning(command *Command, commandID string, routeID string) chan struct{} {
+	if client == nil || command == nil || syncAckWarningInitialDelay <= 0 {
+		return nil
+	}
+
+	var commandName = commandIntToString(command.header.command)
+	if commandName == "" {
+		commandName = "unknown"
+	}
+
+	var done = make(chan struct{})
+	var delay = syncAckWarningInitialDelay
+	var maxDelay = syncAckWarningMaxDelay
+	if maxDelay <= 0 || maxDelay < delay {
+		maxDelay = delay
+	}
+	go func() {
+		var waited = time.Duration(0)
+		for {
+			var timer = time.NewTimer(delay)
+			select {
+			case <-done:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return
+			case <-timer.C:
+			}
+
+			waited += delay
+			client.reportWarning(fmt.Errorf("warning: still waiting %s for processed ack for %s command (command_id=%q route_id=%q)", waited, commandName, commandID, routeID))
+
+			if delay < maxDelay {
+				delay *= 2
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+			}
+		}
+	}()
+
+	return done
+}
+
+func closeSignal(signal chan struct{}) {
+	if signal == nil {
+		return
+	}
+	close(signal)
 }
 
 func trimASCIISpaces(value []byte) []byte {
@@ -801,6 +885,12 @@ func (client *Client) addRoute(
 		var err error
 
 		if message.header.command == CommandAck {
+			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone {
+				if messageHandler != nil {
+					return messageHandler(message)
+				}
+				return nil
+			}
 			ack, _ := message.AckType()
 
 			if systemAcks&ack > 0 {
@@ -1144,7 +1234,11 @@ func (client *Client) ClientName() string { return client.clientName }
 
 // SetClientName sets client name on the receiver.
 func (client *Client) SetClientName(clientName string) *Client {
+	if client == nil {
+		return nil
+	}
 	client.clientName = clientName
+	client.clientNameDirty = true
 	return client
 }
 
@@ -1177,6 +1271,9 @@ func (client *Client) LogonCorrelationID() string { return client.logonCorrelati
 
 // SetLogonCorrelationID sets logon correlation id on the receiver.
 func (client *Client) SetLogonCorrelationID(logonCorrelationID string) *Client {
+	if client == nil {
+		return nil
+	}
 	client.logonCorrelationID = logonCorrelationID
 	return client
 }
@@ -1316,7 +1413,7 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 	client.command.header.ackType = &ack
 
 	commandID := client.makeCommandID()
-	client.command.header.clientName = client.clientNameBytes
+	client.command.header.clientName = client.effectiveClientNameBytes()
 	client.command.header.version = clientVersionBytes
 	client.command.header.messageType = client.messageType
 
@@ -1947,6 +2044,9 @@ func (client *Client) executeAsync(
 				return commandID, NewError(DisconnectedError, sendErr)
 			}
 
+			var warningDone = client.startSyncAckWarning(command, commandID, routeID)
+			defer closeSignal(warningDone)
+
 			result, ok := <-syncAckProcessing
 			client.closeSyncAckProcessing()
 			if syncAckRouteID != "" {
@@ -2258,17 +2358,18 @@ func NewClient(clientName ...string) *Client {
 	}
 
 	client := &Client{
-		clientName:      clientNameInternal,
-		nameHash:        fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
-		clientNameBytes: []byte(clientNameInternal),
-		sendBuffer:      bytes.NewBuffer(nil),
-		command:         &Command{header: new(_Header)},
-		hbCommand:       &Command{header: new(_Header)},
-		message:         &Message{header: new(_Header)},
-		routes:          new(sync.Map),
-		messageStreams:  new(sync.Map),
-		disconnectCh:    newClientSignal(true),
+		clientName:     clientNameInternal,
+		nameHash:       fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
+		sendBuffer:     bytes.NewBuffer(nil),
+		command:        &Command{header: new(_Header)},
+		hbCommand:      &Command{header: new(_Header)},
+		message:        &Message{header: new(_Header)},
+		routes:         new(sync.Map),
+		messageStreams: new(sync.Map),
+		disconnectCh:   newClientSignal(true),
 	}
+	client.clientNameBytes = make([]byte, len(clientNameInternal), len(clientNameInternal)+16)
+	copy(client.clientNameBytes, clientNameInternal)
 	client.errorHandler = defaultErrorHandler(client)
 	client.nameHashValue = unsafeStringHash(client.nameHash)
 

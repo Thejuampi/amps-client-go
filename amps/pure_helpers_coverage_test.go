@@ -424,6 +424,40 @@ func TestReconnectAndChooserCoverage(t *testing.T) {
 	}
 }
 
+func TestEnsureClientStateCachesOnClient(t *testing.T) {
+	if ensureClientState(nil) != nil {
+		t.Fatalf("expected nil client parity state lookup to return nil")
+	}
+
+	var client = NewClient("cached-parity-state")
+	var state = ensureClientState(client)
+	if state == nil {
+		t.Fatalf("expected parity state")
+	}
+	if cached := ensureClientState(client); cached != state {
+		t.Fatalf("expected cached parity state reuse")
+	}
+
+	client.parityState.Store((*clientParityState)(nil))
+	if loaded := ensureClientState(client); loaded != state {
+		t.Fatalf("expected sync.Map parity state reuse when client cache is empty")
+	}
+
+	forgetClientState(client)
+
+	var recreated = ensureClientState(client)
+	if recreated == nil {
+		t.Fatalf("expected recreated parity state")
+	}
+	if recreated == state {
+		t.Fatalf("expected recreated parity state to differ after forget")
+	}
+	if recreated.subscriptionManager == nil {
+		t.Fatalf("expected recreated parity state to include default subscription manager")
+	}
+	forgetClientState(client)
+}
+
 func TestSubscriptionManagerCoverage(t *testing.T) {
 	if trackedSubscriptionID(nil) != "" {
 		t.Fatalf("expected empty id for nil command")

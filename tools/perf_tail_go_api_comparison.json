@@ -1,48 +1,278 @@
 {
-  "baseline_generated_at_utc": "2026-03-01T04:32:50Z",
-  "current_generated_at_utc": "2026-03-01T05:51:11Z",
+  "baseline_generated_at_utc": "2026-03-11T02:15:30Z",
+  "current_generated_at_utc": "2026-03-11T12:16:57Z",
   "metric": "ns/op (lower is better)",
   "percentile_method": "nearest-rank",
   "benchmarks": {
+    "BenchmarkAPIClientGetAutoAck": {
+      "p95_before": 20.48,
+      "p95_after": 1.311,
+      "p95_delta": -19.169,
+      "p95_delta_pct": -93.5986328125,
+      "p99_before": 21.04,
+      "p99_after": 1.507,
+      "p99_delta": -19.532999999999998,
+      "p99_delta_pct": -92.83745247148289
+    },
+    "BenchmarkAPIClientGetLogonCorrelationData": {
+      "p95_before": 0.5988,
+      "p95_after": 0.5082,
+      "p95_delta": -0.09060000000000001,
+      "p95_delta_pct": -15.130260521042086,
+      "p99_before": 0.6001,
+      "p99_after": 0.509,
+      "p99_delta": -0.09109999999999996,
+      "p99_delta_pct": -15.18080319946675
+    },
+    "BenchmarkAPIClientGetNameHash": {
+      "p95_before": 1.163,
+      "p95_after": 0.9537,
+      "p95_delta": -0.20930000000000004,
+      "p95_delta_pct": -17.996560619088566,
+      "p99_before": 1.205,
+      "p99_after": 0.9549,
+      "p99_delta": -0.2501000000000001,
+      "p99_delta_pct": -20.75518672199171
+    },
+    "BenchmarkAPIClientName": {
+      "p95_before": 0.5209,
+      "p95_after": 0.4232,
+      "p95_delta": -0.09770000000000001,
+      "p95_delta_pct": -18.75599923209829,
+      "p99_before": 0.5244,
+      "p99_after": 0.4271,
+      "p99_delta": -0.0973,
+      "p99_delta_pct": -18.55453852021358
+    },
+    "BenchmarkAPIClientSetAutoAck": {
+      "p95_before": 20.48,
+      "p95_after": 15.38,
+      "p95_delta": -5.1,
+      "p95_delta_pct": -24.902343749999996,
+      "p99_before": 22.24,
+      "p99_after": 15.39,
+      "p99_delta": -6.849999999999998,
+      "p99_delta_pct": -30.800359712230208
+    },
+    "BenchmarkAPIClientSetLogonCorrelationData": {
+      "p95_before": 0.6185,
+      "p95_after": 0.5464,
+      "p95_delta": -0.07210000000000005,
+      "p95_delta_pct": -11.657235246564277,
+      "p99_before": 0.6325,
+      "p99_after": 0.6141,
+      "p99_delta": -0.018399999999999972,
+      "p99_delta_pct": -2.9090909090909047
+    },
+    "BenchmarkAPIClientSetName": {
+      "p95_before": 0.5543,
+      "p95_after": 0.584,
+      "p95_delta": 0.02969999999999995,
+      "p95_delta_pct": 5.35810932707919,
+      "p99_before": 0.5765,
+      "p99_after": 0.5859,
+      "p99_delta": 0.009399999999999964,
+      "p99_delta_pct": 1.630529054640063
+    },
+    "BenchmarkAPIHADisconnected": {
+      "p95_before": 0.4395,
+      "p95_after": 0.4233,
+      "p95_delta": -0.016199999999999992,
+      "p95_delta_pct": -3.6860068259385645,
+      "p99_before": 0.4402,
+      "p99_after": 0.4254,
+      "p99_delta": -0.01479999999999998,
+      "p99_delta_pct": -3.3621081326669655
+    },
+    "BenchmarkAPIHALogonOptions": {
+      "p95_before": 18.88,
+      "p95_after": 6.259,
+      "p95_delta": -12.620999999999999,
+      "p95_delta_pct": -66.84851694915254,
+      "p99_before": 23.33,
+      "p99_after": 6.308,
+      "p99_delta": -17.022,
+      "p99_delta_pct": -72.961851693099
+    },
+    "BenchmarkAPIHAReconnectDelay": {
+      "p95_before": 13.55,
+      "p95_after": 0.3979,
+      "p95_delta": -13.1521,
+      "p95_delta_pct": -97.06346863468634,
+      "p99_before": 13.57,
+      "p99_after": 0.4308,
+      "p99_delta": -13.1392,
+      "p99_delta_pct": -96.82535003684599
+    },
+    "BenchmarkAPIHAServerChooser": {
+      "p95_before": 11.22,
+      "p95_after": 11.89,
+      "p95_delta": 0.6699999999999999,
+      "p95_delta_pct": 5.971479500891265,
+      "p99_before": 12.34,
+      "p99_after": 12.44,
+      "p99_delta": 0.09999999999999964,
+      "p99_delta_pct": 0.8103727714748756
+    },
+    "BenchmarkAPIHASetLogonOptions": {
+      "p95_before": 13.95,
+      "p95_after": 37.58,
+      "p95_delta": 23.63,
+      "p95_delta_pct": 169.39068100358423,
+      "p99_before": 14.49,
+      "p99_after": 38.83,
+      "p99_delta": 24.339999999999996,
+      "p99_delta_pct": 167.97791580400275
+    },
+    "BenchmarkAPIHASetReconnectDelay": {
+      "p95_before": 19.42,
+      "p95_after": 19.83,
+      "p95_delta": 0.4099999999999966,
+      "p95_delta_pct": 2.111225540679694,
+      "p99_before": 20.18,
+      "p99_after": 20.18,
+      "p99_delta": 0,
+      "p99_delta_pct": 0
+    },
+    "BenchmarkAPIHASetReconnectDelayStrategy": {
+      "p95_before": 14.11,
+      "p95_after": 10.99,
+      "p95_delta": -3.119999999999999,
+      "p95_delta_pct": -22.111977321048897,
+      "p99_before": 14.57,
+      "p99_after": 11.03,
+      "p99_delta": -3.540000000000001,
+      "p99_delta_pct": -24.296499656829106
+    },
+    "BenchmarkAPIHASetServerChooser": {
+      "p95_before": 12.88,
+      "p95_after": 10.93,
+      "p95_delta": -1.950000000000001,
+      "p95_delta_pct": -15.139751552795039,
+      "p99_before": 12.9,
+      "p99_after": 11.73,
+      "p99_delta": -1.17,
+      "p99_delta_pct": -9.069767441860463
+    },
+    "BenchmarkAPIHASetTimeout": {
+      "p95_before": 13.44,
+      "p95_after": 13.89,
+      "p95_delta": 0.45000000000000107,
+      "p95_delta_pct": 3.348214285714294,
+      "p99_before": 13.59,
+      "p99_after": 13.9,
+      "p99_delta": 0.3100000000000005,
+      "p99_delta_pct": 2.281089036055927
+    },
+    "BenchmarkAPIHATimeout": {
+      "p95_before": 13.2,
+      "p95_after": 0.3975,
+      "p95_delta": -12.802499999999998,
+      "p95_delta_pct": -96.98863636363636,
+      "p99_before": 13.39,
+      "p99_after": 0.3976,
+      "p99_delta": -12.9924,
+      "p99_delta_pct": -97.03061986557132
+    },
     "BenchmarkAPIIntegrationClientConnectLogon": {
-      "p95_before": 922400,
-      "p95_after": 498040,
-      "p95_delta": -424360,
-      "p95_delta_pct": -46.00607111882047,
-      "p99_before": 1199900,
-      "p99_after": 655580,
-      "p99_delta": -544320,
-      "p99_delta_pct": -45.363780315026254
+      "p95_before": 532900,
+      "p95_after": 402500,
+      "p95_delta": -130400,
+      "p95_delta_pct": -24.469881778945393,
+      "p99_before": 551300,
+      "p99_after": 422100,
+      "p99_delta": -129200,
+      "p99_delta_pct": -23.435516052965717
     },
     "BenchmarkAPIIntegrationClientPublish": {
-      "p95_before": 214700,
-      "p95_after": 48151,
-      "p95_delta": -166549,
-      "p95_delta_pct": -77.57289240801117,
-      "p99_before": 233300,
-      "p99_after": 58008,
-      "p99_delta": -175292,
-      "p99_delta_pct": -75.1358765537934
+      "p95_before": 206200,
+      "p95_after": 128300,
+      "p95_delta": -77900,
+      "p95_delta_pct": -37.77885548011639,
+      "p99_before": 243900,
+      "p99_after": 181900,
+      "p99_delta": -62000,
+      "p99_delta_pct": -25.420254202542026
     },
     "BenchmarkAPIIntegrationClientSubscribe": {
-      "p95_before": 146600,
-      "p95_after": 40156,
-      "p95_delta": -106444,
-      "p95_delta_pct": -72.60845839017736,
-      "p99_before": 351800,
-      "p99_after": 40626,
-      "p99_delta": -311174,
-      "p99_delta_pct": -88.4519613416714
+      "p95_before": 86300,
+      "p95_after": 86000,
+      "p95_delta": -300,
+      "p95_delta_pct": -0.34762456546929316,
+      "p99_before": 88600,
+      "p99_after": 97900,
+      "p99_delta": 9300,
+      "p99_delta_pct": 10.496613995485328
     },
     "BenchmarkAPIIntegrationHAConnectAndLogon": {
-      "p95_before": 1084500,
-      "p95_after": 420560,
-      "p95_delta": -663940,
-      "p95_delta_pct": -61.22083909635777,
-      "p99_before": 1213600,
-      "p99_after": 435480,
-      "p99_delta": -778120,
-      "p99_delta_pct": -64.11667765326303
+      "p95_before": 2263900,
+      "p95_after": 760000,
+      "p95_delta": -1503900,
+      "p95_delta_pct": -66.4296126153982,
+      "p99_before": 2604500,
+      "p99_after": 821000,
+      "p99_delta": -1783500,
+      "p99_delta_pct": -68.47763486273757
+    },
+    "BenchmarkHeaderHotWrite": {
+      "p95_before": 79.03,
+      "p95_after": 64.63,
+      "p95_delta": -14.400000000000006,
+      "p95_delta_pct": -18.22092876122992,
+      "p99_before": 79.04,
+      "p99_after": 64.99,
+      "p99_delta": -14.050000000000011,
+      "p99_delta_pct": -17.775809716599202
+    },
+    "BenchmarkReadHotFrameDecodeDispatch": {
+      "p95_before": 101.1,
+      "p95_after": 76.1,
+      "p95_delta": -25,
+      "p95_delta_pct": -24.727992087042534,
+      "p99_before": 105.5,
+      "p99_after": 76.45,
+      "p99_delta": -29.049999999999997,
+      "p99_delta_pct": -27.535545023696677
+    },
+    "BenchmarkRouteHotMultiSIDs": {
+      "p95_before": 119.2,
+      "p95_after": 94.36,
+      "p95_delta": -24.840000000000003,
+      "p95_delta_pct": -20.838926174496645,
+      "p99_before": 121.3,
+      "p99_after": 94.46,
+      "p99_delta": -26.840000000000003,
+      "p99_delta_pct": -22.12695795548228
+    },
+    "BenchmarkRouteHotSingle": {
+      "p95_before": 73.35,
+      "p95_after": 57.02,
+      "p95_delta": -16.32999999999999,
+      "p95_delta_pct": -22.263122017723234,
+      "p99_before": 75.67,
+      "p99_after": 58.42,
+      "p99_delta": -17.25,
+      "p99_delta_pct": -22.796352583586625
+    },
+    "BenchmarkStrictParityHeaderHotParse": {
+      "p95_before": 22.02,
+      "p95_after": 17.67,
+      "p95_delta": -4.349999999999998,
+      "p95_delta_pct": -19.754768392370565,
+      "p99_before": 22.34,
+      "p99_after": 20.47,
+      "p99_delta": -1.870000000000001,
+      "p99_delta_pct": -8.370635631154883
+    },
+    "BenchmarkStrictParitySOWBatchParse": {
+      "p95_before": 109,
+      "p95_after": 89.87,
+      "p95_delta": -19.129999999999995,
+      "p95_delta_pct": -17.550458715596324,
+      "p99_before": 110.2,
+      "p99_after": 89.95,
+      "p99_delta": -20.25,
+      "p99_delta_pct": -18.37568058076225
     }
   }
 }

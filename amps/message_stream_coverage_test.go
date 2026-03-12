@@ -274,6 +274,17 @@ func TestMessageQueueCoverage(t *testing.T) {
 	}
 }
 
+func TestMessageQueueEnqueueWithoutWaitersKeepsSignalChannel(t *testing.T) {
+	queue := newQueue(2)
+	var waitCh = queue.notEmptyCh
+
+	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("signal")})
+
+	if queue.notEmptyCh != waitCh {
+		t.Fatalf("expected enqueue without waiters to keep wait channel stable")
+	}
+}
+
 func TestMessageStreamCloseUnblocksHasNext(t *testing.T) {
 	stream := newMessageStream(nil)
 	stream.setRunning()
