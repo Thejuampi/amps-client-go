@@ -263,7 +263,7 @@ func TestHandleSendFailureOnlyForPublishCommands(t *testing.T) {
 func TestAddRouteNilRequestedAckHandler(t *testing.T) {
 	var client = NewClient("nil-requested-ack-handler")
 
-	var routeErr = client.addRoute("route-ack", nil, AckTypeNone, AckTypeProcessed, false, false)
+	var routeErr = client.addRoute("route-ack", nil, AckTypeNone, AckTypeProcessed, false, false, false)
 	if routeErr != nil {
 		t.Fatalf("expected addRoute to accept nil requested-ack handler: %v", routeErr)
 	}

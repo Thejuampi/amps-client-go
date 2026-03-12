@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -599,7 +600,7 @@ func TestClientRouteHelpersCoverage(t *testing.T) {
 		return nil
 	}
 
-	if err := client.addRoute("route-1", baseHandler, AckTypeNone, AckTypeProcessed, false, false); err != nil {
+	if err := client.addRoute("route-1", baseHandler, AckTypeNone, AckTypeProcessed, false, false, false); err != nil {
 		t.Fatalf("addRoute failed: %v", err)
 	}
 
@@ -621,16 +622,16 @@ func TestClientRouteHelpersCoverage(t *testing.T) {
 		t.Fatalf("expected route handler callback")
 	}
 
-	if err := client.addRoute("route-dup", baseHandler, AckTypeNone, AckTypeNone, true, false); err != nil {
+	if err := client.addRoute("route-dup", baseHandler, AckTypeNone, AckTypeNone, true, false, false); err != nil {
 		t.Fatalf("initial subscribe route add failed: %v", err)
 	}
-	if err := client.addRoute("route-dup", baseHandler, AckTypeNone, AckTypeNone, true, false); err == nil {
+	if err := client.addRoute("route-dup", baseHandler, AckTypeNone, AckTypeNone, true, false, false); err == nil {
 		t.Fatalf("expected duplicate subscribe route error")
 	}
-	if err := client.addRoute("route-dup", baseHandler, AckTypeNone, AckTypeNone, false, false); err == nil {
+	if err := client.addRoute("route-dup", baseHandler, AckTypeNone, AckTypeNone, false, false, false); err == nil {
 		t.Fatalf("expected duplicate non-subscribe route error")
 	}
-	if err := client.addRoute("route-dup", nil, AckTypeNone, AckTypeNone, true, true); err != nil {
+	if err := client.addRoute("route-dup", nil, AckTypeNone, AckTypeNone, true, true, false); err != nil {
 		t.Fatalf("expected replace route path to succeed: %v", err)
 	}
 
@@ -844,6 +845,159 @@ func TestExecuteAsyncReusedSubscriptionRoutesProcessedAckByNewCommandID(t *testi
 	}
 	if _, exists := client.routes.Load("query-reused"); !exists {
 		t.Fatalf("expected stable query route to remain after processed ack")
+	}
+}
+
+func TestClientExecuteSowKeepsRouteUntilGroupEndAfterCompletedAck(t *testing.T) {
+	var client = NewClient("execute-sow-completed-before-group-end")
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	type executeResult struct {
+		stream *MessageStream
+		err    error
+	}
+
+	var resultCh = make(chan executeResult, 1)
+	go func() {
+		var stream, err = client.Execute(NewCommand("sow").SetTopic("orders"))
+		resultCh <- executeResult{stream: stream, err: err}
+	}()
+
+	var routeID = "0"
+	_ = waitForRouteHandler(t, client, routeID)
+	var processedAck = AckTypeProcessed
+	var err = client.onMessage(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte(routeID),
+		ackType:   &processedAck,
+		status:    []byte("success"),
+	}})
+	if err != nil {
+		t.Fatalf("processed ack routing failed: %v", err)
+	}
+
+	var result = <-resultCh
+	if result.err != nil || result.stream == nil {
+		t.Fatalf("expected execute success, stream=%v err=%v", result.stream, result.err)
+	}
+
+	err = client.onMessage(&Message{
+		header: &_Header{command: CommandPublish, subID: []byte(routeID)},
+		data:   []byte(`{"id":1}`),
+	})
+	if err != nil {
+		t.Fatalf("first SOW row routing failed: %v", err)
+	}
+
+	var completedAck = AckTypeCompleted
+	var recordsReturned uint = 2
+	err = client.onMessage(&Message{header: &_Header{
+		command:         CommandAck,
+		commandID:       []byte(routeID),
+		ackType:         &completedAck,
+		status:          []byte("success"),
+		recordsReturned: &recordsReturned,
+	}})
+	if err != nil {
+		t.Fatalf("completed ack routing failed: %v", err)
+	}
+	if _, exists := client.routes.Load(routeID); !exists {
+		t.Fatalf("expected SOW route to remain registered until group_end")
+	}
+
+	err = client.onMessage(&Message{
+		header: &_Header{command: CommandPublish, subID: []byte(routeID)},
+		data:   []byte(`{"id":2}`),
+	})
+	if err != nil {
+		t.Fatalf("second SOW row routing failed: %v", err)
+	}
+
+	err = client.onMessage(&Message{header: &_Header{command: CommandGroupEnd, queryID: []byte(routeID)}})
+	if err != nil {
+		t.Fatalf("group_end routing failed: %v", err)
+	}
+
+	var rowCount int
+	for result.stream.HasNext() {
+		var message = result.stream.Next()
+		if message == nil {
+			continue
+		}
+		if message.header.command == CommandPublish {
+			rowCount++
+		}
+	}
+
+	if rowCount != 2 {
+		t.Fatalf("expected two SOW rows after completed ack, got %d", rowCount)
+	}
+	if _, exists := client.routes.Load(routeID); exists {
+		t.Fatalf("expected SOW route deletion after group_end")
+	}
+	if atomic.LoadInt32(&result.stream.state) != messageStreamStateComplete {
+		t.Fatalf("expected stream to complete after group_end")
+	}
+}
+
+func TestClientExecuteZeroRowSowCompletesOnCompletedAck(t *testing.T) {
+	var client = NewClient("execute-zero-row-sow")
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	type executeResult struct {
+		stream *MessageStream
+		err    error
+	}
+
+	var resultCh = make(chan executeResult, 1)
+	go func() {
+		var stream, err = client.Execute(NewCommand("sow").SetTopic("orders"))
+		resultCh <- executeResult{stream: stream, err: err}
+	}()
+
+	var routeID = "0"
+	_ = waitForRouteHandler(t, client, routeID)
+	var processedAck = AckTypeProcessed
+	var err = client.onMessage(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte(routeID),
+		ackType:   &processedAck,
+		status:    []byte("success"),
+	}})
+	if err != nil {
+		t.Fatalf("processed ack routing failed: %v", err)
+	}
+
+	var result = <-resultCh
+	if result.err != nil || result.stream == nil {
+		t.Fatalf("expected execute success, stream=%v err=%v", result.stream, result.err)
+	}
+
+	var completedAck = AckTypeCompleted
+	var recordsReturned uint
+	err = client.onMessage(&Message{header: &_Header{
+		command:         CommandAck,
+		commandID:       []byte(routeID),
+		ackType:         &completedAck,
+		status:          []byte("success"),
+		recordsReturned: &recordsReturned,
+	}})
+	if err != nil {
+		t.Fatalf("completed ack routing failed: %v", err)
+	}
+
+	if result.stream.HasNext() {
+		t.Fatalf("expected zero-row SOW stream to report no messages")
+	}
+	if _, exists := client.routes.Load(routeID); exists {
+		t.Fatalf("expected zero-row SOW route cleanup on completed ack")
+	}
+	if atomic.LoadInt32(&result.stream.state) != messageStreamStateComplete {
+		t.Fatalf("expected zero-row SOW stream to complete on completed ack")
 	}
 }
 

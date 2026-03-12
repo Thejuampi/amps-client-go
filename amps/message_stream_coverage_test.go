@@ -59,6 +59,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 func TestMessageStreamNextAndCloseCoverage(t *testing.T) {
 	client := NewClient("stream-close")
 	stream := newMessageStream(client)
+	stream.setSubID("sub-conflate")
 
 	stream.Conflate()
 	if !stream.isConflating() {
@@ -179,6 +180,89 @@ func TestMessageStreamHasNextAndMessageHandlerCoverage(t *testing.T) {
 	next := stream.Next()
 	if next == nil || string(next.Data()) != "x" {
 		t.Fatalf("unexpected dequeued message")
+	}
+}
+
+func TestMessageStreamConflateOnlyAppliesToSubscriptions(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.Conflate()
+	if stream.isConflating() {
+		t.Fatalf("expected non-subscription stream conflate to be ignored")
+	}
+
+	stream.setSubID("sub-conflate")
+	stream.Conflate()
+	if !stream.isConflating() {
+		t.Fatalf("expected subscription stream conflate to activate")
+	}
+}
+
+func TestMessageStreamConflateKeepsMessagesWithoutSowKey(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.setSubID("sub-conflate")
+	stream.Conflate()
+
+	stream.current = &Message{header: &_Header{command: CommandPublish}}
+	stream.consumeConflateState()
+	stream.current = nil
+
+	message := &Message{header: &_Header{command: CommandPublish}, data: []byte("no-sow-key")}
+	if err := stream.messageHandler(message); err != nil {
+		t.Fatalf("conflate enqueue without sow key failed: %v", err)
+	}
+	if stream.Depth() != 1 {
+		t.Fatalf("expected unconflated depth 1 for message without sow key, got %d", stream.Depth())
+	}
+
+	next := stream.Next()
+	if next == nil || string(next.Data()) != "no-sow-key" {
+		t.Fatalf("unexpected message without sow key: %#v", next)
+	}
+}
+
+func TestMessageStreamConflateReplacesQueuedDuplicateSowKey(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.setSubID("sub-conflate")
+	stream.Conflate()
+
+	first := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k1")}, data: []byte("first")}
+	second := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k1")}, data: []byte("second")}
+
+	if err := stream.messageHandler(first); err != nil {
+		t.Fatalf("first conflate enqueue failed: %v", err)
+	}
+	if err := stream.messageHandler(second); err != nil {
+		t.Fatalf("second conflate enqueue failed: %v", err)
+	}
+	if stream.Depth() != 1 {
+		t.Fatalf("expected conflated depth 1, got %d", stream.Depth())
+	}
+
+	message := stream.Next()
+	if message == nil || string(message.Data()) != "second" {
+		t.Fatalf("expected latest conflated message, got %#v", message)
+	}
+	if stream.Depth() != 0 {
+		t.Fatalf("expected empty queue after draining conflated message, got %d", stream.Depth())
+	}
+}
+
+func TestMessageStreamHasNextDrainsQueuedMessagesAfterComplete(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("queued-after-complete")})
+	stream.setState(messageStreamStateComplete)
+
+	if !stream.HasNext() {
+		t.Fatalf("expected HasNext to drain queued message after completion")
+	}
+
+	message := stream.Next()
+	if message == nil || string(message.Data()) != "queued-after-complete" {
+		t.Fatalf("unexpected queued message after completion: %#v", message)
+	}
+
+	if stream.HasNext() {
+		t.Fatalf("expected no more messages after draining completed queue")
 	}
 }
 
@@ -442,6 +526,9 @@ func TestMessageStreamAdditionalBranchCoverage(t *testing.T) {
 
 	stream = newMessageStream(nil)
 	stream.Conflate()
+	if stream.isConflating() {
+		t.Fatalf("expected non-subscription conflate request to remain disabled")
+	}
 	stream.current = &Message{header: &_Header{command: CommandPublish}}
 	stream.consumeConflateState()
 

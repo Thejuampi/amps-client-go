@@ -161,19 +161,22 @@ func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
 
 // HasNext reports whether the receiver has next configured.
 func (ms *MessageStream) HasNext() bool {
-	if atomic.LoadInt32(&ms.state) == messageStreamStateComplete {
-		return false
-	}
 	ms.timedOut.Store(false)
 	if ms.current != nil {
 		return true
 	}
 
+	if message, ok := ms.queue.tryDequeue(); ok {
+		ms.setCurrentFromQueue(message)
+		return true
+	}
+
+	if atomic.LoadInt32(&ms.state) == messageStreamStateComplete {
+		return false
+	}
+
 	reading := (atomic.LoadInt32(&ms.state) & messageStreamStateReading) != 0
 	if !reading {
-		if message, ok := ms.queue.tryDequeue(); ok {
-			ms.setCurrentFromQueue(message)
-		}
 		return ms.current != nil
 	}
 
@@ -291,6 +294,10 @@ func (ms *MessageStream) Conflate() {
 	ms.lock.Lock()
 	defer ms.lock.Unlock()
 
+	if atomic.LoadInt32(&ms.state) != messageStreamStateSubscribed {
+		return
+	}
+
 	if ms.sowKeyMap == nil {
 		ms.sowKeyMap = make(map[string]*Message)
 	}
@@ -299,7 +306,7 @@ func (ms *MessageStream) Conflate() {
 func (ms *MessageStream) isConflating() bool {
 	ms.lock.Lock()
 	defer ms.lock.Unlock()
-	return ms.sowKeyMap != nil
+	return ms.sowKeyMap != nil && atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed
 }
 
 // Close is an alias for Disconnect.
@@ -383,7 +390,29 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 	if message == nil {
 		return nil
 	}
-	ms.queue.enqueueWithDepth(message.Copy(), ms.depth)
+
+	if !ms.isConflating() {
+		ms.queue.enqueueWithDepth(message.Copy(), ms.depth)
+		return nil
+	}
+
+	var copiedMessage = message.Copy()
+	var sowKey, hasSowKey = copiedMessage.SowKey()
+	if !hasSowKey || sowKey == "" {
+		ms.queue.enqueueWithDepth(copiedMessage, ms.depth)
+		return nil
+	}
+
+	ms.lock.Lock()
+	if existingMessage, exists := ms.sowKeyMap[sowKey]; exists {
+		existingMessage.Replace(copiedMessage)
+		ms.lock.Unlock()
+		return nil
+	}
+	ms.sowKeyMap[sowKey] = copiedMessage
+	ms.lock.Unlock()
+
+	ms.queue.enqueueWithDepth(copiedMessage, ms.depth)
 	return nil
 }
 

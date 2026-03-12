@@ -114,7 +114,7 @@ func (client *Client) AddMessageHandler(commandID string, messageHandler func(*M
 	if strings.TrimSpace(commandID) == "" {
 		return NewError(CommandError, "missing command ID")
 	}
-	return client.addRoute(commandID, messageHandler, AckTypeNone, requestedAcks, isSubscribe, false)
+	return client.addRoute(commandID, messageHandler, AckTypeNone, requestedAcks, isSubscribe, false, false)
 }
 
 // AddMessageHandlerForCommandType adds a route-level handler with explicit command semantics.

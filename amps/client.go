@@ -19,7 +19,7 @@ import (
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.6.0"
+	ClientVersion = "0.7.0"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
@@ -857,6 +857,7 @@ func (client *Client) addRoute(
 	requestedAcks int,
 	isSubscribe bool,
 	isReplace bool,
+	keepSOWRouteUntilGroupEnd bool,
 	beforeStore ...func(),
 ) (routeErr error) {
 	success := systemAcks == AckTypeNone
@@ -883,6 +884,13 @@ func (client *Client) addRoute(
 
 	client.routes.Store(routeID, func(message *Message) error {
 		var err error
+		deleteRoute := func() error {
+			var routeErr = client.deleteRoute(routeID)
+			if routeErr != nil {
+				return errors.New("Error deleting route")
+			}
+			return nil
+		}
 
 		if message.header.command == CommandAck {
 			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone {
@@ -922,10 +930,13 @@ func (client *Client) addRoute(
 			}
 
 			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone && !isSubscribe {
-				err = client.deleteRoute(routeID)
-				if err != nil {
-					err = errors.New("Error deleting route")
+				if keepSOWRouteUntilGroupEnd {
+					var recordsReturned, hasRecordsReturned = message.RecordsReturned()
+					if !hasRecordsReturned || recordsReturned > 0 {
+						return err
+					}
 				}
+				err = deleteRoute()
 			} else if systemAcks == AckTypeNone {
 
 				client.routes.Store(routeID, messageHandler)
@@ -936,6 +947,12 @@ func (client *Client) addRoute(
 				err = messageHandler(message)
 				if err != nil {
 					err = NewError(MessageHandlerError, err)
+				}
+			}
+
+			if keepSOWRouteUntilGroupEnd && !isSubscribe && systemAcks == AckTypeNone && requestedAcks == AckTypeNone && message.header.command == CommandGroupEnd {
+				if _, hasStream := client.messageStreams.Load(routeID); !hasStream {
+					err = deleteRoute()
 				}
 			}
 		}
@@ -1919,7 +1936,7 @@ func (client *Client) executeAsync(
 		} else if !isSubscribe && systemAcks == AckTypeNone && hasUserAcks {
 			err = client.addCommandRouteDirect(routeID, routeMessageHandler, userAcks)
 		} else {
-			err = client.addRoute(routeID, routeMessageHandler, systemAcks, userAcks, isSubscribe, isReplace, func() {
+			err = client.addRoute(routeID, routeMessageHandler, systemAcks, userAcks, isSubscribe, isReplace, !notSow && !isSubscribe, func() {
 				if onRouteReady != nil {
 					onRouteReady(commandID, routeID)
 					onRouteReady = nil
@@ -1968,7 +1985,7 @@ func (client *Client) executeAsync(
 		client.setSyncAckProcessing(make(chan _Result, 1))
 		routeID = commandID
 
-		err := client.addRoute(commandID, routeMessageHandler, systemAcks, userAcks, false, false, nil)
+		err := client.addRoute(commandID, routeMessageHandler, systemAcks, userAcks, false, false, false, nil)
 		if err != nil {
 			return commandID, err
 		}
@@ -1996,7 +2013,7 @@ func (client *Client) executeAsync(
 		if hasUserAcks {
 			routeID = commandID
 
-			err := client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false, nil)
+			err := client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false, false, nil)
 			if err != nil {
 				return commandID, err
 			}
