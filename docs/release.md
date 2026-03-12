@@ -16,8 +16,10 @@ No local script, local tag creation, or local push is required for the normal pa
 
 1. GitHub Actions must be enabled.
 2. Default branch must be `main`.
-3. The workflow token must be allowed to push the release commit to `main`.
-   If `main` is protected, add GitHub Actions to the bypass list or otherwise allow the workflow's `GITHUB_TOKEN` to push release commits.
+3. Prefer configuring a repository Actions secret named `RELEASE_PUSH_TOKEN`.
+  It should contain a token for a user or bot that can push to `main` and create tags.
+4. If `main` is protected, that token must be allowed to bypass branch protection.
+  If you do not configure `RELEASE_PUSH_TOKEN`, the workflow falls back to `GITHUB_TOKEN`, which only works when GitHub Actions itself is allowed to push release commits to `main`.
 
 ## Every Release
 
@@ -67,7 +69,8 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - Workflow says tag already exists:
   - Use a new version.
 - Push to `main` fails from the workflow:
-  - Update branch protection so GitHub Actions can push release commits.
+  - Configure `RELEASE_PUSH_TOKEN` with a token that can bypass branch protection and push tags.
+  - Or update branch protection so GitHub Actions and the workflow `GITHUB_TOKEN` can push release commits.
 - Validation fails:
   - Fix the failing code or tests, then rerun the workflow.
 

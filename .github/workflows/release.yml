@@ -32,6 +32,26 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure authenticated git remote
+        shell: bash
+        env:
+          RELEASE_PUSH_TOKEN: ${{ secrets['RELEASE_PUSH_TOKEN'] }}
+          GITHUB_PUSH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          PUSH_TOKEN="${RELEASE_PUSH_TOKEN:-}"
+          if [[ -z "${PUSH_TOKEN}" ]]; then
+            PUSH_TOKEN="${GITHUB_PUSH_TOKEN}"
+            echo "Using GITHUB_TOKEN for git fetch/push operations."
+            echo "If protected main pushes fail, configure RELEASE_PUSH_TOKEN with bypass rights."
+          else
+            echo "Using RELEASE_PUSH_TOKEN for git fetch/push operations."
+          fi
+
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -127,7 +147,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git push origin HEAD:main
+          if ! git push origin HEAD:main; then
+            echo "Push to main failed."
+            echo "If main is protected, configure the RELEASE_PUSH_TOKEN secret with a token that can bypass branch protection."
+            exit 1
+          fi
           git push origin "${RELEASE_TAG}"
 
       - name: Create GitHub release
