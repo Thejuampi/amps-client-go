@@ -28,6 +28,9 @@ func TestClientParityAliases(t *testing.T) {
 	if name := client.Name(); name != "alias-renamed" {
 		t.Fatalf("expected Name alias to return updated name, got %q", name)
 	}
+	if bytes := string(client.effectiveClientNameBytes()); bytes != "alias-renamed" {
+		t.Fatalf("expected cached client name bytes to refresh, got %q", bytes)
+	}
 
 	client.SetLogonCorrelationData("corr-123")
 	if correlation := client.LogonCorrelationData(); correlation != "corr-123" {

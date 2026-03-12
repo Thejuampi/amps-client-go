@@ -290,6 +290,7 @@ func TestHAClientDisconnectedFalseWhenConnected(t *testing.T) {
 
 func TestHAClientLogonOptionsZeroValue(t *testing.T) {
 	ha := NewHAClient("ha-logon-opts-zero")
+	ha.logonOptionsRead.Store((*logonOptionsSnapshot)(nil))
 	got := ha.LogonOptions()
 	if got.CorrelationID != "" || got.Timeout != 0 {
 		t.Fatalf("expected zero-value LogonOptions, got %+v", got)
