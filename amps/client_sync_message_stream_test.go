@@ -278,3 +278,44 @@ func TestClientExecuteBacksOffProcessedAckWarnings(t *testing.T) {
 		t.Fatalf("expected execute success after backoff warnings, stream=%v err=%v", result.stream, result.err)
 	}
 }
+
+func TestClientWarningHelpersCoverage(t *testing.T) {
+	var client = NewClient("warning-helpers")
+	client.clientNameBytes = nil
+	if bytes := client.effectiveClientNameBytes(); string(bytes) != "warning-helpers" {
+		t.Fatalf("expected lazy client name bytes rebuild, got %q", string(bytes))
+	}
+	if result := (*Client)(nil).effectiveClientNameBytes(); result != nil {
+		t.Fatalf("expected nil client name bytes for nil client")
+	}
+
+	var reported []error
+	client.SetErrorHandler(func(err error) {
+		reported = append(reported, err)
+	})
+	var state = ensureClientState(client)
+	state.lock.Lock()
+	state.exceptionListener = ExceptionListenerFunc(func(err error) {
+		reported = append(reported, err)
+	})
+	state.lock.Unlock()
+	client.reportWarning(nil)
+	client.reportWarning(NewError(CommandError, "slow ack"))
+	if len(reported) != 2 {
+		t.Fatalf("expected error handler and exception listener reports, got %d", len(reported))
+	}
+
+	var command = NewCommand("subscribe").SetSubID("warn-helper")
+	var done = client.startSyncAckWarning(command, "cid-1", "route-1")
+	if done == nil {
+		t.Fatalf("expected warning goroutine signal for valid command")
+	}
+	closeSignal(done)
+	closeSignal(nil)
+	if signal := (*Client)(nil).startSyncAckWarning(command, "cid-2", "route-2"); signal != nil {
+		t.Fatalf("expected nil signal for nil client")
+	}
+	if signal := client.startSyncAckWarning(nil, "cid-3", "route-3"); signal != nil {
+		t.Fatalf("expected nil signal for nil command")
+	}
+}
