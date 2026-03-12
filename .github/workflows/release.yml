@@ -7,6 +7,11 @@ on:
         description: "Release version in X.Y.Z format"
         required: true
         type: string
+      dry_run:
+        description: "Validate the full release flow without committing, tagging, pushing, or publishing"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -21,6 +26,7 @@ jobs:
     env:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
       RELEASE_TAG: v${{ github.event.inputs.version }}
+      RELEASE_DRY_RUN: ${{ github.event.inputs.dry_run }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,6 +111,7 @@ jobs:
         run: make vuln-scan
 
       - name: Commit release bump
+        if: env.RELEASE_DRY_RUN != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -112,9 +119,11 @@ jobs:
           git commit -m "release: ${RELEASE_TAG}"
 
       - name: Create annotated tag
+        if: env.RELEASE_DRY_RUN != 'true'
         run: git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}"
 
       - name: Push branch and tag
+        if: env.RELEASE_DRY_RUN != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -122,12 +131,14 @@ jobs:
           git push origin "${RELEASE_TAG}"
 
       - name: Create GitHub release
+        if: env.RELEASE_DRY_RUN != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
 
       - name: Warm Go proxy and pkg.go.dev (non-blocking)
+        if: env.RELEASE_DRY_RUN != 'true'
         shell: bash
         run: |
           set +e
@@ -145,9 +156,18 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## Release created"
+            if [[ "${RELEASE_DRY_RUN}" == "true" ]]; then
+              echo "## Dry run succeeded"
+              echo
+              echo "No commit, tag, push, or GitHub Release was created."
+            else
+              echo "## Release created"
+            fi
             echo
             echo "- Version: ${RELEASE_VERSION}"
             echo "- Tag: ${RELEASE_TAG}"
-            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+            echo "- Dry run: ${RELEASE_DRY_RUN}"
+            if [[ "${RELEASE_DRY_RUN}" != "true" ]]; then
+              echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

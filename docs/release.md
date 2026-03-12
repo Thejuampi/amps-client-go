@@ -25,9 +25,21 @@ No local script, local tag creation, or local push is required for the normal pa
 2. Choose the `Release` workflow.
 3. Click `Run workflow` on branch `main`.
 4. Enter the version in `X.Y.Z` format.
-5. Click `Run workflow`.
+5. Leave `dry_run` unchecked for a real release.
+6. Click `Run workflow`.
 
 That is the full release path.
+
+## Safe Test
+
+Use the same workflow with `dry_run=true` and a version that does not exist yet.
+
+That runs the full validation path and version-file rewrite in the runner, but it does not:
+
+- commit to `main`
+- create a tag
+- push anything
+- publish a GitHub Release
 
 ## What The Workflow Checks
 
