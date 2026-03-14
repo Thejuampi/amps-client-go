@@ -369,6 +369,16 @@ func NewMemorySubscriptionManager() *MemorySubscriptionManager {
 	return &MemorySubscriptionManager{inner: amps.NewDefaultSubscriptionManager()}
 }
 
+// SetDefaultResubscriptionTimeout sets the default timeout in milliseconds for new memory subscription managers.
+func SetDefaultResubscriptionTimeout(timeout int) int {
+	return amps.SetDefaultResubscriptionTimeout(timeout)
+}
+
+// GetDefaultResubscriptionTimeout returns the default timeout in milliseconds for new memory subscription managers.
+func GetDefaultResubscriptionTimeout() int {
+	return amps.GetDefaultResubscriptionTimeout()
+}
+
 // Subscribe tracks a subscription command.
 func (manager *MemorySubscriptionManager) Subscribe(messageHandler func(*amps.Message) error, command *amps.Command, requestedAckTypes int) {
 	if manager == nil || manager.inner == nil {
@@ -407,6 +417,22 @@ func (manager *MemorySubscriptionManager) SetFailedResubscribeHandler(handler am
 		return
 	}
 	manager.inner.SetFailedResubscribeHandler(handler)
+}
+
+// SetResubscriptionTimeout sets the timeout used for replayed resubscribe commands in milliseconds.
+func (manager *MemorySubscriptionManager) SetResubscriptionTimeout(timeout int) {
+	if manager == nil || manager.inner == nil {
+		return
+	}
+	manager.inner.SetResubscriptionTimeout(timeout)
+}
+
+// GetResubscriptionTimeout returns the timeout used for replayed resubscribe commands in milliseconds.
+func (manager *MemorySubscriptionManager) GetResubscriptionTimeout() int {
+	if manager == nil || manager.inner == nil {
+		return 0
+	}
+	return manager.inner.GetResubscriptionTimeout()
 }
 
 // Flush waits for primary store to flush when supported.

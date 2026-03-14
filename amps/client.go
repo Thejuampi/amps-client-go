@@ -850,17 +850,28 @@ func (client *Client) configureExecuteMessageStream(
 	client.registerMessageStream(stream)
 }
 
-func (client *Client) addRoute(
+func isRouteSubscribeCommandType(commandType int) bool {
+	switch commandType {
+	case CommandSubscribe, CommandDeltaSubscribe, CommandSOWAndSubscribe, CommandSOWAndDeltaSubscribe:
+		return true
+	default:
+		return false
+	}
+}
+
+func (client *Client) addRouteForCommandType(
 	routeID string,
 	messageHandler func(*Message) error,
 	systemAcks int,
 	requestedAcks int,
-	isSubscribe bool,
+	commandType int,
 	isReplace bool,
 	keepSOWRouteUntilGroupEnd bool,
 	beforeStore ...func(),
 ) (routeErr error) {
-	success := systemAcks == AckTypeNone
+	var success = systemAcks == AckTypeNone
+	var isSubscribe = isRouteSubscribeCommandType(commandType)
+	var terminationAck = terminationAckForRoute(requestedAcks, systemAcks, commandType)
 
 	previousMessageHandler, messageHandlerExists := client.routes.Load(routeID)
 
@@ -872,7 +883,6 @@ func (client *Client) addRoute(
 			return NewError(CommandError, "SubID is set to a non-Subscribe command")
 		}
 	} else {
-
 		if messageHandler == nil {
 			messageHandler = previousMessageHandler.(func(*Message) error)
 		}
@@ -893,16 +903,16 @@ func (client *Client) addRoute(
 		}
 
 		if message.header.command == CommandAck {
-			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone {
+			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone && commandType != CommandSOW {
 				if messageHandler != nil {
 					return messageHandler(message)
 				}
 				return nil
 			}
+
 			ack, _ := message.AckType()
 
 			if systemAcks&ack > 0 {
-
 				systemAcks &^= ack
 
 				if ack == AckTypeProcessed {
@@ -918,7 +928,6 @@ func (client *Client) addRoute(
 			}
 
 			if requestedAcks&ack > 0 {
-
 				requestedAcks &^= ack
 
 				if messageHandler != nil {
@@ -935,14 +944,14 @@ func (client *Client) addRoute(
 					if !hasRecordsReturned || recordsReturned > 0 {
 						return err
 					}
+				} else if commandType == CommandSOW && ack != terminationAck {
+					return err
 				}
 				err = deleteRoute()
 			} else if systemAcks == AckTypeNone {
-
 				client.routes.Store(routeID, messageHandler)
 			}
 		} else {
-
 			if messageHandler != nil {
 				err = messageHandler(message)
 				if err != nil {
@@ -960,7 +969,24 @@ func (client *Client) addRoute(
 		return err
 	})
 
-	return
+	return nil
+}
+
+func (client *Client) addRoute(
+	routeID string,
+	messageHandler func(*Message) error,
+	systemAcks int,
+	requestedAcks int,
+	isSubscribe bool,
+	isReplace bool,
+	keepSOWRouteUntilGroupEnd bool,
+	beforeStore ...func(),
+) (routeErr error) {
+	var commandType = CommandPublish
+	if isSubscribe {
+		commandType = CommandSubscribe
+	}
+	return client.addRouteForCommandType(routeID, messageHandler, systemAcks, requestedAcks, commandType, isReplace, keepSOWRouteUntilGroupEnd, beforeStore...)
 }
 
 func (client *Client) addSubscribeRouteDirect(routeID string, messageHandler func(*Message) error, requestedAcks int, isReplace bool) error {

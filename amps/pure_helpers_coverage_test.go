@@ -531,11 +531,15 @@ func TestSubscriptionManagerCoverage(t *testing.T) {
 		t.Fatalf("expected failure handler callback")
 	}
 
+	failedCalled = 0
 	manager.SetFailedResubscribeHandler(FailedResubscribeHandlerFunc(func(command *Command, requestedAckTypes int, err error) bool {
 		return false
 	}))
-	if err := manager.Resubscribe(client); err == nil {
-		t.Fatalf("failure handler false should propagate error")
+	if err := manager.Resubscribe(client); err != nil {
+		t.Fatalf("removed failed replay should leave nothing to resubscribe, got %v", err)
+	}
+	if failedCalled != 0 {
+		t.Fatalf("expected no second failure callback after handled removal, got %d", failedCalled)
 	}
 
 	manager.Clear()

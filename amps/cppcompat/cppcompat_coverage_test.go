@@ -574,8 +574,22 @@ func TestStoresCoverage(t *testing.T) {
 		t.Fatalf("expected logged bookmark events")
 	}
 
+	previousDefaultTimeout := GetDefaultResubscriptionTimeout()
+	SetDefaultResubscriptionTimeout(0)
+	defer SetDefaultResubscriptionTimeout(previousDefaultTimeout)
+	SetDefaultResubscriptionTimeout(222)
 	manager := NewMemorySubscriptionManager()
 	manager.Subscribe(func(*amps.Message) error { return nil }, amps.NewCommand("subscribe").SetSubID("sub-1").SetTopic("orders"), amps.AckTypeProcessed)
+	if got := GetDefaultResubscriptionTimeout(); got != 222 {
+		t.Fatalf("expected cppcompat default resubscription timeout 222, got %d", got)
+	}
+	if got := manager.GetResubscriptionTimeout(); got != 222 {
+		t.Fatalf("expected cppcompat manager timeout 222, got %d", got)
+	}
+	manager.SetResubscriptionTimeout(33)
+	if got := manager.GetResubscriptionTimeout(); got != 33 {
+		t.Fatalf("expected cppcompat manager timeout 33, got %d", got)
+	}
 	manager.Unsubscribe("sub-1")
 	manager.Clear()
 	if err := manager.Resubscribe(nil); err != nil {
@@ -585,6 +599,10 @@ func TestStoresCoverage(t *testing.T) {
 
 	var nilManager *MemorySubscriptionManager
 	nilManager.Subscribe(nil, nil, 0)
+	nilManager.SetResubscriptionTimeout(5)
+	if got := nilManager.GetResubscriptionTimeout(); got != 0 {
+		t.Fatalf("expected nil memory subscription manager timeout 0, got %d", got)
+	}
 	nilManager.Unsubscribe("x")
 	nilManager.Clear()
 	if err := nilManager.Resubscribe(nil); err != nil {

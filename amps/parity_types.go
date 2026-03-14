@@ -171,6 +171,7 @@ type trackedSubscription struct {
 	messageHandler    func(*Message) error
 	command           *Command
 	requestedAckTypes int
+	paused            bool
 }
 
 type clientParityState struct {

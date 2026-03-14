@@ -121,6 +121,17 @@ func TestBookmarkStoreAdditionalCoverage(t *testing.T) {
 	}
 }
 
+func TestMemoryBookmarkStoreGetMostRecentReturnsPublisherList(t *testing.T) {
+	store := NewMemoryBookmarkStore()
+	store.Log(bookmarkMessage("sub-multi", "2|200|"))
+	store.Log(bookmarkMessage("sub-multi", "1|100|"))
+	store.Log(bookmarkMessage("sub-multi", "1|150|3|"))
+
+	if recent := store.GetMostRecent("sub-multi"); recent != "1|150|3|,2|200|" {
+		t.Fatalf("expected most recent bookmark list by publisher, got %q", recent)
+	}
+}
+
 func TestFileBookmarkStoreWrapperCoverage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bookmark_store_wrappers.json")
 	store := NewFileBookmarkStore(path)

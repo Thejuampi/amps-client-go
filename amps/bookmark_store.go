@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -84,6 +85,46 @@ func (store *MemoryBookmarkStore) ensureSubID(subID string) map[string]*bookmark
 	return records
 }
 
+func (store *MemoryBookmarkStore) computeMostRecentLocked(subID string) string {
+	var records = store.records[subID]
+	if records == nil {
+		return ""
+	}
+
+	var publishers = make(map[uint64]uint64)
+	var publisherBookmarks = make(map[uint64]string)
+	var foundPublisher bool
+	for bookmark := range records {
+		publisher, sequence, ok := parseBookmarkToken(bookmark)
+		if !ok {
+			continue
+		}
+		foundPublisher = true
+		if current, exists := publishers[publisher]; !exists || current < sequence {
+			publishers[publisher] = sequence
+			publisherBookmarks[publisher] = bookmark
+		}
+	}
+
+	if !foundPublisher {
+		return store.mostRecent[subID]
+	}
+
+	var publisherIDs = make([]uint64, 0, len(publishers))
+	for publisherID := range publishers {
+		publisherIDs = append(publisherIDs, publisherID)
+	}
+	sort.Slice(publisherIDs, func(left int, right int) bool {
+		return publisherIDs[left] < publisherIDs[right]
+	})
+
+	var parts = make([]string, 0, len(publisherIDs))
+	for _, publisherID := range publisherIDs {
+		parts = append(parts, publisherBookmarks[publisherID])
+	}
+	return strings.Join(parts, ",")
+}
+
 // Log executes the exported log operation.
 func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 	if store == nil {
@@ -107,7 +148,7 @@ func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 	} else {
 		record.Count++
 	}
-	store.mostRecent[subID] = bookmark
+	store.mostRecent[subID] = store.computeMostRecentLocked(subID)
 	return record.SeqNo
 }
 
@@ -156,6 +197,7 @@ func (store *MemoryBookmarkStore) GetMostRecent(subID string) string {
 	}
 	store.lock.Lock()
 	defer store.lock.Unlock()
+	store.mostRecent[subID] = store.computeMostRecentLocked(subID)
 	return store.mostRecent[subID]
 }
 
@@ -179,6 +221,7 @@ func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 	}
 
 	record := records[bookmark]
+	store.mostRecent[subID] = store.computeMostRecentLocked(subID)
 	if record == nil {
 		return false
 	}
@@ -263,7 +306,7 @@ func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) strin
 	if record.SeqNo > store.discardedUpTo[subID] {
 		store.discardedUpTo[subID] = record.SeqNo
 	}
-	store.mostRecent[subID] = bookmark
+	store.mostRecent[subID] = store.computeMostRecentLocked(subID)
 	return bookmark
 }
 

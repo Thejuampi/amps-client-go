@@ -119,8 +119,13 @@ func (client *Client) AddMessageHandler(commandID string, messageHandler func(*M
 
 // AddMessageHandlerForCommandType adds a route-level handler with explicit command semantics.
 func (client *Client) AddMessageHandlerForCommandType(commandID string, messageHandler func(*Message) error, requestedAcks int, commandType int) error {
-	isSubscribe := commandType == CommandSubscribe || commandType == CommandDeltaSubscribe || commandType == CommandSOWAndSubscribe || commandType == CommandSOWAndDeltaSubscribe
-	return client.AddMessageHandler(commandID, messageHandler, requestedAcks, isSubscribe)
+	if client == nil {
+		return NewError(CommandError, "nil client")
+	}
+	if strings.TrimSpace(commandID) == "" {
+		return NewError(CommandError, "missing command ID")
+	}
+	return client.addRouteForCommandType(commandID, messageHandler, AckTypeNone, requestedAcks, commandType, false, false)
 }
 
 // RemoveMessageHandler removes a route-level message handler.

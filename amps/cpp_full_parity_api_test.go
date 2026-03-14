@@ -296,6 +296,52 @@ func TestClientCppParityAdditionalWrappers(t *testing.T) {
 	if !client.RemoveMessageHandler("route-sub") {
 		t.Fatalf("expected remove route-sub to succeed")
 	}
+
+	sowHandlerCalls := 0
+	if err := client.AddMessageHandlerForCommandType("route-sow", func(*Message) error {
+		sowHandlerCalls++
+		return nil
+	}, AckTypeProcessed, CommandSOW); err != nil {
+		t.Fatalf("AddMessageHandlerForCommandType sow failed: %v", err)
+	}
+
+	routeValue, exists := client.routes.Load("route-sow")
+	if !exists {
+		t.Fatalf("expected route-sow handler to be stored")
+	}
+
+	ackProcessed := AckTypeProcessed
+	if err := routeValue.(func(*Message) error)(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte("route-sow"),
+		status:    []byte("success"),
+		ackType:   &ackProcessed,
+	}}); err != nil {
+		t.Fatalf("unexpected processed ack error for route-sow: %v", err)
+	}
+	if sowHandlerCalls != 1 {
+		t.Fatalf("expected processed ack delivery for route-sow, got %d", sowHandlerCalls)
+	}
+	if _, exists := client.routes.Load("route-sow"); !exists {
+		t.Fatalf("standalone SOW route should remain registered after processed ack")
+	}
+
+	ackCompleted := AckTypeCompleted
+	if err := routeValue.(func(*Message) error)(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte("route-sow"),
+		status:    []byte("success"),
+		ackType:   &ackCompleted,
+	}}); err != nil {
+		t.Fatalf("unexpected completed ack error for route-sow: %v", err)
+	}
+	if sowHandlerCalls != 1 {
+		t.Fatalf("completed ack should not be delivered when it was not requested, got %d handler calls", sowHandlerCalls)
+	}
+	if _, exists := client.routes.Load("route-sow"); exists {
+		t.Fatalf("standalone SOW route should be removed on completed ack")
+	}
+
 	if err := client.AddMessageHandlerForCommandType("", nil, AckTypeNone, CommandPublish); err == nil {
 		t.Fatalf("expected missing route id error")
 	}
