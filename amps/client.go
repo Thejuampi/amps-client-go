@@ -19,7 +19,7 @@ import (
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.8.0"
+	ClientVersion = "0.8.1"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
