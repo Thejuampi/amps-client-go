@@ -569,7 +569,7 @@ func (client *Client) readRoutine() {
 					client.receiveBuffer = newBuffer
 				}
 
-				count, err := client.connection.Read(client.receiveBuffer[client.receivePosition:])
+				count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
 				client.receivePosition += count
 				if err != nil {
 					if client.connected.Load() {
@@ -884,7 +884,9 @@ func (client *Client) addRouteForCommandType(
 		}
 	} else {
 		if messageHandler == nil {
-			messageHandler = previousMessageHandler.(func(*Message) error)
+			if messageHandlerExists {
+				messageHandler = previousMessageHandler.(func(*Message) error)
+			}
 		}
 	}
 
