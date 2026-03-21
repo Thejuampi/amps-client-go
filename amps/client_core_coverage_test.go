@@ -1450,6 +1450,131 @@ func TestClientSowDeleteWaitAbortsOnDisconnect(t *testing.T) {
 	}
 }
 
+func TestClientSyncAckWaitAbortsOnDisconnect(t *testing.T) {
+	client := NewClient("sync-ack-disconnect")
+	client.connected.Store(true)
+	client.resetDisconnectSignal()
+	client.connection = newTestConn()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.ExecuteAsync(NewCommand("flush"), nil)
+		errCh <- err
+	}()
+
+	_, _ = waitForAnyRouteHandler(t, client)
+	if err := client.Disconnect(); err != nil {
+		t.Fatalf("disconnect failed: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "sync ack channel closed") {
+			t.Fatalf("expected sync ack wait to abort after disconnect, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected ExecuteAsync wait to abort after disconnect")
+	}
+}
+
+func TestClientSyncAckCommandsRemainSerialized(t *testing.T) {
+	client := NewClient("sync-ack-serialized")
+	client.connected.Store(true)
+	client.resetDisconnectSignal()
+	client.connection = newTestConn()
+	defer func() {
+		_ = client.Disconnect()
+	}()
+
+	firstDone := make(chan error, 1)
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := client.ExecuteAsync(NewCommand("flush"), nil)
+		firstDone <- err
+	}()
+
+	firstRouteID, firstHandler := waitForAnyRouteHandler(t, client)
+
+	go func() {
+		_, err := client.ExecuteAsync(NewCommand("flush"), nil)
+		secondDone <- err
+	}()
+
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		routeCount := 0
+		client.routes.Range(func(_, _ interface{}) bool {
+			routeCount++
+			return true
+		})
+		if routeCount > 1 {
+			t.Fatalf("expected second sync-ack command to remain blocked while first waits")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	ackType := AckTypeProcessed
+	if err := firstHandler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ackType,
+		status:  []byte("success"),
+	}}); err != nil {
+		t.Fatalf("first flush ack failed: %v", err)
+	}
+
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first flush failed: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected first sync-ack command to complete after ack")
+	}
+
+	var secondRouteID string
+	var secondHandler func(*Message) error
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		client.routes.Range(func(key interface{}, value interface{}) bool {
+			candidateRouteID := key.(string)
+			candidateHandler := value.(func(*Message) error)
+			if candidateRouteID != firstRouteID {
+				secondRouteID = candidateRouteID
+				secondHandler = candidateHandler
+				return false
+			}
+			return true
+		})
+		if secondHandler != nil {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if secondHandler == nil {
+		t.Fatalf("expected second sync-ack command to register after first completion")
+	}
+	if secondRouteID == firstRouteID {
+		t.Fatalf("expected distinct route ids for serialized sync-ack commands")
+	}
+
+	if err := secondHandler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ackType,
+		status:  []byte("success"),
+	}}); err != nil {
+		t.Fatalf("second flush ack failed: %v", err)
+	}
+
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second flush failed: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected second sync-ack command to complete after ack")
+	}
+}
+
 func TestClientEstablishHeartbeatAbortsOnDisconnect(t *testing.T) {
 	var client = NewClient("heartbeat-disconnect")
 	client.connected.Store(true)

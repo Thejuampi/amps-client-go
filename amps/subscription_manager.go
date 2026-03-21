@@ -320,7 +320,9 @@ func prepareResubscribeCommand(client *Client, subscription trackedSubscription)
 
 	if _, hasBookmark := command.Bookmark(); hasBookmark && client != nil {
 		if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
-			command.SetBookmark(bookmarkStore.GetMostRecent(trackedSubscriptionID(command)))
+			if bookmark := bookmarkStore.GetMostRecent(trackedSubscriptionID(command)); bookmark != "" {
+				command.SetBookmark(bookmark)
+			}
 		}
 	}
 

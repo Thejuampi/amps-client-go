@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -166,5 +169,71 @@ func TestRunCommandWithRetryUsingRunnerDoesNotRetryNonTransient(t *testing.T) {
 	)
 	if err == nil || attempts != 1 {
 		t.Fatalf("expected immediate failure without retry, attempts=%d err=%v", attempts, err)
+	}
+}
+
+func TestCompareMergedIncludesBaselineOnlyRows(t *testing.T) {
+	tempDir := t.TempDir()
+	baselinePath := filepath.Join(tempDir, "baseline.json")
+	currentPath := filepath.Join(tempDir, "current.json")
+	outPath := filepath.Join(tempDir, "comparison.json")
+
+	baseline := mergedFile{
+		GeneratedAtUTC: "2026-03-21T00:00:00Z",
+		Rows: []mergedRow{
+			{BenchmarkID: "bench-a", Tier: "offline", WinnerP95: "go", Go: mergedMetrics{P95: 10}},
+			{BenchmarkID: "bench-b", Tier: "integration", WinnerP95: "c", C: mergedMetrics{P95: 20}},
+		},
+	}
+	current := mergedFile{
+		GeneratedAtUTC: "2026-03-22T00:00:00Z",
+		Rows: []mergedRow{
+			{BenchmarkID: "bench-a", Tier: "offline", WinnerP95: "go", Go: mergedMetrics{P95: 11}},
+		},
+	}
+
+	baselineData, err := json.Marshal(baseline)
+	if err != nil {
+		t.Fatalf("marshal baseline: %v", err)
+	}
+	if err := os.WriteFile(baselinePath, baselineData, 0o600); err != nil {
+		t.Fatalf("write baseline: %v", err)
+	}
+	currentData, err := json.Marshal(current)
+	if err != nil {
+		t.Fatalf("marshal current: %v", err)
+	}
+	if err := os.WriteFile(currentPath, currentData, 0o600); err != nil {
+		t.Fatalf("write current: %v", err)
+	}
+
+	if err := commandCompareMerged([]string{"-baseline", baselinePath, "-current", currentPath, "-out", outPath}); err != nil {
+		t.Fatalf("compare-merged failed: %v", err)
+	}
+
+	outData, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	var comparison struct {
+		Entries []struct {
+			BenchmarkID string `json:"benchmark_id"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(outData, &comparison); err != nil {
+		t.Fatalf("unmarshal output: %v", err)
+	}
+	if len(comparison.Entries) != 2 {
+		t.Fatalf("expected baseline-only rows to be retained, got %d entries", len(comparison.Entries))
+	}
+	foundBaselineOnly := false
+	for _, entry := range comparison.Entries {
+		if entry.BenchmarkID == "bench-b" {
+			foundBaselineOnly = true
+			break
+		}
+	}
+	if !foundBaselineOnly {
+		t.Fatalf("expected comparison output to include baseline-only benchmark")
 	}
 }

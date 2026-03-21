@@ -335,7 +335,15 @@ func TestMessageQueueCoverage(t *testing.T) {
 	}()
 	time.Sleep(10 * time.Millisecond)
 	if _, err := queue.dequeue(); err != nil {
-		t.Fatalf("unexpected dequeue while unblocking depth wait: %v", err)
+		t.Fatalf("unexpected first dequeue while waiting on depth: %v", err)
+	}
+	select {
+	case <-done:
+		t.Fatalf("expected enqueueWithDepth to remain blocked at the exact depth limit")
+	default:
+	}
+	if _, err := queue.dequeue(); err != nil {
+		t.Fatalf("unexpected second dequeue while unblocking depth wait: %v", err)
 	}
 	select {
 	case <-done:
@@ -438,6 +446,34 @@ func TestMessageStreamCompletionAndClosedQueueCoverage(t *testing.T) {
 	}
 	if queue.length() != 2 {
 		t.Fatalf("expected blocked enqueue to exit without appending when closed")
+	}
+}
+
+func TestMessageQueueEnqueueWithDepthBlocksAtExactLimit(t *testing.T) {
+	queue := newQueue(2)
+	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("a")})
+
+	blocked := make(chan struct{}, 1)
+	go func() {
+		queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")}, 1)
+		blocked <- struct{}{}
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-blocked:
+		t.Fatalf("expected enqueueWithDepth to block when queue length equals max depth")
+	default:
+	}
+
+	if _, err := queue.dequeue(); err != nil {
+		t.Fatalf("unexpected dequeue while unblocking exact-depth wait: %v", err)
+	}
+
+	select {
+	case <-blocked:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected enqueueWithDepth to unblock after dequeue")
 	}
 }
 

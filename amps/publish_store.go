@@ -311,6 +311,7 @@ type FilePublishStore struct {
 	walPath            string
 	options            FileStoreOptions
 	opsSinceCheckpoint uint64
+	loadErr            error
 }
 
 // NewFilePublishStore returns a new FilePublishStore.
@@ -326,8 +327,18 @@ func NewFilePublishStoreWithOptions(path string, options FileStoreOptions) *File
 		walPath:            path + ".wal",
 		options:            normalizeFileStoreOptions(options),
 	}
-	_ = fileStore.load()
+	fileStore.loadErr = fileStore.load()
 	return fileStore
+}
+
+// LoadError returns the most recent constructor-time load error, if any.
+func (store *FilePublishStore) LoadError() error {
+	if store == nil {
+		return nil
+	}
+	store.lock.RLock()
+	defer store.lock.RUnlock()
+	return store.loadErr
 }
 
 // appendWalNoLock writes a WAL record for the given store operation.
@@ -459,12 +470,10 @@ func (store *FilePublishStore) loadCheckpoint() error {
 	return nil
 }
 
-func (store *FilePublishStore) applyWalRecord(record publishStoreWalRecord) {
-	store.lock.Lock()
-	defer store.lock.Unlock()
-
+func (store *FilePublishStore) applyWalRecordLocked(record publishStoreWalRecord) {
 	switch record.Type {
 	case "store":
+		wasEmpty := len(store.entries) == 0
 		sequence := record.Sequence
 		if sequence == 0 && record.Command.SequenceID != nil {
 			sequence = *record.Command.SequenceID
@@ -475,6 +484,9 @@ func (store *FilePublishStore) applyWalRecord(record publishStoreWalRecord) {
 		command := commandFromSnapshot(record.Command)
 		command.SetSequenceID(sequence)
 		store.entries[sequence] = command
+		if wasEmpty {
+			store.reopenDrainSignalLocked()
+		}
 		if sequence >= store.nextSequence {
 			store.nextSequence = sequence + 1
 		}
@@ -487,6 +499,9 @@ func (store *FilePublishStore) applyWalRecord(record publishStoreWalRecord) {
 				delete(store.entries, key)
 			}
 		}
+		if len(store.entries) == 0 {
+			store.closeDrainSignalLocked()
+		}
 		if record.Sequence > store.lastPersisted {
 			store.lastPersisted = record.Sequence
 		}
@@ -495,6 +510,12 @@ func (store *FilePublishStore) applyWalRecord(record publishStoreWalRecord) {
 			store.errorOnPublishGap = *record.ErrorOnGap
 		}
 	}
+}
+
+func (store *FilePublishStore) applyWalRecord(record publishStoreWalRecord) {
+	store.lock.Lock()
+	store.applyWalRecordLocked(record)
+	store.lock.Unlock()
 }
 
 func (store *FilePublishStore) replayWal() error {
@@ -522,6 +543,7 @@ func (store *FilePublishStore) load() error {
 		return err
 	}
 	store.lock.Lock()
+	store.loadErr = nil
 	store.rebuildDrainSignalLocked()
 	store.lock.Unlock()
 	return nil
@@ -529,21 +551,41 @@ func (store *FilePublishStore) load() error {
 
 // Store returns the configured store instance used by the receiver.
 func (store *FilePublishStore) Store(command *Command) (uint64, error) {
-	sequence, err := store.MemoryPublishStore.Store(command)
-	if err != nil {
+	if store == nil {
+		return 0, errors.New("nil publish store")
+	}
+	if command == nil {
+		return 0, errors.New("nil command")
+	}
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
 		return 0, err
+	}
+
+	sequence := uint64(0)
+	if command.header != nil && command.header.sequenceID != nil && *command.header.sequenceID > 0 {
+		sequence = *command.header.sequenceID
+	} else {
+		sequence = store.nextSequence
 	}
 
 	snapshot := snapshotFromCommand(command)
 	snapshot.SequenceID = &sequence
-	if err = store.appendWalNoLock(publishStoreWalRecord{
+	record := publishStoreWalRecord{
 		Type:     "store",
 		Sequence: sequence,
 		Command:  snapshot,
-	}); err != nil {
-		return sequence, err
 	}
-	if err = store.bumpMutationAndMaybeCheckpoint(); err != nil {
+	if err := store.appendWalNoLock(record); err != nil {
+		store.lock.Unlock()
+		return 0, err
+	}
+	store.applyWalRecordLocked(record)
+	store.lock.Unlock()
+	if err := store.bumpMutationAndMaybeCheckpoint(); err != nil {
 		return sequence, err
 	}
 	return sequence, nil
@@ -551,26 +593,53 @@ func (store *FilePublishStore) Store(command *Command) (uint64, error) {
 
 // DiscardUpTo executes the exported discardupto operation.
 func (store *FilePublishStore) DiscardUpTo(sequence uint64) error {
-	if err := store.MemoryPublishStore.DiscardUpTo(sequence); err != nil {
+	if store == nil {
+		return errors.New("nil publish store")
+	}
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
 		return err
 	}
-	if err := store.appendWalNoLock(publishStoreWalRecord{
+	if store.errorOnPublishGap && sequence < store.lastPersisted {
+		store.lock.Unlock()
+		return errors.New("publish store gap detected")
+	}
+	record := publishStoreWalRecord{
 		Type:     "discard",
 		Sequence: sequence,
-	}); err != nil {
+	}
+	if err := store.appendWalNoLock(record); err != nil {
+		store.lock.Unlock()
 		return err
 	}
+	store.applyWalRecordLocked(record)
+	store.lock.Unlock()
 	return store.bumpMutationAndMaybeCheckpoint()
 }
 
 // SetErrorOnPublishGap sets error on publish gap on the receiver.
 func (store *FilePublishStore) SetErrorOnPublishGap(enabled bool) {
-	store.MemoryPublishStore.SetErrorOnPublishGap(enabled)
-	if err := store.appendWalNoLock(publishStoreWalRecord{
-		Type:       "error_on_gap",
-		ErrorOnGap: &enabled,
-	}); err != nil {
+	if store == nil {
 		return
 	}
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		store.lock.Unlock()
+		return
+	}
+	record := publishStoreWalRecord{
+		Type:       "error_on_gap",
+		ErrorOnGap: &enabled,
+	}
+	if err := store.appendWalNoLock(record); err != nil {
+		store.lock.Unlock()
+		return
+	}
+	store.applyWalRecordLocked(record)
+	store.lock.Unlock()
 	_ = store.bumpMutationAndMaybeCheckpoint()
 }

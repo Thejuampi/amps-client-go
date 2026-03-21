@@ -88,6 +88,10 @@ func (ha *HAClient) handleDisconnect(err error) {
 }
 
 func (ha *HAClient) connectAndLogonOnce(uri string, authenticator Authenticator, options LogonParams, hasLogonOptions bool) error {
+	return ha.connectAndLogonOnceWithContext(context.Background(), uri, authenticator, options, hasLogonOptions)
+}
+
+func (ha *HAClient) connectAndLogonOnceWithContext(ctx context.Context, uri string, authenticator Authenticator, options LogonParams, hasLogonOptions bool) error {
 	if ha == nil || ha.client == nil {
 		return NewError(CommandError, "nil HAClient")
 	}
@@ -96,7 +100,7 @@ func (ha *HAClient) connectAndLogonOnce(uri string, authenticator Authenticator,
 	}
 
 	ha.client.markManualDisconnect(false)
-	if err := ha.client.Connect(uri); err != nil {
+	if err := ha.client.connectWithContext(ctx, uri); err != nil {
 		return err
 	}
 	if authenticator != nil {
@@ -210,7 +214,21 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 			return NewError(ConnectionError, "server chooser does not contain any URIs")
 		}
 
-		if err := ha.connectAndLogonOnce(uri, authenticator, options, hasLogonOptions); err == nil {
+		attemptCtx := ctx
+		cancel := func() {}
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				if lastErr == nil {
+					return NewError(TimedOutError, "HAClient connect/logon timed out before starting attempt")
+				}
+				return lastErr
+			}
+			attemptCtx, cancel = context.WithTimeout(ctx, remaining)
+		}
+
+		if err := ha.connectAndLogonOnceWithContext(attemptCtx, uri, authenticator, options, hasLogonOptions); err == nil {
+			cancel()
 			if chooser != nil {
 				if chooserNeedsInfo {
 					chooserInfo = ha.client.GetConnectionInfo()
@@ -222,6 +240,7 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 			}
 			return nil
 		} else {
+			cancel()
 			lastErr = err
 			if chooser != nil {
 				if chooserNeedsInfo {

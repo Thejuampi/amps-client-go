@@ -2,6 +2,7 @@ package amps
 
 import (
 	"bytes"
+	"context"
 	cryptorand "crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
@@ -37,6 +38,28 @@ const (
 )
 
 var clientVersionBytes = []byte(ClientVersion)
+
+var clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, network, address)
+}
+
+var clientTLSDialContext = func(ctx context.Context, network string, address string, config *tls.Config) (net.Conn, error) {
+	var dialer tls.Dialer
+	dialer.Config = config
+	return dialer.DialContext(ctx, network, address)
+}
+
+func classifyDialError(err error) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return NewError(TimedOutError, err)
+	case errors.Is(err, context.Canceled):
+		return NewError(DisconnectedError, err)
+	default:
+		return NewError(ConnectionRefusedError, err)
+	}
+}
 
 // Client manages a single AMPS connection, command execution, and message routing.
 type Client struct {
@@ -1344,8 +1367,15 @@ func (client *Client) ServerVersion() string { return client.serverVersion }
 
 // Connect opens a transport connection to the provided AMPS URI.
 func (client *Client) Connect(uri string) error {
+	return client.connectWithContext(context.Background(), uri)
+}
+
+func (client *Client) connectWithContext(ctx context.Context, uri string) error {
 	if client.connected.Load() {
 		return NewError(AlreadyConnectedError)
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	client.logging = false
@@ -1413,16 +1443,16 @@ func (client *Client) Connect(uri string) error {
 			}
 		}
 
-		connection, err := tls.Dial(dialNetwork, parsedURI.Host, client.tlsConfig)
+		connection, err := clientTLSDialContext(ctx, dialNetwork, parsedURI.Host, client.tlsConfig)
 		client.connection = connection
 		if err != nil {
-			return NewError(ConnectionRefusedError, err)
+			return classifyDialError(err)
 		}
 	} else {
-		connection, err := net.Dial(dialNetwork, parsedURI.Host)
+		connection, err := clientNetDialContext(ctx, dialNetwork, parsedURI.Host)
 		client.connection = connection
 		if err != nil {
-			return NewError(ConnectionRefusedError, err)
+			return classifyDialError(err)
 		}
 	}
 	if err := applySocketOptions(client.connection, socketOptions); err != nil {
@@ -2317,6 +2347,7 @@ func (client *Client) Unsubscribe(subID ...string) error {
 
 // Disconnect stops receive processing and closes the active connection.
 func (client *Client) Disconnect() (err error) {
+	client.closeSyncAckProcessing()
 	client.lock.Lock()
 	defer client.lock.Unlock()
 	client.markManualDisconnect(true)
@@ -2357,6 +2388,7 @@ func (client *Client) Disconnect() (err error) {
 	client.connectionStateLock.Unlock()
 
 	if connection != nil {
+		client.closeSyncAckProcessing()
 		err = connection.Close()
 		if err != nil {
 			return NewError(ConnectionError, err)

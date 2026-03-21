@@ -227,6 +227,44 @@ func TestMemoryPublishStoreFlushReleasesConcurrentWaiters(t *testing.T) {
 	}
 }
 
+func TestFilePublishStoreDrainSignalLifecycle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file_publish_store_drain.json")
+	store := NewFilePublishStore(path)
+	if !isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected initial drain signal to be closed for empty file store")
+	}
+
+	initialSignal := store.drainedCh
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":24}`)))
+	if err != nil {
+		t.Fatalf("store failed: %v", err)
+	}
+	if isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected drain signal to remain open while file store has pending entries")
+	}
+	if store.drainedCh == initialSignal {
+		t.Fatalf("expected file store to replace the closed drain signal on first store")
+	}
+
+	if err := store.DiscardUpTo(sequence); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+	if !isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected drain signal to close when file store becomes empty")
+	}
+
+	drainedSignal := store.drainedCh
+	if _, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":25}`))); err != nil {
+		t.Fatalf("second store failed: %v", err)
+	}
+	if store.drainedCh == drainedSignal {
+		t.Fatalf("expected refill to reopen the file-store drain signal")
+	}
+	if isPublishStoreSignalClosed(store.drainedCh) {
+		t.Fatalf("expected reopened file-store drain signal to remain open until discard")
+	}
+}
+
 func TestFilePublishStoreAdditionalCoverage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "publish_store_wrappers.json")
 	store := NewFilePublishStore(path)
@@ -560,13 +598,16 @@ func TestFilePublishStoreWALFailurePaths(t *testing.T) {
 		},
 	}
 
-	// Store: appendWalNoLock fails → error is returned, but sequence is still valid.
+	// Store: appendWalNoLock fails → error is returned and no in-memory mutation occurs.
 	seq, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
 	if err == nil {
 		t.Fatalf("expected Store to propagate WAL-append error")
 	}
-	if seq == 0 {
-		t.Fatalf("expected non-zero sequence even on WAL failure")
+	if seq != 0 {
+		t.Fatalf("expected zero sequence on WAL failure, got %d", seq)
+	}
+	if count := store.UnpersistedCount(); count != 0 {
+		t.Fatalf("expected Store WAL failure to leave store empty, got %d entries", count)
 	}
 
 	// DiscardUpTo: appendWalNoLock fails → error is returned.
@@ -576,12 +617,10 @@ func TestFilePublishStoreWALFailurePaths(t *testing.T) {
 		t.Fatalf("expected DiscardUpTo to propagate WAL-append error")
 	}
 
-	// SetErrorOnPublishGap: appendWalNoLock fails → error is silently swallowed but
-	// the in-memory flag is still updated. We just verify no panic occurs and
-	// the flag is set in memory.
+	// SetErrorOnPublishGap: appendWalNoLock fails and the in-memory flag must not change.
 	store.SetErrorOnPublishGap(true)
-	if !store.ErrorOnPublishGap() {
-		t.Fatalf("expected in-memory flag to be set even when WAL write fails")
+	if store.ErrorOnPublishGap() {
+		t.Fatalf("expected WAL failure to leave error-on-gap disabled in memory")
 	}
 }
 
@@ -604,5 +643,26 @@ func TestFilePublishStoreLoadPropagatesCheckpointError(t *testing.T) {
 	}
 	if err := store.load(); err == nil {
 		t.Fatalf("expected load() to propagate checkpoint parse error")
+	}
+}
+
+func TestNewFilePublishStoreWithOptionsRetainsLoadError(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "bad_checkpoint.json")
+	if err := os.WriteFile(path, []byte("{bad json"), 0o600); err != nil {
+		t.Fatalf("write malformed checkpoint: %v", err)
+	}
+
+	store := NewFilePublishStoreWithOptions(path, defaultFileStoreOptions())
+	if err := store.LoadError(); err == nil {
+		t.Fatalf("expected constructor to retain load error")
+	}
+
+	seq, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	if err == nil {
+		t.Fatalf("expected Store to surface retained load error")
+	}
+	if seq != 0 {
+		t.Fatalf("expected zero sequence when load failed, got %d", seq)
 	}
 }

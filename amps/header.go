@@ -56,6 +56,8 @@ type _Header struct {
 	sequenceIDValue          uint64
 	topNValue                uint
 	topicMatchesValue        uint
+
+	strictParityEscapeState uint8
 }
 
 func (header *_Header) reset() {
@@ -297,6 +299,82 @@ func writeUintToBuffer(buffer *bytes.Buffer, value uint64) error {
 	return err
 }
 
+func bytesNeedJSONEscape(value []byte) bool {
+	for index := 0; index < len(value); index++ {
+		ch := value[index]
+		if ch == '"' || ch == '\\' || ch < 0x20 {
+			return true
+		}
+	}
+	return false
+}
+
+func strictParityFieldsNeedJSONEscape(commandID []byte, topic []byte, filter []byte, options []byte, queryID []byte, subID []byte) bool {
+	return bytesNeedJSONEscape(commandID) ||
+		bytesNeedJSONEscape(topic) ||
+		bytesNeedJSONEscape(filter) ||
+		bytesNeedJSONEscape(options) ||
+		bytesNeedJSONEscape(queryID) ||
+		bytesNeedJSONEscape(subID)
+}
+
+var jsonControlEscapes = [32]string{
+	8:  `\b`,
+	9:  `\t`,
+	10: `\n`,
+	12: `\f`,
+	13: `\r`,
+}
+
+func writeQuotedBytesToBuffer(buffer *bytes.Buffer, value []byte) {
+	if !bytesNeedJSONEscape(value) {
+		_ = buffer.WriteByte('"')
+		_, _ = buffer.Write(value)
+		_ = buffer.WriteByte('"')
+		return
+	}
+	_ = buffer.WriteByte('"')
+	for _, ch := range value {
+		if ch == '"' || ch == '\\' {
+			_ = buffer.WriteByte('\\')
+			_ = buffer.WriteByte(ch)
+			continue
+		}
+		if ch >= 0x20 {
+			_ = buffer.WriteByte(ch)
+			continue
+		}
+		if escape := jsonControlEscapes[ch]; escape != "" {
+			_, _ = buffer.WriteString(escape)
+			continue
+		}
+		_, _ = buffer.WriteString(`\u00`)
+		_ = buffer.WriteByte("0123456789abcdef"[ch>>4])
+		_ = buffer.WriteByte("0123456789abcdef"[ch&0x0f])
+	}
+	_ = buffer.WriteByte('"')
+}
+
+func (header *_Header) writeStrictParityEscapedFastPath(buffer *bytes.Buffer) {
+	_, _ = buffer.WriteString(`{"c":"p","cid":`)
+	writeQuotedBytesToBuffer(buffer, header.commandID)
+	_, _ = buffer.WriteString(`,"t":`)
+	writeQuotedBytesToBuffer(buffer, header.topic)
+	_, _ = buffer.WriteString(`,"e":`)
+	_ = writeUintToBuffer(buffer, uint64(*header.expiration))
+	_, _ = buffer.WriteString(`,"filter":`)
+	writeQuotedBytesToBuffer(buffer, header.filter)
+	_, _ = buffer.WriteString(`,"opts":`)
+	writeQuotedBytesToBuffer(buffer, header.options)
+	_, _ = buffer.WriteString(`,"query_id":`)
+	writeQuotedBytesToBuffer(buffer, header.queryID)
+	_, _ = buffer.WriteString(`,"s":`)
+	_ = writeUintToBuffer(buffer, *header.sequenceID)
+	_, _ = buffer.WriteString(`,"sub_id":`)
+	writeQuotedBytesToBuffer(buffer, header.subID)
+	_, _ = buffer.WriteString(`}`)
+}
+
 func (header *_Header) writeStrictParityFastPath(buffer *bytes.Buffer) bool {
 	if header == nil {
 		return false
@@ -310,6 +388,16 @@ func (header *_Header) writeStrictParityFastPath(buffer *bytes.Buffer) bool {
 		return false
 	}
 
+	if header.strictParityEscapeState == 0 {
+		header.strictParityEscapeState = 2
+		if !strictParityFieldsNeedJSONEscape(header.commandID, header.topic, header.filter, header.options, header.queryID, header.subID) {
+			header.strictParityEscapeState = 1
+		}
+	}
+	if header.strictParityEscapeState != 1 {
+		header.writeStrictParityEscapedFastPath(buffer)
+		return true
+	}
 	_, _ = buffer.WriteString(`{"c":"p","cid":"`)
 	_, _ = buffer.Write(header.commandID)
 	_, _ = buffer.WriteString(`","t":"`)
@@ -330,8 +418,48 @@ func (header *_Header) writeStrictParityFastPath(buffer *bytes.Buffer) bool {
 	return true
 }
 
+func (header *_Header) writeSimplePublishEscapedFastPath(buffer *bytes.Buffer) {
+	_, _ = buffer.WriteString(`{"c":"p","cid":`)
+	writeQuotedBytesToBuffer(buffer, header.commandID)
+	_, _ = buffer.WriteString(`,"t":`)
+	writeQuotedBytesToBuffer(buffer, header.topic)
+	_, _ = buffer.WriteString(`}`)
+}
+
+func (header *_Header) writeSimplePublishFastPath(buffer *bytes.Buffer) bool {
+	if header == nil {
+		return false
+	}
+	if header.command != CommandPublish || header.commandID == nil || header.topic == nil {
+		return false
+	}
+	if header.ackType != nil || header.bookmark != nil || header.batchSize != nil || header.correlationID != nil || header.clientName != nil || header.expiration != nil || header.filter != nil || header.groupSequenceNumber != nil || header.sowKey != nil || header.messageLength != nil || header.messageType != nil || header.leasePeriod != nil || header.matches != nil || header.options != nil || header.orderBy != nil || header.queryID != nil || header.reason != nil || header.recordsDeleted != nil || header.recordsInserted != nil || header.recordsReturned != nil || header.recordsUpdated != nil || header.sequenceID != nil || header.subIDs != nil || header.sowKeys != nil || header.status != nil || header.subID != nil || header.topN != nil || header.topicMatches != nil || header.timestamp != nil || header.userID != nil || header.password != nil || header.version != nil {
+		return false
+	}
+
+	if header.strictParityEscapeState == 0 {
+		header.strictParityEscapeState = 2
+		if !strictParityFieldsNeedJSONEscape(header.commandID, header.topic, nil, nil, nil, nil) {
+			header.strictParityEscapeState = 1
+		}
+	}
+	if header.strictParityEscapeState != 1 {
+		header.writeSimplePublishEscapedFastPath(buffer)
+		return true
+	}
+	_, _ = buffer.WriteString(`{"c":"p","cid":"`)
+	_, _ = buffer.Write(header.commandID)
+	_, _ = buffer.WriteString(`","t":"`)
+	_, _ = buffer.Write(header.topic)
+	_, _ = buffer.WriteString(`"}`)
+	return true
+}
+
 func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 	if header.writeStrictParityFastPath(buffer) {
+		return nil
+	}
+	if header.writeSimplePublishFastPath(buffer) {
 		return nil
 	}
 
@@ -341,9 +469,9 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		// Avoid `"` + key + `":"` string concat (allocates a temp string per call).
 		_ = buffer.WriteByte('"')
 		_, _ = buffer.WriteString(key)
-		_, _ = buffer.WriteString(`":"`)
-		_, _ = buffer.Write(value)
-		_, _ = buffer.WriteString(closeStringValue)
+		_, _ = buffer.WriteString(`":`)
+		writeQuotedBytesToBuffer(buffer, value)
+		_, _ = buffer.WriteString(closeNumberValue)
 	}
 	writeNumberField := func(key string, value uint64) {
 		_ = buffer.WriteByte('"')

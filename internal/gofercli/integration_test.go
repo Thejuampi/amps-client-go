@@ -495,7 +495,7 @@ func TestIntegrationMainSOWAndSubscribeAndFormatFailure(t *testing.T) {
 		code   int
 	}, 1)
 	go func() {
-		_, stderr, code = runMain(t, "", nil,
+		_, invalidStderr, invalidCode := runMain(t, "", nil,
 			"subscribe",
 			"-server", broker.uri,
 			"-topic", "orders.sowsub",
@@ -505,7 +505,7 @@ func TestIntegrationMainSOWAndSubscribeAndFormatFailure(t *testing.T) {
 		invalidDone <- struct {
 			stderr string
 			code   int
-		}{stderr: stderr, code: code}
+		}{stderr: invalidStderr, code: invalidCode}
 	}()
 
 	time.Sleep(750 * time.Millisecond)

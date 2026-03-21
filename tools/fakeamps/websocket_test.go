@@ -231,3 +231,20 @@ func TestWebsocketWriteControlFrameWritesPong(t *testing.T) {
 		t.Fatalf("unexpected control frame: %v", frame)
 	}
 }
+
+func TestWebsocketReadFrameRejectsOversizedPayload(t *testing.T) {
+	var ws = &websocketConn{
+		Conn:   &recordingWebsocketConn{},
+		reader: bufio.NewReader(bytes.NewReader([]byte{0x81, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})),
+	}
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("readFrame should reject oversized payloads without panicking: %v", recovered)
+		}
+	}()
+
+	if _, _, err := ws.readFrame(); err == nil {
+		t.Fatalf("expected oversized websocket frame to return an error")
+	}
+}

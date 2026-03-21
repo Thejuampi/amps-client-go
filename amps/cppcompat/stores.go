@@ -440,8 +440,33 @@ func (store *HybridPublishStore) Flush(timeout time.Duration) error {
 	if store == nil {
 		return nil
 	}
-	if flushable, ok := store.primary.(interface{ Flush(time.Duration) error }); ok {
-		return flushable.Flush(timeout)
+	deadline := time.Time{}
+	if timeout > 0 {
+		deadline = time.Now().Add(timeout)
 	}
-	return nil
+
+	flushStore := func(target amps.PublishStore) error {
+		flushable, ok := target.(interface{ Flush(time.Duration) error })
+		if !ok {
+			return nil
+		}
+		if deadline.IsZero() {
+			return flushable.Flush(timeout)
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return amps.NewError(amps.TimedOutError, "publish store flush timed out")
+		}
+		return flushable.Flush(remaining)
+	}
+
+	var firstErr error
+	if err := flushStore(store.primary); err != nil {
+		firstErr = err
+	}
+	if err := flushStore(store.secondary); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }

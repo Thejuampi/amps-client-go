@@ -506,6 +506,7 @@ func (com *Command) SetCommandEnum(command int) *Command {
 // SetCommandID sets command id on the receiver.
 func (com *Command) SetCommandID(commandID string) *Command {
 	assignStringBytes(&com.header.commandID, commandID)
+	com.header.strictParityEscapeState = 0
 	return com
 }
 
@@ -531,12 +532,14 @@ func (com *Command) SetExpiration(expiration uint) *Command {
 // SetFilter sets filter on the receiver.
 func (com *Command) SetFilter(filter string) *Command {
 	assignStringBytes(&com.header.filter, filter)
+	com.header.strictParityEscapeState = 0
 	return com
 }
 
 // SetOptions sets options on the receiver.
 func (com *Command) SetOptions(options string) *Command {
 	assignStringBytes(&com.header.options, options)
+	com.header.strictParityEscapeState = 0
 	return com
 }
 
@@ -549,6 +552,7 @@ func (com *Command) SetOrderBy(orderBy string) *Command {
 // SetQueryID sets query id on the receiver.
 func (com *Command) SetQueryID(queryID string) *Command {
 	assignStringBytes(&com.header.queryID, queryID)
+	com.header.strictParityEscapeState = 0
 	return com
 }
 
@@ -577,6 +581,7 @@ func (com *Command) SetSowKeys(sowKeys string) *Command {
 // SetSubID sets sub id on the receiver.
 func (com *Command) SetSubID(subID string) *Command {
 	assignStringBytes(&com.header.subID, subID)
+	com.header.strictParityEscapeState = 0
 	return com
 }
 
@@ -599,6 +604,7 @@ func (com *Command) SetTopN(topN uint) *Command {
 // SetTopic sets topic on the receiver.
 func (com *Command) SetTopic(topic string) *Command {
 	assignStringBytes(&com.header.topic, topic)
+	com.header.strictParityEscapeState = 0
 	return com
 }
 

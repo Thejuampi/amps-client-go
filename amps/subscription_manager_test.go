@@ -294,6 +294,19 @@ func TestDefaultSubscriptionManagerResubscribeUsesMostRecentBookmarkAndStripsRep
 	}
 }
 
+func TestPrepareResubscribeCommandPreservesBookmarkWhenStoreHasNoEntry(t *testing.T) {
+	client := NewClient("resubscribe-empty-store")
+	client.SetBookmarkStore(NewMemoryBookmarkStore())
+
+	prepared := prepareResubscribeCommand(client, trackedSubscription{
+		command:           NewCommand("subscribe").SetSubID("sub-empty").SetBookmark("7|7|"),
+		requestedAckTypes: AckTypeCompleted,
+	})
+	if bookmark, ok := prepared.Bookmark(); !ok || bookmark != "7|7|" {
+		t.Fatalf("expected empty bookmark store to preserve original bookmark, got %q ok=%v", bookmark, ok)
+	}
+}
+
 func TestDefaultSubscriptionManagerPauseResumeReplayUsesCombinedBookmarks(t *testing.T) {
 	manager := NewDefaultSubscriptionManager()
 	handler := func(*Message) error { return nil }

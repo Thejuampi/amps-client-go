@@ -278,7 +278,7 @@ func (msgRouter *MessageRouter) DeliverData(dataMessage *Message) int {
 	if messagesDelivered == 0 && msgRouter.key == msgQueryID {
 		messagesDelivered += msgRouter.DeliverDataWithID(dataMessage, msgRouter.key)
 	}
-	if msgRouter.key == msgCommandID {
+	if messagesDelivered == 0 && msgRouter.key == msgCommandID {
 		messagesDelivered += msgRouter.DeliverDataWithID(dataMessage, msgRouter.key)
 	}
 	if messagesDelivered == 0 && msgRouter.key == msgSubID {

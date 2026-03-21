@@ -18,6 +18,7 @@ const websocketAcceptGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 const (
 	workspaceWriteQueueDepth = 128
 	websocketWriteTimeout    = 250 * time.Millisecond
+	websocketMaxPayloadSize  = 256 * 1024 * 1024
 )
 
 type websocketQueuedFrame struct {
@@ -272,6 +273,9 @@ func (c *websocketConn) readFrame() ([]byte, byte, error) {
 			return nil, 0, err
 		}
 		length = binary.BigEndian.Uint64(ext[:])
+	}
+	if length > websocketMaxPayloadSize || length > uint64(^uint(0)>>1) {
+		return nil, 0, errors.New("websocket frame too large")
 	}
 
 	var mask [4]byte

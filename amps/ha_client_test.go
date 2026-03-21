@@ -1,7 +1,10 @@
 package amps
 
 import (
+	"context"
+	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +20,25 @@ func (chooser *fixedChooser) ReportSuccess(ConnectionInfo)        {}
 func (chooser *fixedChooser) Error() string                       { return "" }
 func (chooser *fixedChooser) Add(uri string) ServerChooser        { chooser.uri = uri; return chooser }
 func (chooser *fixedChooser) Remove(string)                       {}
+
+type delayedChooser struct {
+	uri   string
+	delay time.Duration
+}
+
+func (chooser *delayedChooser) CurrentURI() string {
+	time.Sleep(chooser.delay)
+	return chooser.uri
+}
+func (chooser *delayedChooser) CurrentAuthenticator() Authenticator { return nil }
+func (chooser *delayedChooser) ReportFailure(error, ConnectionInfo) {}
+func (chooser *delayedChooser) ReportSuccess(ConnectionInfo)        {}
+func (chooser *delayedChooser) Error() string                       { return "" }
+func (chooser *delayedChooser) Add(uri string) ServerChooser {
+	chooser.uri = uri
+	return chooser
+}
+func (chooser *delayedChooser) Remove(string) {}
 
 type errorReconnectStrategy struct{}
 
@@ -240,6 +262,78 @@ func TestHADisconnectCancelsReconnectLoop(t *testing.T) {
 	}
 	if ha.reconnecting.Load() {
 		t.Fatalf("expected reconnect loop to stop promptly after Disconnect")
+	}
+}
+
+func TestHAConnectAndLogonTimeoutCancelsBlockedDial(t *testing.T) {
+	originalDial := clientNetDialContext
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = network
+		_ = address
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	ha := NewHAClient("ha-timeout-dial")
+	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:19000/amps/json"})
+	ha.SetReconnectDelay(0)
+	ha.SetTimeout(25 * time.Millisecond)
+
+	start := time.Now()
+	err := ha.ConnectAndLogon()
+	if err == nil || !strings.Contains(err.Error(), "TimedOutError") {
+		t.Fatalf("expected timeout classification from blocked dial, got %v", err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("expected blocked dial to honor HA timeout promptly")
+	}
+}
+
+func TestHAConnectAndLogonExpiredBeforeAttemptReturnsTimeout(t *testing.T) {
+	ha := NewHAClient("ha-expired-before-attempt")
+	ha.SetServerChooser(&delayedChooser{
+		uri:   "tcp://127.0.0.1:19000/amps/json",
+		delay: 20 * time.Millisecond,
+	})
+	ha.SetReconnectDelay(0)
+	ha.SetTimeout(5 * time.Millisecond)
+
+	err := ha.ConnectAndLogon()
+	if err == nil || !strings.Contains(err.Error(), "TimedOutError") {
+		t.Fatalf("expected timeout error before first attempt begins, got %v", err)
+	}
+}
+
+func TestHADisconnectCancelsBlockedDial(t *testing.T) {
+	originalDial := clientNetDialContext
+	released := make(chan struct{})
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = network
+		_ = address
+		<-ctx.Done()
+		close(released)
+		return nil, ctx.Err()
+	}
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	ha := NewHAClient("ha-cancel-dial")
+	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:19000/amps/json"})
+	ha.SetReconnectDelay(0)
+	ha.SetTimeout(0)
+
+	ha.handleDisconnect(NewError(ConnectionError, "trigger reconnect"))
+	time.Sleep(20 * time.Millisecond)
+	_ = ha.Disconnect()
+
+	select {
+	case <-released:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected Disconnect to cancel blocked dial")
 	}
 }
 

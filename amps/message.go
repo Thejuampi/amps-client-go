@@ -47,7 +47,7 @@ func (msg *Message) reset() {
 	msg.bookmarkSeqNo = 0
 	msg.subscriptionHandle = ""
 	msg.rawTransmissionTime = ""
-	msg.rawTransmissionUnixNano = time.Now().UTC().UnixNano()
+	msg.rawTransmissionUnixNano = time.Now().UnixNano()
 	msg.disowned = false
 	msg.valid = true
 }

@@ -63,14 +63,16 @@ type RecoveryPointAdapter struct {
 	lock   sync.Mutex
 	points []RecoveryPoint
 	index  int
+	seen   []string
 }
 
 // NewRecoveryPointAdapter creates a recovery point adapter.
 func NewRecoveryPointAdapter(points ...RecoveryPoint) *RecoveryPointAdapter {
-	adapter := &RecoveryPointAdapter{points: []RecoveryPoint{}, index: 0}
+	adapter := &RecoveryPointAdapter{points: []RecoveryPoint{}, seen: []string{}, index: 0}
 	for _, point := range points {
 		if point != nil {
 			adapter.points = append(adapter.points, point)
+			adapter.seen = append(adapter.seen, "")
 		}
 	}
 	return adapter
@@ -83,6 +85,7 @@ func (adapter *RecoveryPointAdapter) Add(point RecoveryPoint) {
 	}
 	adapter.lock.Lock()
 	adapter.points = append(adapter.points, point)
+	adapter.seen = append(adapter.seen, "")
 	adapter.lock.Unlock()
 }
 
@@ -99,10 +102,16 @@ func (adapter *RecoveryPointAdapter) Next() string {
 	for i := 0; i < len(adapter.points); i++ {
 		idx := (adapter.index + i) % len(adapter.points)
 		bookmark := adapter.points[idx].Next()
-		if bookmark != "" {
-			adapter.index = idx
-			return bookmark
+		if bookmark == "" {
+			adapter.seen[idx] = ""
+			continue
 		}
+		if adapter.seen[idx] == bookmark {
+			continue
+		}
+		adapter.seen[idx] = bookmark
+		adapter.index = (idx + 1) % len(adapter.points)
+		return bookmark
 	}
 	return ""
 }
@@ -117,6 +126,7 @@ func (adapter *RecoveryPointAdapter) Reset() {
 		point.Reset()
 	}
 	adapter.index = 0
+	adapter.seen = make([]string, len(adapter.points))
 	adapter.lock.Unlock()
 }
 

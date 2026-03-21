@@ -491,7 +491,7 @@ func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
 		return
 	}
 
-	for depth != 0 && queue._length > depth && !queue.closed {
+	for depth != 0 && queue._length >= depth && !queue.closed {
 		queue.notFull.Wait()
 	}
 	if queue.closed {

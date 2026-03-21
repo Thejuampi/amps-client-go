@@ -326,8 +326,12 @@ func TestMessageRouterCoverage(t *testing.T) {
 			subID:     []byte("route-1"),
 		},
 	}
-	if got := router.DeliverData(dataMessage); got == 0 {
-		t.Fatalf("expected data delivery")
+	delivered = 0
+	if got := router.DeliverData(dataMessage); got != 1 {
+		t.Fatalf("expected exactly one data delivery, got %d", got)
+	}
+	if delivered != 1 {
+		t.Fatalf("expected handler to run exactly once, got %d", delivered)
 	}
 	if got := router.DeliverDataWithID(dataMessage, "missing"); got != 0 {
 		t.Fatalf("expected no delivery for missing route, got %d", got)

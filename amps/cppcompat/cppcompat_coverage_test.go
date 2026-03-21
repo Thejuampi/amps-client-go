@@ -16,6 +16,8 @@ type fakePublishStore struct {
 	replayErr    error
 	replayData   []*amps.Command
 	flushErr     error
+	flushCalls   int
+	flushFn      func(time.Duration) error
 }
 
 func (store *fakePublishStore) Store(command *amps.Command) (uint64, error) {
@@ -56,7 +58,10 @@ func (store *fakePublishStore) ReplaySingle(replayer func(*amps.Command) error, 
 
 func (store *fakePublishStore) UnpersistedCount() int { return len(store.replayData) }
 func (store *fakePublishStore) Flush(timeout time.Duration) error {
-	_ = timeout
+	store.flushCalls++
+	if store.flushFn != nil {
+		return store.flushFn(timeout)
+	}
 	return store.flushErr
 }
 func (store *fakePublishStore) GetLowestUnpersisted() uint64 { return 0 }
@@ -516,6 +521,9 @@ func TestStoresCoverage(t *testing.T) {
 	if err := hybrid.Flush(5 * time.Millisecond); err != nil {
 		t.Fatalf("hybrid flush failed: %v", err)
 	}
+	if secondary.flushCalls == 0 {
+		t.Fatalf("expected hybrid flush to include fallback secondary store")
+	}
 	primarySuccess := &fakePublishStore{replayData: []*amps.Command{amps.NewCommand("publish").SetTopic("ok")}}
 	hybridPrimarySuccess := &HybridPublishStore{primary: primarySuccess, secondary: secondary}
 	if sequence, err := hybridPrimarySuccess.Store(amps.NewCommand("publish").SetTopic("orders")); err != nil || sequence == 0 {
@@ -609,6 +617,72 @@ func TestStoresCoverage(t *testing.T) {
 		t.Fatalf("nil memory subscription manager should noop")
 	}
 	nilManager.SetFailedResubscribeHandler(nil)
+}
+
+func TestHybridPublishStoreFlushUsesRemainingDeadline(t *testing.T) {
+	timeout := 40 * time.Millisecond
+	var secondaryTimeout time.Duration
+	primary := &fakePublishStore{
+		flushFn: func(timeout time.Duration) error {
+			time.Sleep(timeout / 2)
+			return errors.New("primary flush failed")
+		},
+	}
+	secondary := &fakePublishStore{
+		flushFn: func(timeout time.Duration) error {
+			secondaryTimeout = timeout
+			return nil
+		},
+	}
+
+	hybrid := NewHybridPublishStore(primary, secondary)
+	err := hybrid.Flush(timeout)
+	if err == nil || err.Error() != "primary flush failed" {
+		t.Fatalf("expected primary flush failure to be returned, got %v", err)
+	}
+	if secondaryTimeout >= timeout {
+		t.Fatalf("expected secondary flush to receive remaining deadline, got %v want < %v", secondaryTimeout, timeout)
+	}
+}
+
+func TestHybridPublishStoreFlushWithZeroTimeoutPassesThroughImmediately(t *testing.T) {
+	var primaryTimeout time.Duration
+	var secondaryTimeout time.Duration
+	primary := &fakePublishStore{
+		flushFn: func(timeout time.Duration) error {
+			primaryTimeout = timeout
+			return nil
+		},
+	}
+	secondary := &fakePublishStore{
+		flushFn: func(timeout time.Duration) error {
+			secondaryTimeout = timeout
+			return nil
+		},
+	}
+
+	hybrid := NewHybridPublishStore(primary, secondary)
+	if err := hybrid.Flush(0); err != nil {
+		t.Fatalf("expected zero-timeout flush to pass through, got %v", err)
+	}
+	if primaryTimeout != 0 || secondaryTimeout != 0 {
+		t.Fatalf("expected zero timeout to be forwarded unchanged, got primary=%v secondary=%v", primaryTimeout, secondaryTimeout)
+	}
+}
+
+func TestHybridPublishStoreFlushTimesOutBeforeSecondaryWhenDeadlineExpires(t *testing.T) {
+	primary := &fakePublishStore{
+		flushFn: func(timeout time.Duration) error {
+			time.Sleep(timeout + 5*time.Millisecond)
+			return nil
+		},
+	}
+	secondary := &fakePublishStore{}
+
+	hybrid := NewHybridPublishStore(primary, secondary)
+	if err := hybrid.Flush(10 * time.Millisecond); err == nil {
+		t.Fatalf("expected deadline expiration before secondary flush")
+	}
 }
 
 func TestLoggedBookmarkStoreErrorAdaptersCoverage(t *testing.T) {

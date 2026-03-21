@@ -111,6 +111,7 @@ type clientObject struct {
 	threadCreatedData   any
 	disconnectHandler   Handler
 	predisconnect       Handler
+	predisconnectState  amps.ConnectionStateListener
 	threadExitCallback  ThreadExitCallback
 	threadExitUserData  any
 	transportUserData   any
@@ -547,15 +548,24 @@ func ClientSetPreDisconnectHandler(handle Handle, handler Handler, userData any)
 	if !ok {
 		return
 	}
+	object.lock.Lock()
+	if object.predisconnectState != nil {
+		object.client.RemoveConnectionStateListener(object.predisconnectState)
+		object.predisconnectState = nil
+	}
 	object.predisconnect = handler
 	if handler == nil {
+		object.lock.Unlock()
 		return
 	}
-	object.client.AddConnectionStateListener(amps.ConnectionStateListenerFunc(func(state amps.ConnectionState) {
+	listener := amps.ConnectionStateListenerFunc(func(state amps.ConnectionState) {
 		if state == amps.ConnectionStateShutdown {
 			handler(handle, userData)
 		}
-	}))
+	})
+	object.predisconnectState = listener
+	object.lock.Unlock()
+	object.client.AddConnectionStateListener(listener)
 }
 
 // ClientSetDisconnectHandler sets disconnect callback.

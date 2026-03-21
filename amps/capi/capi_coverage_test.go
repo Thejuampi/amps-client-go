@@ -321,6 +321,31 @@ func TestClientSocketAndTimeoutCoverage(t *testing.T) {
 	ClientDisconnect(handle)
 }
 
+func TestClientSetPreDisconnectHandlerClearsExistingCallback(t *testing.T) {
+	server := newLifecycleTestServer(t)
+	defer server.close()
+
+	handle := ClientCreate("predisconnect-clear")
+	defer ClientDestroy(handle)
+	if result := ClientConnect(handle, server.uri()); result != EOK {
+		t.Fatalf("connect failed: %d", result)
+	}
+
+	called := 0
+	ClientSetPreDisconnectHandler(handle, func(message Handle, userData any) int {
+		_ = message
+		_ = userData
+		called++
+		return EOK
+	}, "predisconnect")
+	ClientSetPreDisconnectHandler(handle, nil, nil)
+
+	ClientDisconnect(handle)
+	if called != 0 {
+		t.Fatalf("expected cleared pre-disconnect handler to stay inactive, got %d calls", called)
+	}
+}
+
 func TestSocketFromConnCoverage(t *testing.T) {
 	if fd := socketFromConn(nil); fd != 0 {
 		t.Fatalf("expected nil socket descriptor 0, got %d", fd)

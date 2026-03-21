@@ -369,6 +369,7 @@ type FileBookmarkStore struct {
 	walPath            string
 	options            FileStoreOptions
 	opsSinceCheckpoint uint64
+	loadErr            error
 }
 
 // NewFileBookmarkStore returns a new FileBookmarkStore.
@@ -384,8 +385,18 @@ func NewFileBookmarkStoreWithOptions(path string, options FileStoreOptions) *Fil
 		walPath:             path + ".wal",
 		options:             normalizeFileStoreOptions(options),
 	}
-	_ = store.load()
+	store.loadErr = store.load()
 	return store
+}
+
+// LoadError returns the most recent constructor-time load error, if any.
+func (store *FileBookmarkStore) LoadError() error {
+	if store == nil {
+		return nil
+	}
+	store.lock.RLock()
+	defer store.lock.RUnlock()
+	return store.loadErr
 }
 
 func (store *FileBookmarkStore) loadCheckpoint() error {
@@ -546,25 +557,26 @@ func (store *FileBookmarkStore) bumpMutationAndMaybeCheckpoint() error {
 	return nil
 }
 
-func (store *FileBookmarkStore) applyWalRecord(record bookmarkWalRecord) {
-	store.lock.Lock()
-	defer store.lock.Unlock()
+func (store *FileBookmarkStore) applyUpsertLocked(subID string, bookmark string, record bookmarkRecord) {
+	records := store.ensureSubID(subID)
+	copied := record
+	records[bookmark] = &copied
+	store.mostRecent[subID] = store.computeMostRecentLocked(subID)
+	if copied.SeqNo > store.discardedUpTo[subID] && copied.Discarded {
+		store.discardedUpTo[subID] = copied.SeqNo
+	}
+	if copied.SeqNo >= store.nextSeqNo {
+		store.nextSeqNo = copied.SeqNo + 1
+	}
+}
 
+func (store *FileBookmarkStore) applyWalRecordLocked(record bookmarkWalRecord) {
 	switch record.Type {
 	case "upsert":
 		if record.SubID == "" || record.Bookmark == "" || record.Record == nil {
 			return
 		}
-		records := store.ensureSubID(record.SubID)
-		copied := *record.Record
-		records[record.Bookmark] = &copied
-		store.mostRecent[record.SubID] = record.Bookmark
-		if copied.SeqNo > store.discardedUpTo[record.SubID] && copied.Discarded {
-			store.discardedUpTo[record.SubID] = copied.SeqNo
-		}
-		if copied.SeqNo >= store.nextSeqNo {
-			store.nextSeqNo = copied.SeqNo + 1
-		}
+		store.applyUpsertLocked(record.SubID, record.Bookmark, *record.Record)
 	case "discard_upto":
 		if record.SubID == "" {
 			return
@@ -594,6 +606,12 @@ func (store *FileBookmarkStore) applyWalRecord(record bookmarkWalRecord) {
 	}
 }
 
+func (store *FileBookmarkStore) applyWalRecord(record bookmarkWalRecord) {
+	store.lock.Lock()
+	store.applyWalRecordLocked(record)
+	store.lock.Unlock()
+}
+
 func (store *FileBookmarkStore) replayWal() error {
 	if store == nil || !store.options.UseWAL || store.walPath == "" {
 		return nil
@@ -615,7 +633,13 @@ func (store *FileBookmarkStore) load() error {
 	if err := store.loadCheckpoint(); err != nil {
 		return err
 	}
-	return store.replayWal()
+	if err := store.replayWal(); err != nil {
+		return err
+	}
+	store.lock.Lock()
+	store.loadErr = nil
+	store.lock.Unlock()
+	return nil
 }
 
 func (store *FileBookmarkStore) appendUpsertFor(subID string, bookmark string) error {
@@ -647,20 +671,45 @@ func (store *FileBookmarkStore) Log(message *Message) uint64 {
 }
 
 func (store *FileBookmarkStore) LogWithError(message *Message) (uint64, error) {
-	seqNo, err := store.MemoryBookmarkStore.LogWithError(message)
-	if err != nil {
-		return 0, err
+	if store == nil {
+		return 0, nil
 	}
 	subID, bookmark, ok := bookmarkStoreKey(message)
-	if ok {
-		if err = store.appendUpsertFor(subID, bookmark); err != nil {
-			return seqNo, err
-		}
+	if !ok {
+		return 0, nil
 	}
-	if err = store.bumpMutationAndMaybeCheckpoint(); err != nil {
-		return seqNo, err
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
+		return 0, err
 	}
-	return seqNo, nil
+
+	record := bookmarkRecord{}
+	if records := store.records[subID]; records != nil && records[bookmark] != nil {
+		record = *records[bookmark]
+		record.Count++
+	} else {
+		record = bookmarkRecord{SeqNo: store.nextSeqNo, Count: 1}
+	}
+
+	walRecord := bookmarkWalRecord{
+		Type:     "upsert",
+		SubID:    subID,
+		Bookmark: bookmark,
+		Record:   &record,
+	}
+	if err := store.appendWalNoLock(walRecord); err != nil {
+		store.lock.Unlock()
+		return 0, err
+	}
+	store.applyWalRecordLocked(walRecord)
+	store.lock.Unlock()
+	if err := store.bumpMutationAndMaybeCheckpoint(); err != nil {
+		return record.SeqNo, err
+	}
+	return record.SeqNo, nil
 }
 
 // Discard executes the exported discard operation.
@@ -669,16 +718,27 @@ func (store *FileBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 }
 
 func (store *FileBookmarkStore) DiscardWithError(subID string, bookmarkSeqNo uint64) error {
-	if err := store.MemoryBookmarkStore.DiscardWithError(subID, bookmarkSeqNo); err != nil {
+	if store == nil || subID == "" {
+		return nil
+	}
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
 		return err
 	}
-	if err := store.appendWalNoLock(bookmarkWalRecord{
+	walRecord := bookmarkWalRecord{
 		Type:          "discard_upto",
 		SubID:         subID,
 		DiscardedUpTo: bookmarkSeqNo,
-	}); err != nil {
+	}
+	if err := store.appendWalNoLock(walRecord); err != nil {
+		store.lock.Unlock()
 		return err
 	}
+	store.applyWalRecordLocked(walRecord)
+	store.lock.Unlock()
 	return store.bumpMutationAndMaybeCheckpoint()
 }
 
@@ -688,15 +748,39 @@ func (store *FileBookmarkStore) DiscardMessage(message *Message) {
 }
 
 func (store *FileBookmarkStore) DiscardMessageWithError(message *Message) error {
-	if err := store.MemoryBookmarkStore.DiscardMessageWithError(message); err != nil {
-		return err
+	if store == nil {
+		return nil
 	}
 	subID, bookmark, ok := bookmarkStoreKey(message)
-	if ok {
-		if err := store.appendUpsertFor(subID, bookmark); err != nil {
-			return err
-		}
+	if !ok {
+		return nil
 	}
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
+		return err
+	}
+	records := store.records[subID]
+	if records == nil || records[bookmark] == nil {
+		store.lock.Unlock()
+		return nil
+	}
+	record := *records[bookmark]
+	record.Discarded = true
+	walRecord := bookmarkWalRecord{
+		Type:     "upsert",
+		SubID:    subID,
+		Bookmark: bookmark,
+		Record:   &record,
+	}
+	if err := store.appendWalNoLock(walRecord); err != nil {
+		store.lock.Unlock()
+		return err
+	}
+	store.applyWalRecordLocked(walRecord)
+	store.lock.Unlock()
 	return store.bumpMutationAndMaybeCheckpoint()
 }
 
@@ -706,16 +790,26 @@ func (store *FileBookmarkStore) Purge(subID ...string) {
 }
 
 func (store *FileBookmarkStore) PurgeWithError(subID ...string) error {
-	if err := store.MemoryBookmarkStore.PurgeWithError(subID...); err != nil {
-		return err
+	if store == nil {
+		return nil
 	}
 	copied := append([]string(nil), subID...)
-	if err := store.appendWalNoLock(bookmarkWalRecord{
-		Type:   "purge",
-		SubIDs: copied,
-	}); err != nil {
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
 		return err
 	}
+	walRecord := bookmarkWalRecord{
+		Type:   "purge",
+		SubIDs: copied,
+	}
+	if err := store.appendWalNoLock(walRecord); err != nil {
+		store.lock.Unlock()
+		return err
+	}
+	store.applyWalRecordLocked(walRecord)
+	store.lock.Unlock()
 	return store.bumpMutationAndMaybeCheckpoint()
 }
 
@@ -726,19 +820,37 @@ func (store *FileBookmarkStore) Persisted(subID string, bookmark string) string 
 }
 
 func (store *FileBookmarkStore) PersistedWithError(subID string, bookmark string) (string, error) {
-	value, err := store.MemoryBookmarkStore.PersistedWithError(subID, bookmark)
-	if err != nil {
+	if store == nil || subID == "" || bookmark == "" {
+		return "", nil
+	}
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
 		return "", err
 	}
-	if value != "" {
-		if err = store.appendUpsertFor(subID, value); err != nil {
-			return value, err
-		}
+	record := bookmarkRecord{SeqNo: store.nextSeqNo, Count: 1, Discarded: true}
+	if records := store.records[subID]; records != nil && records[bookmark] != nil {
+		record = *records[bookmark]
+		record.Discarded = true
 	}
-	if err = store.bumpMutationAndMaybeCheckpoint(); err != nil {
-		return value, err
+	walRecord := bookmarkWalRecord{
+		Type:     "upsert",
+		SubID:    subID,
+		Bookmark: bookmark,
+		Record:   &record,
 	}
-	return value, nil
+	if err := store.appendWalNoLock(walRecord); err != nil {
+		store.lock.Unlock()
+		return bookmark, err
+	}
+	store.applyWalRecordLocked(walRecord)
+	store.lock.Unlock()
+	if err := store.bumpMutationAndMaybeCheckpoint(); err != nil {
+		return bookmark, err
+	}
+	return bookmark, nil
 }
 
 // SetServerVersion sets server version on the receiver.
@@ -747,15 +859,26 @@ func (store *FileBookmarkStore) SetServerVersion(version string) {
 }
 
 func (store *FileBookmarkStore) SetServerVersionWithError(version string) error {
-	if err := store.MemoryBookmarkStore.SetServerVersionWithError(version); err != nil {
+	if store == nil {
+		return nil
+	}
+
+	store.lock.Lock()
+	if store.loadErr != nil {
+		err := store.loadErr
+		store.lock.Unlock()
 		return err
 	}
-	if err := store.appendWalNoLock(bookmarkWalRecord{
+	walRecord := bookmarkWalRecord{
 		Type:          "server_version",
 		ServerVersion: version,
-	}); err != nil {
+	}
+	if err := store.appendWalNoLock(walRecord); err != nil {
+		store.lock.Unlock()
 		return err
 	}
+	store.applyWalRecordLocked(walRecord)
+	store.lock.Unlock()
 	return store.bumpMutationAndMaybeCheckpoint()
 }
 

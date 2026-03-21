@@ -172,3 +172,26 @@ func TestReplayHandlesLargeLine(t *testing.T) {
 		t.Fatalf("expected one replayed line, got %d", lines)
 	}
 }
+
+func TestReplayIgnoresUnterminatedFinalLine(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "unterminated.wal")
+	content := []byte("{\"type\":\"first\"}\n{\"type\":\"partial\"}")
+	if err := os.WriteFile(logPath, content, 0o600); err != nil {
+		t.Fatalf("write wal: %v", err)
+	}
+
+	lines := make([]string, 0, 2)
+	if err := Replay(logPath, func(line []byte) error {
+		lines = append(lines, string(line))
+		return nil
+	}); err != nil {
+		t.Fatalf("replay failed: %v", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("expected only terminated records to replay, got %d lines", len(lines))
+	}
+	if lines[0] != "{\"type\":\"first\"}" {
+		t.Fatalf("unexpected replayed line: %q", lines[0])
+	}
+}

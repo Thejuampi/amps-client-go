@@ -1198,31 +1198,51 @@ func commandCompareMerged(arguments []string) error {
 	}
 
 	var baselineByID = map[string]mergedRow{}
+	var currentByID = map[string]mergedRow{}
+	var idSet = map[string]struct{}{}
 	for _, row := range baseline.Rows {
 		baselineByID[row.BenchmarkID] = row
+		idSet[row.BenchmarkID] = struct{}{}
+	}
+	for _, row := range current.Rows {
+		currentByID[row.BenchmarkID] = row
+		idSet[row.BenchmarkID] = struct{}{}
 	}
 
 	var comparison mergedComparisonFile
 	comparison.BaselineGeneratedAtUTC = baseline.GeneratedAtUTC
 	comparison.CurrentGeneratedAtUTC = current.GeneratedAtUTC
-	comparison.Entries = make([]mergedComparisonEntry, 0, len(current.Rows))
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	comparison.Entries = make([]mergedComparisonEntry, 0, len(ids))
 
-	for _, currentRow := range current.Rows {
+	for _, benchmarkID := range ids {
+		currentRow, hasCurrent := currentByID[benchmarkID]
+		baselineRow, hasBaseline := baselineByID[benchmarkID]
+		sourceRow := currentRow
+		if !hasCurrent {
+			sourceRow = baselineRow
+		}
+
 		var entry mergedComparisonEntry
-		entry.BenchmarkID = currentRow.BenchmarkID
-		entry.Tier = currentRow.Tier
-		entry.HA = currentRow.HA
-		entry.WinnerAfter = currentRow.WinnerP95
+		entry.BenchmarkID = benchmarkID
+		entry.Tier = sourceRow.Tier
+		entry.HA = sourceRow.HA
+		if hasCurrent {
+			entry.WinnerAfter = currentRow.WinnerP95
+		}
 
-		var baselineRow, ok = baselineByID[currentRow.BenchmarkID]
-		if ok {
+		if hasBaseline {
 			entry.WinnerBefore = baselineRow.WinnerP95
-			if baselineRow.Go.P95 != 0 && currentRow.Go.P95 != 0 {
+			if hasCurrent && baselineRow.Go.P95 != 0 && currentRow.Go.P95 != 0 {
 				entry.GoP95Before = baselineRow.Go.P95
 				entry.GoP95After = currentRow.Go.P95
 				entry.GoP95Delta = currentRow.Go.P95 - baselineRow.Go.P95
 			}
-			if baselineRow.C.P95 != 0 && currentRow.C.P95 != 0 {
+			if hasCurrent && baselineRow.C.P95 != 0 && currentRow.C.P95 != 0 {
 				entry.CP95Before = baselineRow.C.P95
 				entry.CP95After = currentRow.C.P95
 				entry.CP95Delta = currentRow.C.P95 - baselineRow.C.P95

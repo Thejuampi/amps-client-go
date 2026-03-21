@@ -118,13 +118,23 @@ func replay(path string, apply func([]byte) error, copyLine bool) (err error) {
 	reader := bufio.NewReader(file)
 	for {
 		line, readErr := reader.ReadBytes('\n')
-		if len(line) > 0 {
+		hasTerminator := len(line) > 0 && line[len(line)-1] == '\n'
+		if hasTerminator {
 			if line[len(line)-1] == '\n' {
 				line = line[:len(line)-1]
 			}
 			if len(line) > 0 && line[len(line)-1] == '\r' {
 				line = line[:len(line)-1]
 			}
+		}
+		if !hasTerminator {
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return nil
+				}
+				return readErr
+			}
+			continue
 		}
 		if len(line) == 0 {
 			if readErr != nil {
