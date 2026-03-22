@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/Thejuampi/amps-client-go/internal/ampsconfig"
@@ -75,7 +76,17 @@ func parseStartupOptions(args []string) (startupOptions, error) {
 
 		switch name {
 		case "sample-config":
-			options.Mode = startupModeSampleConfig
+			enabled := true
+			if hasValue {
+				parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+				if err != nil {
+					return startupOptions{}, fmt.Errorf("sample-config must be a boolean: %w", err)
+				}
+				enabled = parsed
+			}
+			if enabled {
+				options.Mode = startupModeSampleConfig
+			}
 		case "verify-config":
 			options.Mode = startupModeVerifyConfig
 			if !hasValue || strings.TrimSpace(value) == "" {

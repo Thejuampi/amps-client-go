@@ -11,6 +11,18 @@ type FixMessageBuilder struct {
 	capacity       int
 }
 
+func (fmb *FixMessageBuilder) ensureDefaults() {
+	if fmb.fieldSeparator == 0 {
+		fmb.fieldSeparator = '\x01'
+	}
+	if fmb.capacity <= 0 {
+		fmb.capacity = 1024
+	}
+	if fmb.message == nil {
+		fmb.message = make([]byte, 0, fmb.capacity)
+	}
+}
+
 func (fmb *FixMessageBuilder) checkIfLog10(tag int) int {
 	if tag < 0 {
 		return 0
@@ -25,6 +37,7 @@ func (fmb *FixMessageBuilder) checkIfLog10(tag int) int {
 }
 
 func (fmb *FixMessageBuilder) checkCapacity(bytesNeeded int) {
+	fmb.ensureDefaults()
 
 	if fmb.capacity-fmb.size < bytesNeeded {
 		for fmb.capacity-fmb.size < bytesNeeded {

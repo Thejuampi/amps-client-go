@@ -49,19 +49,22 @@ type conflationEntry struct {
 	isQueue     bool
 }
 
+var scheduleConflationTimer = func(cb *conflationBuffer, interval time.Duration) *time.Timer {
+	return time.AfterFunc(interval, cb.flush)
+}
+
 func newConflationBuffer(sub *subscription, interval time.Duration) *conflationBuffer {
-	cb := &conflationBuffer{
-		interval: interval,
-		pending:  make(map[string]*conflationEntry),
-		sub:      sub,
-	}
-	cb.timer = time.AfterFunc(interval, cb.flush)
-	return cb
+	return newConflationBufferWithKey(sub, interval, "")
 }
 
 func newConflationBufferWithKey(sub *subscription, interval time.Duration, conflationKey string) *conflationBuffer {
-	cb := newConflationBuffer(sub, interval)
-	cb.conflationKey = conflationKey
+	cb := &conflationBuffer{
+		interval:      interval,
+		pending:       make(map[string]*conflationEntry),
+		sub:           sub,
+		conflationKey: conflationKey,
+	}
+	cb.timer = scheduleConflationTimer(cb, interval)
 	return cb
 }
 

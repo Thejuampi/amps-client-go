@@ -31,6 +31,13 @@ func decompressFrame(data []byte) (_ []byte, err error) {
 	return io.ReadAll(r)
 }
 
+func decodeInboundFrame(frame []byte) ([]byte, error) {
+	if len(frame) > 1 && frame[0] == 'z' {
+		return decompressFrame(frame[1:])
+	}
+	return frame, nil
+}
+
 // ---------------------------------------------------------------------------
 // topicConfig — per-topic configuration, including message type.
 //
@@ -230,10 +237,11 @@ func handleConnection(conn net.Conn) {
 		stats.bytesIn.Add(uint64(frameLen) + 4)
 
 		// Decompress if frame starts with compression flag.
-		if frameLen > 1 && frame[0] == 'z' {
-			if decompressed, err := decompressFrame(frame[1:]); err == nil {
-				frame = decompressed
-			}
+		if decoded, err := decodeInboundFrame(frame); err != nil {
+			log.Printf("fakeamps: %s invalid compressed frame: %v", remoteAddr, err)
+			return
+		} else {
+			frame = decoded
 		}
 
 		if *flagLatency > 0 {

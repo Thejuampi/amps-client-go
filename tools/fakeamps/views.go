@@ -250,6 +250,13 @@ func mergeJoinRecords(left, right []byte, projection []string) []byte {
 		for _, p := range projection {
 			if v, ok := merged[p]; ok {
 				projected[p] = v
+				continue
+			}
+			if v, ok := merged["left_"+p]; ok {
+				projected["left_"+p] = v
+			}
+			if v, ok := merged["right_"+p]; ok {
+				projected["right_"+p] = v
 			}
 		}
 		return buildFlatJSON(projected)

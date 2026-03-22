@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -110,9 +111,11 @@ func (a *authStore) verifyChallengeResponse(username, challenge, response string
 	return suppliedPassword == expectedPassword
 }
 
+var authChallengeSeq atomic.Uint64
+
 func issueAuthChallengeNonce() string {
 	var now = time.Now().UTC().UnixNano()
-	var seq = globalBookmarkSeq.Add(1)
+	var seq = authChallengeSeq.Add(1)
 	var nowPart = strconv.FormatInt(now, 10)
 	var seqPart = strconv.FormatUint(seq, 10)
 	return nowPart + "-" + seqPart

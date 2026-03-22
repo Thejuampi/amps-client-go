@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"bytes"
+	"strings"
+)
 
 // ---------------------------------------------------------------------------
 // Delta merge — merge a delta JSON document into an existing base document.
@@ -50,6 +53,7 @@ func isJSONObject(raw string) bool {
 // This is the authoritative parser used by delta merge, projection, etc.
 func parseJSONFieldsRaw(data []byte) map[string]string {
 	fields := make(map[string]string)
+	data = bytes.TrimSpace(data)
 	n := len(data)
 	if n < 2 || data[0] != '{' {
 		return fields

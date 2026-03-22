@@ -279,12 +279,17 @@ func handleAdminJournal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	journal.mu.RLock()
+	high := globalBookmarkSeq.Load()
+	low := uint64(0)
+	if high > uint64(journal.count) {
+		low = high - uint64(journal.count)
+	}
 	jsonResponse(w, map[string]interface{}{
 		"enabled":   true,
 		"max_size":  journal.maxSize,
 		"count":     journal.count,
 		"head":      journal.head,
-		"seq_range": []uint64{globalBookmarkSeq.Load() - uint64(journal.count), globalBookmarkSeq.Load()},
+		"seq_range": []uint64{low, high},
 	})
 	journal.mu.RUnlock()
 }

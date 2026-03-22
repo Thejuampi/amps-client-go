@@ -1406,6 +1406,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	}
 
 	var path = strings.TrimPrefix(parsedURI.Path, "/")
+	client.messageType = nil
 	if path != "" {
 		if path == "amps" {
 			client.messageType = nil

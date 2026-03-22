@@ -173,7 +173,7 @@ func parseRateInterval(raw string) (time.Duration, error) {
 	}
 	var interval = time.Duration(float64(time.Second) / value)
 	if interval <= 0 {
-		return 0, nil
+		return 0, fmt.Errorf("rate exceeds timer resolution")
 	}
 	return interval, nil
 }

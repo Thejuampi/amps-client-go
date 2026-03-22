@@ -527,7 +527,7 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 		}
 	}
 
-	store.opsSinceCheckpoint = 0
+	atomic.StoreUint64(&store.opsSinceCheckpoint, 0)
 	store.lock.Unlock()
 	return nil
 }
@@ -550,8 +550,12 @@ func (store *FileBookmarkStore) bumpMutationAndMaybeCheckpoint() error {
 		return nil
 	}
 
+	interval := store.options.CheckpointInterval
+	if interval == 0 {
+		interval = defaultFileStoreOptions().CheckpointInterval
+	}
 	ops := atomic.AddUint64(&store.opsSinceCheckpoint, 1)
-	if store.options.UseWAL && ops >= store.options.CheckpointInterval {
+	if ops >= interval {
 		return store.saveCheckpoint()
 	}
 	return nil

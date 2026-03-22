@@ -373,13 +373,50 @@ func commandFromMessage(message *messageObject) *amps.Command {
 	return command
 }
 
+func messageCommandName(command int) string {
+	switch command {
+	case amps.CommandAck:
+		return "ack"
+	case amps.CommandDeltaPublish:
+		return "delta_publish"
+	case amps.CommandDeltaSubscribe:
+		return "delta_subscribe"
+	case amps.CommandFlush:
+		return "flush"
+	case amps.CommandGroupBegin:
+		return "group_begin"
+	case amps.CommandGroupEnd:
+		return "group_end"
+	case amps.CommandOOF:
+		return "oof"
+	case amps.CommandPublish:
+		return "p"
+	case amps.CommandSOW:
+		return "sow"
+	case amps.CommandSOWAndDeltaSubscribe:
+		return "sow_and_delta_subscribe"
+	case amps.CommandSOWAndSubscribe:
+		return "sow_and_subscribe"
+	case amps.CommandSOWDelete:
+		return "sow_delete"
+	case amps.CommandSubscribe:
+		return "subscribe"
+	case amps.CommandUnsubscribe:
+		return "unsubscribe"
+	default:
+		return ""
+	}
+}
+
 func messageFromAmps(message *amps.Message) Handle {
 	object := &messageObject{fields: make(map[string]string), data: nil}
 	if message == nil {
 		return newHandle(object)
 	}
 	if command, ok := message.Command(); ok {
-		object.fields["c"] = strconv.Itoa(command)
+		if name := messageCommandName(command); name != "" {
+			object.fields["c"] = name
+		}
 	}
 	if value, ok := message.CommandID(); ok {
 		object.fields["cid"] = value
@@ -395,6 +432,30 @@ func messageFromAmps(message *amps.Message) Handle {
 	}
 	if value, ok := message.QueryID(); ok {
 		object.fields["query_id"] = value
+	}
+	if value, ok := message.CorrelationID(); ok {
+		object.fields["x"] = value
+	}
+	if value, ok := message.Filter(); ok {
+		object.fields["filter"] = value
+	}
+	if value, ok := message.Options(); ok {
+		object.fields["opts"] = value
+	}
+	if value, ok := message.SowKey(); ok {
+		object.fields["k"] = value
+	}
+	if value, ok := message.SowKeys(); ok {
+		object.fields["sow_keys"] = value
+	}
+	if value, ok := message.Expiration(); ok {
+		object.fields["e"] = strconv.FormatUint(uint64(value), 10)
+	}
+	if value, ok := message.BatchSize(); ok {
+		object.fields["bs"] = strconv.FormatUint(uint64(value), 10)
+	}
+	if value, ok := message.AckType(); ok {
+		object.fields["a"] = strconv.Itoa(value)
 	}
 	if payload := message.Data(); payload != nil {
 		object.data = bytes.Clone(payload)

@@ -64,12 +64,16 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 	}
 
 	i := 1
+	foundEnd := false
 	for i < n {
 		// Skip whitespace / commas.
 		for i < n && (frame[i] == ' ' || frame[i] == ',' || frame[i] == '\n' || frame[i] == '\r' || frame[i] == '\t') {
 			i++
 		}
 		if i >= n || frame[i] == '}' {
+			if i < n && frame[i] == '}' {
+				foundEnd = true
+			}
 			i++
 			break
 		}
@@ -221,6 +225,9 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 		}
 	}
 
+	if !foundEnd {
+		return headerFields{}, nil
+	}
 	if i <= n {
 		return h, frame[i:]
 	}

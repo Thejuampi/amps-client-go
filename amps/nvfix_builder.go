@@ -10,7 +10,20 @@ type NvfixMessageBuilder struct {
 	capacity       int
 }
 
+func (nmb *NvfixMessageBuilder) ensureDefaults() {
+	if nmb.fieldSeparator == 0 {
+		nmb.fieldSeparator = '\x01'
+	}
+	if nmb.capacity <= 0 {
+		nmb.capacity = 1024
+	}
+	if nmb.message == nil {
+		nmb.message = make([]byte, 0, nmb.capacity)
+	}
+}
+
 func (nmb *NvfixMessageBuilder) checkCapacity(bytesNeeded int) {
+	nmb.ensureDefaults()
 
 	if nmb.capacity-nmb.size < bytesNeeded {
 		for nmb.capacity-nmb.size < bytesNeeded {

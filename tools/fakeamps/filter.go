@@ -816,18 +816,29 @@ func evaluateInstrFunction(filter string, payload []byte) bool {
 
 func evaluateSubstrFunction(filter string, payload []byte) bool {
 	rest := strings.TrimPrefix(strings.TrimPrefix(filter, "SUBSTR("), "substr(")
-	rest = strings.TrimSuffix(rest, ")")
-	rest = strings.TrimSpace(rest)
+	closeIdx := strings.Index(rest, ")")
+	if closeIdx < 0 {
+		return true
+	}
+	argsPart := strings.TrimSpace(rest[:closeIdx])
+	comparePart := strings.TrimSpace(rest[closeIdx+1:])
 
-	parts := strings.Split(rest, ",")
-	if len(parts) != 3 {
+	parts := strings.Split(argsPart, ",")
+	if len(parts) < 2 || len(parts) > 3 {
 		return true
 	}
 	fieldValue := extractNestedField(payload, strings.TrimSpace(parts[0]))
 	start, err1 := strconv.Atoi(strings.TrimSpace(parts[1]))
-	length, err2 := strconv.Atoi(strings.TrimSpace(parts[2]))
-	if err1 != nil || err2 != nil {
+	if err1 != nil {
 		return true
+	}
+	length := len(fieldValue) - start
+	if len(parts) == 3 {
+		var err2 error
+		length, err2 = strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err2 != nil {
+			return true
+		}
 	}
 	if start < 0 || start > len(fieldValue) {
 		return false
@@ -837,7 +848,13 @@ func evaluateSubstrFunction(filter string, payload []byte) bool {
 		end = len(fieldValue)
 	}
 	substr := fieldValue[start:end]
-	compareValue := stripQuotes(strings.TrimSpace(parts[2]))
+	if comparePart == "" {
+		return substr != ""
+	}
+	if eqIdx := strings.Index(comparePart, "="); eqIdx >= 0 {
+		comparePart = comparePart[eqIdx+1:]
+	}
+	compareValue := stripQuotes(strings.TrimSpace(comparePart))
 	return substr == compareValue
 }
 
