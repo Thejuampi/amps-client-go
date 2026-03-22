@@ -30,9 +30,30 @@ type Command struct {
 	timeout int
 }
 
+func commandHeader(com *Command) *_Header {
+	if com == nil {
+		return nil
+	}
+	return com.header
+}
+
+func ensureCommandHeader(com *Command) *_Header {
+	if com == nil {
+		return nil
+	}
+	if com.header == nil {
+		com.header = newHeader()
+	}
+	return com.header
+}
+
 func (com *Command) reset() {
-	if com.header != nil {
-		com.header.reset()
+	if com == nil {
+		return
+	}
+	var header = ensureCommandHeader(com)
+	if header != nil {
+		header.reset()
 	}
 	com.data = nil
 	com.timeout = 0
@@ -222,8 +243,9 @@ func commandIntToString(command int) string {
 
 // AckType executes the exported acktype operation.
 func (com *Command) AckType() (int, bool) {
-	if com.header.ackType != nil {
-		return *com.header.ackType, true
+	var header = commandHeader(com)
+	if header != nil && header.ackType != nil {
+		return *header.ackType, true
 	}
 	return AckTypeNone, false
 }
@@ -241,20 +263,29 @@ func (com *Command) GetAckTypeEnum() int {
 
 // BatchSize executes the exported batchsize operation.
 func (com *Command) BatchSize() (uint, bool) {
-	if com.header.batchSize != nil {
-		return *com.header.batchSize, true
+	var header = commandHeader(com)
+	if header != nil && header.batchSize != nil {
+		return *header.batchSize, true
 	}
 	return 0, false
 }
 
 // Bookmark executes the exported bookmark operation.
 func (com *Command) Bookmark() (string, bool) {
-	return string(com.header.bookmark), com.header.bookmark != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.bookmark), header.bookmark != nil
 }
 
 // Command executes the exported command operation.
 func (com *Command) Command() (string, bool) {
-	return commandIntToString(com.header.command), com.header.command >= 0 && com.header.command < CommandUnknown
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return commandIntToString(header.command), header.command >= 0 && header.command < CommandUnknown
 }
 
 // GetCommandEnum returns the command enum value.
@@ -267,12 +298,20 @@ func (com *Command) GetCommandEnum() int {
 
 // CommandID executes the exported commandid operation.
 func (com *Command) CommandID() (string, bool) {
-	return string(com.header.commandID), com.header.commandID != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.commandID), header.commandID != nil
 }
 
 // CorrelationID executes the exported correlationid operation.
 func (com *Command) CorrelationID() (string, bool) {
-	return string(com.header.correlationID), com.header.correlationID != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.correlationID), header.correlationID != nil
 }
 
 // Data executes the exported data operation.
@@ -280,68 +319,111 @@ func (com *Command) Data() []byte { return com.data }
 
 // Expiration executes the exported expiration operation.
 func (com *Command) Expiration() (uint, bool) {
-	if com.header.expiration != nil {
-		return *com.header.expiration, true
+	var header = commandHeader(com)
+	if header != nil && header.expiration != nil {
+		return *header.expiration, true
 	}
 	return 0, false
 }
 
 // Filter executes the exported filter operation.
 func (com *Command) Filter() (string, bool) {
-	return string(com.header.filter), com.header.filter != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.filter), header.filter != nil
 }
 
 // Options executes the exported options operation.
 func (com *Command) Options() (string, bool) {
-	return string(com.header.options), com.header.options != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.options), header.options != nil
 }
 
 // OrderBy executes the exported orderby operation.
 func (com *Command) OrderBy() (string, bool) {
-	return string(com.header.orderBy), com.header.orderBy != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.orderBy), header.orderBy != nil
 }
 
 // QueryID executes the exported queryid operation.
 func (com *Command) QueryID() (string, bool) {
-	return string(com.header.queryID), com.header.queryID != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.queryID), header.queryID != nil
 }
 
 // SequenceID executes the exported sequenceid operation.
 func (com *Command) SequenceID() (uint64, bool) {
-	if com.header.sequenceID != nil {
-		return *com.header.sequenceID, true
+	var header = commandHeader(com)
+	if header != nil && header.sequenceID != nil {
+		return *header.sequenceID, true
 	}
 	return 0, false
 }
 
 // SowKey executes the exported sowkey operation.
 func (com *Command) SowKey() (string, bool) {
-	return string(com.header.sowKey), com.header.sowKey != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.sowKey), header.sowKey != nil
 }
 
 // SowKeys executes the exported sowkeys operation.
 func (com *Command) SowKeys() (string, bool) {
-	return string(com.header.sowKeys), com.header.sowKeys != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.sowKeys), header.sowKeys != nil
 }
 
 // SubID executes the exported subid operation.
-func (com *Command) SubID() (string, bool) { return string(com.header.subID), com.header.subID != nil }
+func (com *Command) SubID() (string, bool) {
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.subID), header.subID != nil
+}
 
 // SubIDs executes the exported subids operation.
 func (com *Command) SubIDs() (string, bool) {
-	return string(com.header.subIDs), com.header.subIDs != nil
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.subIDs), header.subIDs != nil
 }
 
 // TopN executes the exported topn operation.
 func (com *Command) TopN() (uint, bool) {
-	if com.header.topN != nil {
-		return *com.header.topN, true
+	var header = commandHeader(com)
+	if header != nil && header.topN != nil {
+		return *header.topN, true
 	}
 	return 0, false
 }
 
 // Topic executes the exported topic operation.
-func (com *Command) Topic() (string, bool) { return string(com.header.topic), com.header.topic != nil }
+func (com *Command) Topic() (string, bool) {
+	var header = commandHeader(com)
+	if header == nil {
+		return "", false
+	}
+	return string(header.topic), header.topic != nil
+}
 
 // GetMessage returns a message representation of this command.
 func (com *Command) GetMessage() *Message {
@@ -366,6 +448,9 @@ func (com *Command) GetTimeout() int {
 
 // SetTimeout sets the command timeout in milliseconds.
 func (com *Command) SetTimeout(timeout int) *Command {
+	if com == nil {
+		return nil
+	}
 	if timeout < 0 {
 		timeout = 0
 	}
@@ -387,7 +472,7 @@ func (com *Command) HasStatsAck() bool {
 
 // IsSow reports whether command is a SOW family command.
 func (com *Command) IsSow() bool {
-	switch com.header.command {
+	switch com.GetCommandEnum() {
 	case CommandSOW, CommandSOWAndSubscribe, CommandSOWAndDeltaSubscribe:
 		return true
 	default:
@@ -397,7 +482,7 @@ func (com *Command) IsSow() bool {
 
 // IsSubscribe reports whether command is a subscribe family command.
 func (com *Command) IsSubscribe() bool {
-	switch com.header.command {
+	switch com.GetCommandEnum() {
 	case CommandSubscribe, CommandDeltaSubscribe, CommandSOWAndSubscribe, CommandSOWAndDeltaSubscribe:
 		return true
 	default:
@@ -407,7 +492,7 @@ func (com *Command) IsSubscribe() bool {
 
 // NeedsSequenceNumber reports whether command participates in publish sequence tracking.
 func (com *Command) NeedsSequenceNumber() bool {
-	switch com.header.command {
+	switch com.GetCommandEnum() {
 	case CommandPublish, CommandDeltaPublish, CommandSOWDelete:
 		return true
 	default:
@@ -417,18 +502,27 @@ func (com *Command) NeedsSequenceNumber() bool {
 
 // Init reinitializes this command with the provided command name.
 func (com *Command) Init(commandName string) *Command {
+	if com == nil {
+		return nil
+	}
 	com.reset()
 	return com.SetCommand(commandName)
 }
 
 // Reset clears command header and payload state.
 func (com *Command) Reset() *Command {
+	if com == nil {
+		return nil
+	}
 	com.reset()
 	return com
 }
 
 // SetIds updates command, query, and subscription identifiers.
 func (com *Command) SetIds(commandID string, queryID string, subID string) *Command {
+	if com == nil {
+		return nil
+	}
 	com.SetCommandID(commandID)
 	com.SetQueryID(queryID)
 	com.SetSubID(subID)
@@ -437,22 +531,30 @@ func (com *Command) SetIds(commandID string, queryID string, subID string) *Comm
 
 // SetAckType sets ack type on the receiver.
 func (com *Command) SetAckType(ackType int) *Command {
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
 	if ackType < AckTypeNone ||
 		ackType > (AckTypeReceived|AckTypeParsed|AckTypeProcessed|AckTypePersisted|AckTypeCompleted|AckTypeStats) {
-		com.header.ackType = nil
+		header.ackType = nil
 	} else {
-		com.header.ackType = &ackType
+		header.ackType = &ackType
 	}
 	return com
 }
 
 // AddAckType adds ack type behavior on the receiver.
 func (com *Command) AddAckType(ackType int) *Command {
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
 	if ackType > AckTypeNone && ackType <= AckTypeStats {
-		if com.header.ackType == nil {
-			com.header.ackType = &ackType
+		if header.ackType == nil {
+			header.ackType = &ackType
 		} else {
-			*com.header.ackType |= ackType
+			*header.ackType |= ackType
 		}
 	}
 
@@ -461,10 +563,14 @@ func (com *Command) AddAckType(ackType int) *Command {
 
 // SetBatchSize sets batch size on the receiver.
 func (com *Command) SetBatchSize(batchSize uint) *Command {
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
 	if batchSize == 0 {
-		com.header.batchSize = nil
+		header.batchSize = nil
 	} else {
-		com.header.batchSize = &batchSize
+		header.batchSize = &batchSize
 	}
 	return com
 }
@@ -479,16 +585,24 @@ func assignStringBytes(destination *[]byte, value string) {
 
 // SetBookmark sets bookmark on the receiver.
 func (com *Command) SetBookmark(bookmark string) *Command {
-	assignStringBytes(&com.header.bookmark, bookmark)
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.bookmark, bookmark)
 	return com
 }
 
 // SetCommand sets command on the receiver.
 func (com *Command) SetCommand(command string) *Command {
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
 	if len(command) == 0 {
-		com.header.command = CommandUnknown
+		header.command = CommandUnknown
 	} else {
-		com.header.command = commandStringToInt(command)
+		header.command = commandStringToInt(command)
 	}
 
 	return com
@@ -496,119 +610,184 @@ func (com *Command) SetCommand(command string) *Command {
 
 // SetCommandEnum sets command enum on the receiver.
 func (com *Command) SetCommandEnum(command int) *Command {
-	if com == nil || com.header == nil {
-		return com
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
 	}
-	com.header.command = command
+	header.command = command
 	return com
 }
 
 // SetCommandID sets command id on the receiver.
 func (com *Command) SetCommandID(commandID string) *Command {
-	assignStringBytes(&com.header.commandID, commandID)
-	com.header.strictParityEscapeState = 0
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.commandID, commandID)
+	header.strictParityEscapeState = 0
 	return com
 }
 
 // SetCorrelationID sets correlation id on the receiver.
 func (com *Command) SetCorrelationID(correlationID string) *Command {
-	assignStringBytes(&com.header.correlationID, correlationID)
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.correlationID, correlationID)
 	return com
 }
 
 // SetData sets data on the receiver.
-func (com *Command) SetData(data []byte) *Command { com.data = data; return com }
+func (com *Command) SetData(data []byte) *Command {
+	if com == nil {
+		return nil
+	}
+	com.data = data
+	return com
+}
 
 // SetExpiration sets expiration on the receiver.
 func (com *Command) SetExpiration(expiration uint) *Command {
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
 	if expiration == 0 {
-		com.header.expiration = nil
+		header.expiration = nil
 	} else {
-		com.header.expiration = &expiration
+		header.expiration = &expiration
 	}
 	return com
 }
 
 // SetFilter sets filter on the receiver.
 func (com *Command) SetFilter(filter string) *Command {
-	assignStringBytes(&com.header.filter, filter)
-	com.header.strictParityEscapeState = 0
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.filter, filter)
+	header.strictParityEscapeState = 0
 	return com
 }
 
 // SetOptions sets options on the receiver.
 func (com *Command) SetOptions(options string) *Command {
-	assignStringBytes(&com.header.options, options)
-	com.header.strictParityEscapeState = 0
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.options, options)
+	header.strictParityEscapeState = 0
 	return com
 }
 
 // SetOrderBy sets order by on the receiver.
 func (com *Command) SetOrderBy(orderBy string) *Command {
-	assignStringBytes(&com.header.orderBy, orderBy)
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.orderBy, orderBy)
 	return com
 }
 
 // SetQueryID sets query id on the receiver.
 func (com *Command) SetQueryID(queryID string) *Command {
-	assignStringBytes(&com.header.queryID, queryID)
-	com.header.strictParityEscapeState = 0
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.queryID, queryID)
+	header.strictParityEscapeState = 0
 	return com
 }
 
 // SetSequenceID sets sequence id on the receiver.
 func (com *Command) SetSequenceID(sequenceID uint64) *Command {
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
 	if sequenceID == 0 {
-		com.header.sequenceID = nil
+		header.sequenceID = nil
 	} else {
-		com.header.sequenceID = &sequenceID
+		header.sequenceID = &sequenceID
 	}
 	return com
 }
 
 // SetSowKey sets sow key on the receiver.
 func (com *Command) SetSowKey(sowKey string) *Command {
-	assignStringBytes(&com.header.sowKey, sowKey)
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.sowKey, sowKey)
 	return com
 }
 
 // SetSowKeys sets sow keys on the receiver.
 func (com *Command) SetSowKeys(sowKeys string) *Command {
-	assignStringBytes(&com.header.sowKeys, sowKeys)
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.sowKeys, sowKeys)
 	return com
 }
 
 // SetSubID sets sub id on the receiver.
 func (com *Command) SetSubID(subID string) *Command {
-	assignStringBytes(&com.header.subID, subID)
-	com.header.strictParityEscapeState = 0
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.subID, subID)
+	header.strictParityEscapeState = 0
 	return com
 }
 
 // SetSubIDs sets sub ids on the receiver.
 func (com *Command) SetSubIDs(subIDs string) *Command {
-	assignStringBytes(&com.header.subIDs, subIDs)
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.subIDs, subIDs)
 	return com
 }
 
 // SetTopN sets top n on the receiver.
 func (com *Command) SetTopN(topN uint) *Command {
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
 	if topN == 0 {
-		com.header.topN = nil
+		header.topN = nil
 	} else {
-		com.header.topN = &topN
+		header.topN = &topN
 	}
 	return com
 }
 
 // SetTopic sets topic on the receiver.
 func (com *Command) SetTopic(topic string) *Command {
-	assignStringBytes(&com.header.topic, topic)
-	com.header.strictParityEscapeState = 0
+	var header = ensureCommandHeader(com)
+	if header == nil {
+		return nil
+	}
+	assignStringBytes(&header.topic, topic)
+	header.strictParityEscapeState = 0
 	return com
 }
 
 // NewCommand returns a new Command.
 func NewCommand(commandName string) *Command {
-	return &Command{header: &_Header{command: commandStringToInt(commandName)}}
+	var header = newHeader()
+	header.command = commandStringToInt(commandName)
+	return &Command{header: header}
 }

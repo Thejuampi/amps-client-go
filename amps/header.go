@@ -60,6 +60,12 @@ type _Header struct {
 	strictParityEscapeState uint8
 }
 
+func newHeader() *_Header {
+	var header = new(_Header)
+	header.command = CommandUnknown
+	return header
+}
+
 func (header *_Header) reset() {
 	// Bulk zero: compiles to a single runtime.memclr rather than 25+ individual
 	// store instructions, measurably faster on the message-receive hot path.

@@ -29,6 +29,23 @@ type Message struct {
 	disowned                bool
 }
 
+func messageHeader(msg *Message) *_Header {
+	if msg == nil {
+		return nil
+	}
+	return msg.header
+}
+
+func ensureMessageHeader(msg *Message) *_Header {
+	if msg == nil {
+		return nil
+	}
+	if msg.header == nil {
+		msg.header = newHeader()
+	}
+	return msg.header
+}
+
 // Constants in this block define protocol and client behavior values.
 const (
 	inHeader = iota
@@ -39,8 +56,9 @@ const (
 )
 
 func (msg *Message) reset() {
-	if msg.header != nil {
-		msg.header.reset()
+	var header = ensureMessageHeader(msg)
+	if header != nil {
+		header.reset()
 	}
 	msg.data = nil
 	msg.ignoreAutoAck = false
@@ -53,8 +71,9 @@ func (msg *Message) reset() {
 }
 
 func (msg *Message) resetForParse() {
-	if msg.header != nil {
-		msg.header.reset()
+	var header = ensureMessageHeader(msg)
+	if header != nil {
+		header.reset()
 	}
 	msg.data = nil
 	msg.ignoreAutoAck = false
@@ -451,7 +470,12 @@ func isJSONWhitespace(character byte) bool {
 
 // Copy executes the exported copy operation.
 func (msg *Message) Copy() *Message {
-	message := &Message{header: new(_Header)}
+	if msg == nil {
+		return nil
+	}
+
+	var message = &Message{header: newHeader()}
+	var header = messageHeader(msg)
 	message.client = msg.client
 	message.valid = msg.valid
 	message.ignoreAutoAck = msg.ignoreAutoAck
@@ -461,131 +485,139 @@ func (msg *Message) Copy() *Message {
 	message.rawTransmissionUnixNano = msg.rawTransmissionUnixNano
 	message.disowned = msg.disowned
 
-	message.header.command = msg.header.command
+	if header == nil {
+		if msg.data != nil {
+			message.data = make([]byte, len(msg.data))
+			copy(message.data, msg.data)
+		}
+		return message
+	}
+
+	message.header.command = header.command
 	if msg.data != nil {
 		message.data = make([]byte, len(msg.data))
 		copy(message.data, msg.data)
 	}
 
-	if msg.header.ackType != nil {
-		ackType := *msg.header.ackType
+	if header.ackType != nil {
+		ackType := *header.ackType
 		message.header.ackType = &ackType
 	}
-	if msg.header.batchSize != nil {
-		batchSize := *msg.header.batchSize
+	if header.batchSize != nil {
+		batchSize := *header.batchSize
 		message.header.batchSize = &batchSize
 	}
-	if msg.header.bookmark != nil {
-		message.header.bookmark = make([]byte, len(msg.header.bookmark))
-		copy(message.header.bookmark, msg.header.bookmark)
+	if header.bookmark != nil {
+		message.header.bookmark = make([]byte, len(header.bookmark))
+		copy(message.header.bookmark, header.bookmark)
 	}
-	if msg.header.commandID != nil {
-		message.header.commandID = make([]byte, len(msg.header.commandID))
-		copy(message.header.commandID, msg.header.commandID)
+	if header.commandID != nil {
+		message.header.commandID = make([]byte, len(header.commandID))
+		copy(message.header.commandID, header.commandID)
 	}
-	if msg.header.correlationID != nil {
-		message.header.correlationID = make([]byte, len(msg.header.correlationID))
-		copy(message.header.correlationID, msg.header.correlationID)
+	if header.correlationID != nil {
+		message.header.correlationID = make([]byte, len(header.correlationID))
+		copy(message.header.correlationID, header.correlationID)
 	}
-	if msg.header.expiration != nil {
-		expiration := *msg.header.expiration
+	if header.expiration != nil {
+		expiration := *header.expiration
 		message.header.expiration = &expiration
 	}
-	if msg.header.filter != nil {
-		message.header.filter = make([]byte, len(msg.header.filter))
-		copy(message.header.filter, msg.header.filter)
+	if header.filter != nil {
+		message.header.filter = make([]byte, len(header.filter))
+		copy(message.header.filter, header.filter)
 	}
-	if msg.header.groupSequenceNumber != nil {
-		gseq := *msg.header.groupSequenceNumber
+	if header.groupSequenceNumber != nil {
+		gseq := *header.groupSequenceNumber
 		message.header.groupSequenceNumber = &gseq
 	}
-	if msg.header.leasePeriod != nil {
-		message.header.leasePeriod = make([]byte, len(msg.header.leasePeriod))
-		copy(message.header.leasePeriod, msg.header.leasePeriod)
+	if header.leasePeriod != nil {
+		message.header.leasePeriod = make([]byte, len(header.leasePeriod))
+		copy(message.header.leasePeriod, header.leasePeriod)
 	}
-	if msg.header.matches != nil {
-		matches := *msg.header.matches
+	if header.matches != nil {
+		matches := *header.matches
 		message.header.matches = &matches
 	}
-	if msg.header.messageLength != nil {
-		msgLen := *msg.header.messageLength
+	if header.messageLength != nil {
+		msgLen := *header.messageLength
 		message.header.messageLength = &msgLen
 	}
-	if msg.header.options != nil {
-		message.header.options = make([]byte, len(msg.header.options))
-		copy(message.header.options, msg.header.options)
+	if header.options != nil {
+		message.header.options = make([]byte, len(header.options))
+		copy(message.header.options, header.options)
 	}
-	if msg.header.orderBy != nil {
-		message.header.orderBy = make([]byte, len(msg.header.orderBy))
-		copy(message.header.orderBy, msg.header.orderBy)
+	if header.orderBy != nil {
+		message.header.orderBy = make([]byte, len(header.orderBy))
+		copy(message.header.orderBy, header.orderBy)
 	}
-	if msg.header.queryID != nil {
-		message.header.queryID = make([]byte, len(msg.header.queryID))
-		copy(message.header.queryID, msg.header.queryID)
+	if header.queryID != nil {
+		message.header.queryID = make([]byte, len(header.queryID))
+		copy(message.header.queryID, header.queryID)
 	}
-	if msg.header.reason != nil {
-		message.header.reason = make([]byte, len(msg.header.reason))
-		copy(message.header.reason, msg.header.reason)
+	if header.reason != nil {
+		message.header.reason = make([]byte, len(header.reason))
+		copy(message.header.reason, header.reason)
 	}
-	if msg.header.recordsDeleted != nil {
-		rD := *msg.header.recordsDeleted
+	if header.recordsDeleted != nil {
+		rD := *header.recordsDeleted
 		message.header.recordsDeleted = &rD
 	}
-	if msg.header.recordsInserted != nil {
-		rI := *msg.header.recordsInserted
+	if header.recordsInserted != nil {
+		rI := *header.recordsInserted
 		message.header.recordsInserted = &rI
 	}
-	if msg.header.recordsReturned != nil {
-		rR := *msg.header.recordsReturned
+	if header.recordsReturned != nil {
+		rR := *header.recordsReturned
 		message.header.recordsReturned = &rR
 	}
-	if msg.header.recordsUpdated != nil {
-		rU := *msg.header.recordsUpdated
+	if header.recordsUpdated != nil {
+		rU := *header.recordsUpdated
 		message.header.recordsUpdated = &rU
 	}
-	if msg.header.sequenceID != nil {
-		sequenceID := *msg.header.sequenceID
+	if header.sequenceID != nil {
+		sequenceID := *header.sequenceID
 		message.header.sequenceID = &sequenceID
 	}
-	if msg.header.sowKey != nil {
-		message.header.sowKey = make([]byte, len(msg.header.sowKey))
-		copy(message.header.sowKey, msg.header.sowKey)
+	if header.sowKey != nil {
+		message.header.sowKey = make([]byte, len(header.sowKey))
+		copy(message.header.sowKey, header.sowKey)
 	}
-	if msg.header.sowKeys != nil {
-		message.header.sowKeys = make([]byte, len(msg.header.sowKeys))
-		copy(message.header.sowKeys, msg.header.sowKeys)
+	if header.sowKeys != nil {
+		message.header.sowKeys = make([]byte, len(header.sowKeys))
+		copy(message.header.sowKeys, header.sowKeys)
 	}
-	if msg.header.status != nil {
-		message.header.status = make([]byte, len(msg.header.status))
-		copy(message.header.status, msg.header.status)
+	if header.status != nil {
+		message.header.status = make([]byte, len(header.status))
+		copy(message.header.status, header.status)
 	}
-	if msg.header.subID != nil {
-		message.header.subID = make([]byte, len(msg.header.subID))
-		copy(message.header.subID, msg.header.subID)
+	if header.subID != nil {
+		message.header.subID = make([]byte, len(header.subID))
+		copy(message.header.subID, header.subID)
 	}
-	if msg.header.subIDs != nil {
-		message.header.subIDs = make([]byte, len(msg.header.subIDs))
-		copy(message.header.subIDs, msg.header.subIDs)
+	if header.subIDs != nil {
+		message.header.subIDs = make([]byte, len(header.subIDs))
+		copy(message.header.subIDs, header.subIDs)
 	}
-	if msg.header.timestamp != nil {
-		message.header.timestamp = make([]byte, len(msg.header.timestamp))
-		copy(message.header.timestamp, msg.header.timestamp)
+	if header.timestamp != nil {
+		message.header.timestamp = make([]byte, len(header.timestamp))
+		copy(message.header.timestamp, header.timestamp)
 	}
-	if msg.header.topN != nil {
-		topN := *msg.header.topN
+	if header.topN != nil {
+		topN := *header.topN
 		message.header.topN = &topN
 	}
-	if msg.header.topic != nil {
-		message.header.topic = make([]byte, len(msg.header.topic))
-		copy(message.header.topic, msg.header.topic)
+	if header.topic != nil {
+		message.header.topic = make([]byte, len(header.topic))
+		copy(message.header.topic, header.topic)
 	}
-	if msg.header.topicMatches != nil {
-		tM := *msg.header.topicMatches
+	if header.topicMatches != nil {
+		tM := *header.topicMatches
 		message.header.topicMatches = &tM
 	}
-	if msg.header.userID != nil {
-		message.header.userID = make([]byte, len(msg.header.userID))
-		copy(message.header.userID, msg.header.userID)
+	if header.userID != nil {
+		message.header.userID = make([]byte, len(header.userID))
+		copy(message.header.userID, header.userID)
 	}
 
 	return message
@@ -593,8 +625,9 @@ func (msg *Message) Copy() *Message {
 
 // AckType executes the exported acktype operation.
 func (msg *Message) AckType() (int, bool) {
-	if msg.header.ackType != nil {
-		return *msg.header.ackType, true
+	var header = messageHeader(msg)
+	if header != nil && header.ackType != nil {
+		return *header.ackType, true
 	}
 	return AckTypeNone, false
 }
@@ -607,54 +640,76 @@ func (msg *Message) GetAckTypeEnum() int {
 
 // SetAckTypeEnum sets ack type bitset.
 func (msg *Message) SetAckTypeEnum(ackType int) *Message {
-	if msg == nil {
+	var header = ensureMessageHeader(msg)
+	if header == nil {
 		return nil
 	}
-	msg.header.ackType = &ackType
+	header.ackType = &ackType
 	return msg
 }
 
 // BatchSize executes the exported batchsize operation.
 func (msg *Message) BatchSize() (uint, bool) {
-	if msg.header.batchSize != nil {
-		return *msg.header.batchSize, true
+	var header = messageHeader(msg)
+	if header != nil && header.batchSize != nil {
+		return *header.batchSize, true
 	}
 	return 0, false
 }
 
 // Bookmark executes the exported bookmark operation.
 func (msg *Message) Bookmark() (string, bool) {
-	return string(msg.header.bookmark), msg.header.bookmark != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.bookmark), header.bookmark != nil
 }
 
 // Command executes the exported command operation.
-func (msg *Message) Command() (int, bool) { return msg.header.command, true }
+func (msg *Message) Command() (int, bool) {
+	var header = messageHeader(msg)
+	if header == nil {
+		return CommandUnknown, false
+	}
+	return header.command, header.command >= 0 && header.command < CommandUnknown
+}
 
 // GetCommandEnum returns command enum.
 func (msg *Message) GetCommandEnum() int {
-	if msg == nil {
+	var header = messageHeader(msg)
+	if header == nil {
 		return CommandUnknown
 	}
-	return msg.header.command
+	return header.command
 }
 
 // SetCommandEnum sets command enum.
 func (msg *Message) SetCommandEnum(command int) *Message {
-	if msg == nil {
+	var header = ensureMessageHeader(msg)
+	if header == nil {
 		return nil
 	}
-	msg.header.command = command
+	header.command = command
 	return msg
 }
 
 // CommandID executes the exported commandid operation.
 func (msg *Message) CommandID() (string, bool) {
-	return string(msg.header.commandID), msg.header.commandID != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.commandID), header.commandID != nil
 }
 
 // CorrelationID executes the exported correlationid operation.
 func (msg *Message) CorrelationID() (string, bool) {
-	return string(msg.header.correlationID), msg.header.correlationID != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.correlationID), header.correlationID != nil
 }
 
 // Data executes the exported data operation.
@@ -671,156 +726,227 @@ func (msg *Message) SetData(data []byte) *Message {
 
 // Expiration executes the exported expiration operation.
 func (msg *Message) Expiration() (uint, bool) {
-	if msg.header.expiration != nil {
-		return *msg.header.expiration, true
+	var header = messageHeader(msg)
+	if header != nil && header.expiration != nil {
+		return *header.expiration, true
 	}
 	return 0, false
 }
 
 // Filter executes the exported filter operation.
 func (msg *Message) Filter() (string, bool) {
-	return string(msg.header.filter), msg.header.filter != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.filter), header.filter != nil
 }
 
 // GroupSequenceNumber executes the exported groupsequencenumber operation.
 func (msg *Message) GroupSequenceNumber() (uint, bool) {
-	if msg.header.groupSequenceNumber != nil {
-		return *msg.header.groupSequenceNumber, true
+	var header = messageHeader(msg)
+	if header != nil && header.groupSequenceNumber != nil {
+		return *header.groupSequenceNumber, true
 	}
 	return 0, false
 }
 
 // LeasePeriod executes the exported leaseperiod operation.
 func (msg *Message) LeasePeriod() (string, bool) {
-	return string(msg.header.leasePeriod), msg.header.leasePeriod != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.leasePeriod), header.leasePeriod != nil
 }
 
 // Matches executes the exported matches operation.
 func (msg *Message) Matches() (uint, bool) {
-	if msg.header.matches != nil {
-		return *msg.header.matches, true
+	var header = messageHeader(msg)
+	if header != nil && header.matches != nil {
+		return *header.matches, true
 	}
 	return 0, false
 }
 
 // MessageLength executes the exported messagelength operation.
 func (msg *Message) MessageLength() (uint, bool) {
-	if msg.header.messageLength != nil {
-		return *msg.header.messageLength, true
+	var header = messageHeader(msg)
+	if header != nil && header.messageLength != nil {
+		return *header.messageLength, true
 	}
 	return 0, false
 }
 
 // Options executes the exported options operation.
 func (msg *Message) Options() (string, bool) {
-	return string(msg.header.options), msg.header.options != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.options), header.options != nil
 }
 
 // OrderBy executes the exported orderby operation.
 func (msg *Message) OrderBy() (string, bool) {
-	return string(msg.header.orderBy), msg.header.orderBy != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.orderBy), header.orderBy != nil
 }
 
 // QueryID executes the exported queryid operation.
 func (msg *Message) QueryID() (string, bool) {
-	return string(msg.header.queryID), msg.header.queryID != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.queryID), header.queryID != nil
 }
 
 // Reason executes the exported reason operation.
 func (msg *Message) Reason() (string, bool) {
-	return string(msg.header.reason), msg.header.reason != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.reason), header.reason != nil
 }
 
 // RecordsDeleted executes the exported recordsdeleted operation.
 func (msg *Message) RecordsDeleted() (uint, bool) {
-	if msg.header.recordsDeleted != nil {
-		return *msg.header.recordsDeleted, true
+	var header = messageHeader(msg)
+	if header != nil && header.recordsDeleted != nil {
+		return *header.recordsDeleted, true
 	}
 	return 0, false
 }
 
 // RecordsInserted executes the exported recordsinserted operation.
 func (msg *Message) RecordsInserted() (uint, bool) {
-	if msg.header.recordsInserted != nil {
-		return *msg.header.recordsInserted, true
+	var header = messageHeader(msg)
+	if header != nil && header.recordsInserted != nil {
+		return *header.recordsInserted, true
 	}
 	return 0, false
 }
 
 // RecordsReturned executes the exported recordsreturned operation.
 func (msg *Message) RecordsReturned() (uint, bool) {
-	if msg.header.recordsReturned != nil {
-		return *msg.header.recordsReturned, true
+	var header = messageHeader(msg)
+	if header != nil && header.recordsReturned != nil {
+		return *header.recordsReturned, true
 	}
 	return 0, false
 }
 
 // RecordsUpdated executes the exported recordsupdated operation.
 func (msg *Message) RecordsUpdated() (uint, bool) {
-	if msg.header.recordsUpdated != nil {
-		return *msg.header.recordsUpdated, true
+	var header = messageHeader(msg)
+	if header != nil && header.recordsUpdated != nil {
+		return *header.recordsUpdated, true
 	}
 	return 0, false
 }
 
 // SequenceID executes the exported sequenceid operation.
 func (msg *Message) SequenceID() (uint64, bool) {
-	if msg.header.sequenceID != nil {
-		return *msg.header.sequenceID, true
+	var header = messageHeader(msg)
+	if header != nil && header.sequenceID != nil {
+		return *header.sequenceID, true
 	}
 	return 0, false
 }
 
 // SowKey executes the exported sowkey operation.
 func (msg *Message) SowKey() (string, bool) {
-	return string(msg.header.sowKey), msg.header.sowKey != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.sowKey), header.sowKey != nil
 }
 
 // SowKeys executes the exported sowkeys operation.
 func (msg *Message) SowKeys() (string, bool) {
-	return string(msg.header.sowKeys), msg.header.sowKeys != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.sowKeys), header.sowKeys != nil
 }
 
 // Status executes the exported status operation.
 func (msg *Message) Status() (string, bool) {
-	return string(msg.header.status), msg.header.status != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.status), header.status != nil
 }
 
 // SubID executes the exported subid operation.
-func (msg *Message) SubID() (string, bool) { return string(msg.header.subID), msg.header.subID != nil }
+func (msg *Message) SubID() (string, bool) {
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.subID), header.subID != nil
+}
 
 // SubIDs executes the exported subids operation.
 func (msg *Message) SubIDs() (string, bool) {
-	return string(msg.header.subIDs), msg.header.subIDs != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.subIDs), header.subIDs != nil
 }
 
 // Timestamp executes the exported timestamp operation.
 func (msg *Message) Timestamp() (string, bool) {
-	return string(msg.header.timestamp), msg.header.timestamp != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.timestamp), header.timestamp != nil
 }
 
 // TopN executes the exported topn operation.
 func (msg *Message) TopN() (uint, bool) {
-	if msg.header.topN != nil {
-		return *msg.header.topN, true
+	var header = messageHeader(msg)
+	if header != nil && header.topN != nil {
+		return *header.topN, true
 	}
 	return 0, false
 }
 
 // Topic executes the exported topic operation.
-func (msg *Message) Topic() (string, bool) { return string(msg.header.topic), msg.header.topic != nil }
+func (msg *Message) Topic() (string, bool) {
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.topic), header.topic != nil
+}
 
 // TopicMatches executes the exported topicmatches operation.
 func (msg *Message) TopicMatches() (uint, bool) {
-	if msg.header.topicMatches != nil {
-		return *msg.header.topicMatches, true
+	var header = messageHeader(msg)
+	if header != nil && header.topicMatches != nil {
+		return *header.topicMatches, true
 	}
 	return 0, false
 }
 
 // UserID executes the exported userid operation.
 func (msg *Message) UserID() (string, bool) {
-	return string(msg.header.userID), msg.header.userID != nil
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.userID), header.userID != nil
 }
 
 // Ack acknowledges the message using topic and bookmark fields.

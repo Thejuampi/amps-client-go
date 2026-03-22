@@ -175,7 +175,7 @@ func (client *Client) storePublishCommand(command *Command) error {
 }
 
 func commandToMessage(command *Command) *Message {
-	message := &Message{header: new(_Header)}
+	message := &Message{header: newHeader()}
 	if command == nil || command.header == nil {
 		return message
 	}
