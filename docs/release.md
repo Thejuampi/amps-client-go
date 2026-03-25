@@ -1,27 +1,80 @@
-# Release Process (GitHub Actions, One Click)
+# Release Process
 
-This repository releases from a single manual GitHub Actions workflow run on `main`.
+Strict releases in this repository are driven by `make release` from an environment that has both:
 
-The workflow does all of the release work:
+- the sibling C++ parity reference tree at `../amps-c++-client-5.3.5.1-Windows`
+- the ability to build and run `tools/fakeamps`
 
-1. Updates `VERSION`, `README.md`, and `amps/client.go`
-2. Runs release gates
-3. Commits the version bump
-4. Creates and pushes annotated tag `vX.Y.Z`
-5. Publishes the GitHub Release
+No release path may skip or relax those prerequisites.
 
-No local script, local tag creation, or local push is required for the normal path.
+The canonical gate is:
+
+```bash
+make release
+```
+
+That target runs:
+
+- static analysis
+- unit tests
+- race tests
+- build
+- fakeamps-backed integration for `./amps`
+- `tools/fakeamps` integration tests
+- parity check
+- coverage gate
+- performance gate
+
+Only after `make release` passes may a version bump, push, tag, and GitHub Release happen.
+
+## SemVer Choice
+
+Pick the release version from the merged changes:
+
+- patch `X.Y.Z+1`: bug fixes, hardening, tests, tooling, release-process-only changes
+- minor `X.Y+1.0`: backwards-compatible features or public API additions
+- major `X+1.0.0`: breaking API or behavior changes
+
+For the current change set, the correct bump is a patch release.
+
+## Local Strict Release
+
+`release.local.ps1` is the strict local release path. It:
+
+1. validates branch and clean-tree state
+2. updates `VERSION`, `README.md`, and `amps/client.go`
+3. runs `make release`
+4. commits `release: vX.Y.Z`
+5. creates and pushes annotated tag `vX.Y.Z`
+6. publishes the GitHub Release with generated notes via `gh release create`
+
+Run it from `main` on a machine that has the sibling C++ reference tree.
+
+## GitHub Actions Release Workflow
+
+The `Release` workflow also uses the strict release gates, but it requires a prepared runner with the sibling C++ reference tree available at `../amps-c++-client-5.3.5.1-Windows`.
+
+If that tree is missing, the workflow must fail rather than skip parity.
 
 ## One-time Setup
 
 1. GitHub Actions must be enabled.
 2. Default branch must be `main`.
-3. Prefer configuring a repository Actions secret named `RELEASE_PUSH_TOKEN`.
+3. For local strict release, install `git`, `go`, `make`, and `gh`.
+4. Prefer configuring a repository Actions secret named `RELEASE_PUSH_TOKEN`.
   It should contain a token for a user or bot that can push to `main` and create tags.
-4. If `main` is protected, that token must be allowed to bypass branch protection.
+5. If `main` is protected, that token must be allowed to bypass branch protection.
   If you do not configure `RELEASE_PUSH_TOKEN`, the workflow falls back to `GITHUB_TOKEN`, which only works when GitHub Actions itself is allowed to push release commits to `main`.
 
 ## Every Release
+
+Local strict path:
+
+1. Ensure `../amps-c++-client-5.3.5.1-Windows` exists next to this repository.
+2. Run `make release` and confirm every gate passes.
+3. Run `release.local.ps1` and provide the chosen `X.Y.Z` version.
+
+Prepared-runner GitHub Actions path:
 
 1. Open `Actions` in GitHub.
 2. Choose the `Release` workflow.
@@ -52,8 +105,11 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - Unit tests pass.
 - Race tests pass.
 - Build passes.
+- fakeamps-backed `./amps` integration tests pass.
+- `tools/fakeamps` integration tests pass.
 - Coverage gate passes.
-- Parity check passes when the C++ reference tree is present.
+- Parity check passes with the sibling C++ reference tree present.
+- Perf gate passes.
 
 ## What Gets Published
 
@@ -74,9 +130,9 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - Validation fails:
   - Fix the failing code or tests, then rerun the workflow.
 
-## Legacy Fallback
-
-`release.local.ps1` is still available as a manual fallback, but it is no longer the primary release path.
+- Workflow fails because the C++ reference tree is missing:
+  - Use a prepared runner that provides `../amps-c++-client-5.3.5.1-Windows`.
+  - Or perform the strict release locally with `release.local.ps1`.
 
 ## Verification
 

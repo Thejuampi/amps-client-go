@@ -49,12 +49,8 @@ Set-Location $repoRoot
 Step "Checking required tools"
 Require-Tool "git"
 Require-Tool "go"
-if (Get-Command "gh" -ErrorAction SilentlyContinue) {
-	Write-Host "Optional tool 'gh' found."
-}
-else {
-	Write-Host "Optional tool 'gh' not found. Continuing without it." -ForegroundColor Yellow
-}
+Require-Tool "make"
+Require-Tool "gh"
 
 Step "Checking git repository state"
 $insideRepo = (& git rev-parse --is-inside-work-tree).Trim()
@@ -144,12 +140,7 @@ $clientUpdated = [regex]::Replace($clientText, $clientPattern, ('${1}"' + $versi
 [System.IO.File]::WriteAllText($clientPath, $clientUpdated)
 
 Step "Running release gates"
-Run-External "go" @("vet", "./...")
-Run-External "go" @("test", "./...", "-skip", "Integration")
-Run-External "go" @("build", "./...")
-Run-External "go" @("run", "./tools/paritycheck", "-manifest", "tools/parity_manifest.json")
-Run-External "go" @("test", "-count=1", "./amps/...", "-coverprofile=coverage.out")
-Run-External "go" @("run", "./tools/coveragegate", "-profile", "coverage.out")
+Run-External "make" @("release")
 
 Step "Showing release file diff"
 Run-External "git" @("--no-pager", "diff", "--", "VERSION", "README.md", "amps/client.go")
@@ -169,9 +160,10 @@ Step "Pushing branch and tag"
 Run-External "git" @("push", "origin", "main")
 Run-External "git" @("push", "origin", $tag)
 
+Step "Publishing GitHub release"
+Run-External "gh" @("release", "create", $tag, "--verify-tag", "--generate-notes")
+
 Step "Release request submitted"
-Write-Host "GitHub Actions release workflow:"
-Write-Host "  https://github.com/Thejuampi/amps-client-go/actions/workflows/release.yml"
 Write-Host "GitHub release page:"
 Write-Host "  https://github.com/Thejuampi/amps-client-go/releases/tag/$tag"
 Write-Host "Go proxy warm-up URL:"

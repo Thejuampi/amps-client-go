@@ -171,6 +171,13 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 		deadline = time.Now().Add(timeout)
 	}
 
+	timeoutErr := func(beforeAttempt bool) error {
+		if beforeAttempt {
+			return NewError(TimedOutError, "HAClient connect/logon timed out before starting attempt")
+		}
+		return NewError(TimedOutError, "HAClient connect/logon timed out")
+	}
+
 	var lastErr error
 	for {
 		select {
@@ -220,9 +227,9 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 			remaining := time.Until(deadline)
 			if remaining <= 0 {
 				if lastErr == nil {
-					return NewError(TimedOutError, "HAClient connect/logon timed out before starting attempt")
+					return timeoutErr(true)
 				}
-				return lastErr
+				return timeoutErr(false)
 			}
 			attemptCtx, cancel = context.WithTimeout(ctx, remaining)
 		}
@@ -251,7 +258,7 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 		}
 
 		if !deadline.IsZero() && !time.Now().Before(deadline) {
-			return lastErr
+			return timeoutErr(false)
 		}
 
 		wait, delayErr := ha.reconnectWait(strategy, delay, uri)
@@ -262,7 +269,7 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 			if !deadline.IsZero() {
 				remaining := time.Until(deadline)
 				if remaining <= 0 {
-					return lastErr
+					return timeoutErr(false)
 				}
 				if wait > remaining {
 					wait = remaining

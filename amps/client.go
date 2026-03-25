@@ -91,6 +91,7 @@ type Client struct {
 	syncAckProcessing chan _Result
 	routes            *sync.Map
 	messageStreams    *sync.Map
+	unsubscribeRoutes *sync.Map
 	parityState       atomic.Pointer[clientParityState]
 
 	connected  atomic.Bool
@@ -780,6 +781,8 @@ func (client *Client) onMessage(message *Message) (err error) {
 }
 
 func (client *Client) deleteRoute(routeID string) (routeErr error) {
+	client.deleteUnsubscribeRoutesForRoute(routeID)
+
 	if messageStream, messageStreamExists := client.messageStreams.Load(routeID); messageStreamExists {
 		messageStream.(*MessageStream).client = nil
 		if atomic.LoadInt32(&messageStream.(*MessageStream).state) != messageStreamStateComplete {
@@ -820,6 +823,13 @@ func (client *Client) clearRoutes() error {
 		}
 		return true
 	})
+	client.unsubscribeRoutes.Range(func(key interface{}, _ interface{}) bool {
+		unsubscribeID, ok := key.(string)
+		if ok {
+			client.unsubscribeRoutes.Delete(unsubscribeID)
+		}
+		return true
+	})
 
 	return nil
 }
@@ -838,6 +848,54 @@ func (client *Client) registerMessageStream(stream *MessageStream) {
 	}
 
 	client.messageStreams.Store(routeID, stream)
+}
+
+func (client *Client) registerUnsubscribeRoute(unsubscribeID string, routeID string) {
+	if client == nil || unsubscribeID == "" || routeID == "" || unsubscribeID == routeID {
+		return
+	}
+
+	client.unsubscribeRoutes.Store(unsubscribeID, routeID)
+}
+
+func (client *Client) routeIDForUnsubscribe(unsubscribeID string) string {
+	if client == nil || unsubscribeID == "" {
+		return ""
+	}
+
+	value, exists := client.unsubscribeRoutes.Load(unsubscribeID)
+	if !exists {
+		return ""
+	}
+
+	routeID, ok := value.(string)
+	if !ok {
+		client.unsubscribeRoutes.Delete(unsubscribeID)
+		return ""
+	}
+
+	return routeID
+}
+
+func (client *Client) deleteUnsubscribeRoutesForRoute(routeID string) {
+	if client == nil || routeID == "" {
+		return
+	}
+
+	client.unsubscribeRoutes.Range(func(key interface{}, value interface{}) bool {
+		unsubscribeID, keyOK := key.(string)
+		mappedRouteID, valueOK := value.(string)
+		if !keyOK || !valueOK {
+			if keyOK {
+				client.unsubscribeRoutes.Delete(unsubscribeID)
+			}
+			return true
+		}
+		if mappedRouteID == routeID {
+			client.unsubscribeRoutes.Delete(unsubscribeID)
+		}
+		return true
+	})
 }
 
 func (client *Client) configureExecuteMessageStream(
@@ -919,13 +977,6 @@ func (client *Client) addRouteForCommandType(
 
 	client.routes.Store(routeID, func(message *Message) error {
 		var err error
-		deleteRoute := func() error {
-			var routeErr = client.deleteRoute(routeID)
-			if routeErr != nil {
-				return errors.New("Error deleting route")
-			}
-			return nil
-		}
 
 		if message.header.command == CommandAck {
 			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone && commandType != CommandSOW {
@@ -954,13 +1005,7 @@ func (client *Client) addRouteForCommandType(
 
 			if requestedAcks&ack > 0 {
 				requestedAcks &^= ack
-
-				if messageHandler != nil {
-					err = messageHandler(message)
-					if err != nil {
-						err = NewError(MessageHandlerError, err)
-					}
-				}
+				err = callRouteMessageHandler(messageHandler, message)
 			}
 
 			if systemAcks == AckTypeNone && requestedAcks == AckTypeNone && !isSubscribe {
@@ -972,21 +1017,16 @@ func (client *Client) addRouteForCommandType(
 				} else if commandType == CommandSOW && ack != terminationAck {
 					return err
 				}
-				err = deleteRoute()
+				err = client.deleteRouteError(routeID)
 			} else if systemAcks == AckTypeNone {
 				client.routes.Store(routeID, messageHandler)
 			}
 		} else {
-			if messageHandler != nil {
-				err = messageHandler(message)
-				if err != nil {
-					err = NewError(MessageHandlerError, err)
-				}
-			}
+			err = callRouteMessageHandler(messageHandler, message)
 
 			if keepSOWRouteUntilGroupEnd && !isSubscribe && systemAcks == AckTypeNone && requestedAcks == AckTypeNone && message.header.command == CommandGroupEnd {
 				if _, hasStream := client.messageStreams.Load(routeID); !hasStream {
-					err = deleteRoute()
+					err = client.deleteRouteError(routeID)
 				}
 			}
 		}
@@ -1014,6 +1054,54 @@ func (client *Client) addRoute(
 	return client.addRouteForCommandType(routeID, messageHandler, systemAcks, requestedAcks, commandType, isReplace, keepSOWRouteUntilGroupEnd, beforeStore...)
 }
 
+func callRouteMessageHandler(messageHandler func(*Message) error, message *Message) error {
+	if messageHandler == nil {
+		return nil
+	}
+
+	var err = messageHandler(message)
+	if err != nil {
+		return NewError(MessageHandlerError, err)
+	}
+
+	return nil
+}
+
+func (client *Client) deleteRouteError(routeID string) error {
+	if routeID == "" {
+		return nil
+	}
+
+	var err = client.deleteRoute(routeID)
+	if err != nil {
+		return errors.New("Error deleting route")
+	}
+
+	return nil
+}
+
+func syncAckClosedError(isSubscribe bool) error {
+	if isSubscribe {
+		return NewError(DisconnectedError, "Client disconnected while waiting for sync ack")
+	}
+
+	return NewError(ConnectionError, "sync ack channel closed")
+}
+
+func shouldDeleteFailedSubscribeRoute(message *Message) bool {
+	if message == nil || message.header.command != CommandAck {
+		return false
+	}
+
+	ack, hasAck := message.AckType()
+	if !hasAck || ack != AckTypeProcessed {
+		return false
+	}
+
+	status, _ := message.Status()
+	return status != "success"
+}
+
 func (client *Client) addSubscribeRouteDirect(routeID string, messageHandler func(*Message) error, requestedAcks int, isReplace bool) error {
 	var previousMessageHandler interface{}
 	var messageHandlerExists bool
@@ -1037,8 +1125,29 @@ func (client *Client) addSubscribeRouteDirect(routeID string, messageHandler fun
 		}
 	}
 
+	cleanupFailedSubscribeRoute := func(message *Message, handlerErr error) error {
+		if !shouldDeleteFailedSubscribeRoute(message) {
+			return handlerErr
+		}
+
+		var cleanupErr = client.deleteRouteError(routeID)
+		if cleanupErr != nil && handlerErr == nil {
+			return cleanupErr
+		}
+
+		return handlerErr
+	}
+
 	if requestedAcks == AckTypeNone || requestedAcks == AckTypeProcessed {
-		client.routes.Store(routeID, messageHandler)
+		if requestedAcks == AckTypeNone {
+			client.routes.Store(routeID, messageHandler)
+			return nil
+		}
+
+		client.routes.Store(routeID, func(message *Message) error {
+			var handlerErr = callRouteMessageHandler(messageHandler, message)
+			return cleanupFailedSubscribeRoute(message, handlerErr)
+		})
 		return nil
 	}
 
@@ -1056,12 +1165,8 @@ func (client *Client) addSubscribeRouteDirect(routeID string, messageHandler fun
 			pendingRequestedAcks &^= ack
 		}
 
-		var err = messageHandler(message)
-		if err != nil {
-			return NewError(MessageHandlerError, err)
-		}
-
-		return nil
+		var handlerErr = callRouteMessageHandler(messageHandler, message)
+		return cleanupFailedSubscribeRoute(message, handlerErr)
 	})
 
 	return nil
@@ -1096,9 +1201,9 @@ func (client *Client) addCommandRouteDirect(routeID string, messageHandler func(
 			}
 			pendingRequestedAcks &^= ack
 
-			var err = messageHandler(message)
+			var err = callRouteMessageHandler(messageHandler, message)
 			if err != nil {
-				return NewError(MessageHandlerError, err)
+				return err
 			}
 
 			if pendingRequestedAcks == AckTypeNone {
@@ -1107,11 +1212,7 @@ func (client *Client) addCommandRouteDirect(routeID string, messageHandler func(
 			return nil
 		}
 
-		var err = messageHandler(message)
-		if err != nil {
-			return NewError(MessageHandlerError, err)
-		}
-		return nil
+		return callRouteMessageHandler(messageHandler, message)
 	})
 
 	return nil
@@ -1924,6 +2025,15 @@ func (client *Client) executeAsync(
 	userAcks, hasUserAcks := command.AckType()
 	var waitForProcessedAck = true
 
+	queueRetryAfterSendFailure := func() {
+		if retryCommandOnDisconnect && (!isSubscribe || subscriptionManager == nil) {
+			unlockClient()
+			client.queueRetryCommand(command, messageHandler)
+			client.lock.Lock()
+			lockHeld = true
+		}
+	}
+
 	switch command.header.command {
 	case CommandSubscribe:
 		fallthrough
@@ -2010,6 +2120,12 @@ func (client *Client) executeAsync(
 				client.routes.Store(syncAckRouteID, syncAckHandler)
 			}
 		}
+		if isSubscribe {
+			var subID, hasSubID = command.SubID()
+			if hasSubID {
+				client.registerUnsubscribeRoute(subID, routeID)
+			}
+		}
 		if onRouteReady != nil {
 			onRouteReady(commandID, routeID)
 			onRouteReady = nil
@@ -2032,6 +2148,13 @@ func (client *Client) executeAsync(
 			err := client.deleteRoute(subID)
 			if err != nil {
 				return subID, errors.New("Error deleting route")
+			}
+			var mappedRouteID = client.routeIDForUnsubscribe(subID)
+			if mappedRouteID != "" && mappedRouteID != subID {
+				err = client.deleteRoute(mappedRouteID)
+				if err != nil {
+					return subID, errors.New("Error deleting route")
+				}
 			}
 		}
 		if retryCommandOnDisconnect && subscriptionManager != nil {
@@ -2102,16 +2225,10 @@ func (client *Client) executeAsync(
 				if syncAckRouteID != "" {
 					client.routes.Delete(syncAckRouteID)
 				}
-				if retryCommandOnDisconnect {
-					unlockClient()
-					client.queueRetryCommand(command, messageHandler)
-					client.lock.Lock()
-					lockHeld = true
-				}
+				queueRetryAfterSendFailure()
 
-				routeErr := client.deleteRoute(routeID)
-				if routeErr != nil {
-					return routeID, errors.New("Error deleting route")
+				if err := client.deleteRouteError(routeID); err != nil {
+					return routeID, err
 				}
 
 				client.closeSyncAckProcessing()
@@ -2129,20 +2246,18 @@ func (client *Client) executeAsync(
 				client.routes.Delete(syncAckRouteID)
 			}
 			if !ok {
-				routeErr := client.deleteRoute(routeID)
-				if routeErr != nil {
-					return routeID, errors.New("Error deleting route")
+				if err := client.deleteRouteError(routeID); err != nil {
+					return routeID, err
 				}
-				return commandID, NewError(ConnectionError, "sync ack channel closed")
+				return commandID, syncAckClosedError(isSubscribe)
 			}
 
 			if result.Status {
 				return routeID, nil
 			}
 
-			routeErr := client.deleteRoute(routeID)
-			if routeErr != nil {
-				return routeID, errors.New("Error deleting route")
+			if err := client.deleteRouteError(routeID); err != nil {
+				return routeID, err
 			}
 
 			return commandID, reasonToError(result.Reason)
@@ -2150,16 +2265,10 @@ func (client *Client) executeAsync(
 
 		sendErr := client.send(command)
 		if sendErr != nil {
-			if retryCommandOnDisconnect {
-				unlockClient()
-				client.queueRetryCommand(command, messageHandler)
-				client.lock.Lock()
-				lockHeld = true
-			}
+			queueRetryAfterSendFailure()
 
-			routeErr := client.deleteRoute(routeID)
-			if routeErr != nil {
-				return routeID, errors.New("Error deleting route")
+			if err := client.deleteRouteError(routeID); err != nil {
+				return routeID, err
 			}
 
 			client.handleSendFailure(command, sendErr)
@@ -2167,6 +2276,10 @@ func (client *Client) executeAsync(
 		}
 
 		return routeID, nil
+	}
+
+	if err := client.deleteRouteError(routeID); err != nil {
+		return routeID, err
 	}
 
 	return commandID, NewError(DisconnectedError, "Client is not connected while trying to send data")
@@ -2436,15 +2549,16 @@ func NewClient(clientName ...string) *Client {
 	}
 
 	client := &Client{
-		clientName:     clientNameInternal,
-		nameHash:       fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
-		sendBuffer:     bytes.NewBuffer(nil),
-		command:        &Command{header: newHeader()},
-		hbCommand:      &Command{header: newHeader()},
-		message:        &Message{header: newHeader()},
-		routes:         new(sync.Map),
-		messageStreams: new(sync.Map),
-		disconnectCh:   newClientSignal(true),
+		clientName:        clientNameInternal,
+		nameHash:          fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
+		sendBuffer:        bytes.NewBuffer(nil),
+		command:           &Command{header: newHeader()},
+		hbCommand:         &Command{header: newHeader()},
+		message:           &Message{header: newHeader()},
+		routes:            new(sync.Map),
+		messageStreams:    new(sync.Map),
+		unsubscribeRoutes: new(sync.Map),
+		disconnectCh:      newClientSignal(true),
 	}
 	client.clientNameBytes = make([]byte, len(clientNameInternal), len(clientNameInternal)+16)
 	copy(client.clientNameBytes, clientNameInternal)

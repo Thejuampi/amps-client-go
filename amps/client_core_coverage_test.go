@@ -1265,6 +1265,103 @@ func TestClientExecuteSowAndSubscribeCloseRemovesQueryRoute(t *testing.T) {
 	}
 }
 
+func TestClientUnsubscribeRemovesQueryBackedSubscriptionState(t *testing.T) {
+	var client, _, _ = executeSyncStreamWithProcessedAck(
+		t,
+		"execute-sow-and-subscribe-query-unsubscribe",
+		NewCommand("sow_and_subscribe").SetTopic("orders").SetSubID("sub-unsub-query").SetQueryID("qid-unsub-query"),
+		"qid-unsub-query",
+	)
+
+	if _, exists := client.messageStreams.Load("qid-unsub-query"); !exists {
+		t.Fatalf("expected query-backed stream registration before unsubscribe")
+	}
+
+	if err := client.Unsubscribe("sub-unsub-query"); err != nil {
+		t.Fatalf("expected unsubscribe success: %v", err)
+	}
+
+	if _, exists := client.routes.Load("qid-unsub-query"); exists {
+		t.Fatalf("expected unsubscribe to remove query-backed route")
+	}
+	if _, exists := client.messageStreams.Load("qid-unsub-query"); exists {
+		t.Fatalf("expected unsubscribe to remove query-backed stream")
+	}
+}
+
+func TestExecuteAsyncDisconnectDuringRouteRegistrationDoesNotLeaveRoute(t *testing.T) {
+	var client = NewClient("execute-async-disconnect-registration")
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	var routeID string
+	_, err := client.executeAsync(
+		NewCommand("subscribe").SetTopic("orders").SetSubID("sub-registration-disconnect"),
+		nil,
+		false,
+		func(commandID string, currentRouteID string) {
+			_ = commandID
+			routeID = currentRouteID
+			client.onConnectionError(NewError(ConnectionError, "disconnect during route registration"))
+		},
+	)
+	if err == nil {
+		t.Fatalf("expected disconnected error")
+	}
+	if routeID == "" {
+		t.Fatalf("expected route id from route registration callback")
+	}
+	if _, exists := client.routes.Load(routeID); exists {
+		t.Fatalf("expected route cleanup after disconnect during route registration")
+	}
+}
+
+func TestExecuteAsyncSubscribeProcessedFailureRemovesRoute(t *testing.T) {
+	var client = NewClient("execute-async-subscribe-failure-cleanup")
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	handled := 0
+	_, err := client.ExecuteAsync(
+		NewCommand("subscribe").SetTopic("orders").SetSubID("sub-failure-cleanup").SetAckType(AckTypeProcessed),
+		func(*Message) error {
+			handled++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("expected subscribe registration success: %v", err)
+	}
+
+	var handler = waitForRouteHandler(t, client, "sub-failure-cleanup")
+	var ack = AckTypeProcessed
+	err = handler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ack,
+		status:  []byte("failure"),
+		reason:  []byte("bad filter"),
+	}})
+	if err != nil {
+		t.Fatalf("expected failure ack handler success: %v", err)
+	}
+	if handled != 1 {
+		t.Fatalf("expected subscribe failure callback once, got %d", handled)
+	}
+	if _, exists := client.routes.Load("sub-failure-cleanup"); exists {
+		t.Fatalf("expected failed subscribe to remove route")
+	}
+
+	_, err = client.ExecuteAsync(
+		NewCommand("subscribe").SetTopic("orders").SetSubID("sub-failure-cleanup").SetAckType(AckTypeProcessed),
+		func(*Message) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("expected failed subscribe route id to be reusable, got %v", err)
+	}
+}
+
 func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	sowClient := NewClient("sow-delete")
 	sowConn := newTestConn()
@@ -1474,6 +1571,33 @@ func TestClientSyncAckWaitAbortsOnDisconnect(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatalf("expected ExecuteAsync wait to abort after disconnect")
+	}
+}
+
+func TestClientSubscribeSyncAckWaitReturnsDisconnectedOnDisconnect(t *testing.T) {
+	client := NewClient("subscribe-sync-ack-disconnect")
+	client.connected.Store(true)
+	client.resetDisconnectSignal()
+	client.connection = newTestConn()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.SubscribeAsync(func(*Message) error { return nil }, "orders")
+		errCh <- err
+	}()
+
+	_, _ = waitForAnyRouteHandler(t, client)
+	if err := client.Disconnect(); err != nil {
+		t.Fatalf("disconnect failed: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "DisconnectedError") {
+			t.Fatalf("expected subscribe wait to abort with disconnected error, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected SubscribeAsync wait to abort after disconnect")
 	}
 }
 

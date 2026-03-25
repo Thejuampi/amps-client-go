@@ -7,7 +7,7 @@ INEFFASSIGN_VERSION ?= v0.2.0
 ERRCHECK_VERSION ?= v1.10.0
 GOVULNCHECK_VERSION ?= v1.1.4
 
-.PHONY: help build test test-race integration-test install fmt vet static-scan vuln-scan tidy clean parity-check coverage-check perf-check release
+.PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan vuln-scan tidy clean parity-check coverage-check perf-check release
 
 help:
 	@echo Available targets:
@@ -15,6 +15,7 @@ help:
 	@echo   make test             Run unit tests
 	@echo   make test-race        Run tests with race detector
 	@echo   make integration-test Run integration tests only (-run Integration)
+	@echo   make integration-fakeamps Run strict integration gates against ephemeral fakeamps endpoints
 	@echo   make install          Install packages with go install
 	@echo   make fmt              Format Go source files
 	@echo   make vet              Run go vet
@@ -38,6 +39,9 @@ test-race:
 
 integration-test:
 	$(GO) test $(GOFLAGS) $(PKG) -run Integration
+
+integration-fakeamps:
+	$(GO) run ./tools/fakeampsgate
 
 install:
 	$(GO) install $(GOFLAGS) $(PKG)
@@ -74,5 +78,5 @@ coverage-check:
 perf-check:
 	$(GO) run ./tools/perfgate -baseline tools/perf_baseline.json
 
-release: static-scan test-race test build parity-check coverage-check perf-check
+release: static-scan test test-race build integration-fakeamps parity-check coverage-check perf-check
 	@echo Release checks passed for $(VERSION).

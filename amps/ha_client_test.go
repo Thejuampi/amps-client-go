@@ -307,6 +307,19 @@ func TestHAConnectAndLogonExpiredBeforeAttemptReturnsTimeout(t *testing.T) {
 	}
 }
 
+func TestHAConnectAndLogonTimeoutAfterFailuresReturnsTimedOutError(t *testing.T) {
+	ha := NewHAClient("ha-timeout-after-failure")
+	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:1/amps/json"})
+	ha.SetReconnectDelay(15 * time.Millisecond)
+	ha.SetReconnectDelayStrategy(nil)
+	ha.SetTimeout(20 * time.Millisecond)
+
+	err := ha.ConnectAndLogon()
+	if err == nil || !strings.Contains(err.Error(), "TimedOutError") {
+		t.Fatalf("expected timed out error after retry deadline, got %v", err)
+	}
+}
+
 func TestHADisconnectCancelsBlockedDial(t *testing.T) {
 	originalDial := clientNetDialContext
 	released := make(chan struct{})

@@ -11,6 +11,18 @@ type recordingSubscriptionManager struct {
 	resubscribeCalls int
 }
 
+type replayFailurePublishStore struct {
+	*MemoryPublishStore
+	replayErr error
+}
+
+func (store *replayFailurePublishStore) Replay(func(*Command) error) error {
+	if store == nil {
+		return nil
+	}
+	return store.replayErr
+}
+
 func (manager *recordingSubscriptionManager) Subscribe(func(*Message) error, *Command, int) {}
 func (manager *recordingSubscriptionManager) Unsubscribe(string)                            {}
 func (manager *recordingSubscriptionManager) Clear()                                        {}
@@ -197,6 +209,68 @@ func TestPostLogonRecoveryReplaysPublishStoreAndResubscribes(t *testing.T) {
 	}
 	if !foundPublishReplayed || !foundResubscribed {
 		t.Fatalf("expected publish replay and resubscribe states, got %+v", states)
+	}
+}
+
+func TestPostLogonRecoveryDoesNotReplayTrackedSubscribeTwice(t *testing.T) {
+	client := NewClient("recovery-subscribe-dedupe")
+	failedConn := newTestConn()
+	client.connected.Store(true)
+	client.connection = failedConn
+	client.SetSubscriptionManager(NewDefaultSubscriptionManager())
+	client.SetRetryOnDisconnect(true)
+	_ = failedConn.Close()
+
+	_, err := client.ExecuteAsync(
+		NewCommand("subscribe").SetTopic("orders").SetSubID("sub-dedupe").SetAckType(AckTypeProcessed),
+		func(*Message) error { return nil },
+	)
+	if err == nil {
+		t.Fatalf("expected subscribe send failure")
+	}
+
+	replayConn := newTestConn()
+	client.connection = replayConn
+	client.connected.Store(true)
+	client.stopped.Store(false)
+
+	reported := make([]error, 0, 1)
+	client.SetExceptionListener(ExceptionListenerFunc(func(err error) {
+		reported = append(reported, err)
+	}))
+
+	client.postLogonRecovery()
+
+	if len(reported) != 0 {
+		t.Fatalf("expected recovery without duplicate subscribe exception, got %+v", reported)
+	}
+}
+
+func TestPostLogonRecoverySkipsPublishReplayedStateWhenReplayFails(t *testing.T) {
+	client := NewClient("recovery-publish-replay-failure")
+	client.SetPublishStore(&replayFailurePublishStore{
+		MemoryPublishStore: NewMemoryPublishStore(),
+		replayErr:          errors.New("replay failed"),
+	})
+
+	states := make([]ConnectionState, 0, 1)
+	reported := make([]error, 0, 1)
+	client.AddConnectionStateListener(ConnectionStateListenerFunc(func(state ConnectionState) {
+		states = append(states, state)
+	}))
+	client.SetExceptionListener(ExceptionListenerFunc(func(err error) {
+		reported = append(reported, err)
+	}))
+
+	client.postLogonRecovery()
+
+	if len(reported) != 1 {
+		t.Fatalf("expected replay failure to be reported once, got %+v", reported)
+	}
+	for _, state := range states {
+		if state == ConnectionStatePublishReplayed {
+			t.Fatalf("did not expect publish replayed state after replay failure")
+		}
 	}
 }
 

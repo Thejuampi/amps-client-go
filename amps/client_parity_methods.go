@@ -526,8 +526,9 @@ func (client *Client) postLogonRecovery() {
 			})
 			if replayErr != nil {
 				client.reportException(replayErr)
+			} else {
+				client.notifyConnectionState(ConnectionStatePublishReplayed)
 			}
-			client.notifyConnectionState(ConnectionStatePublishReplayed)
 		}
 
 		if subscriptionManager != nil {

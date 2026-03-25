@@ -151,33 +151,33 @@ See [tools/fakeamps/README.md](tools/fakeamps/README.md) for the supported XML s
 package main
 
 import (
-	"fmt"
+ "fmt"
 
-	"github.com/Thejuampi/amps-client-go/amps"
+ "github.com/Thejuampi/amps-client-go/amps"
 )
 
 func main() {
-	client := amps.NewClient("example-client")
-	if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
-		panic(err)
-	}
-	defer client.Close()
+ client := amps.NewClient("example-client")
+ if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
+  panic(err)
+ }
+ defer client.Close()
 
-	if err := client.Logon(); err != nil {
-		panic(err)
-	}
+ if err := client.Logon(); err != nil {
+  panic(err)
+ }
 
-	_, err := client.SubscribeAsync(func(message *amps.Message) error {
-		fmt.Println(string(message.Data()))
-		return nil
-	}, "orders")
-	if err != nil {
-		panic(err)
-	}
+ _, err := client.SubscribeAsync(func(message *amps.Message) error {
+  fmt.Println(string(message.Data()))
+  return nil
+ }, "orders")
+ if err != nil {
+  panic(err)
+ }
 
-	if err := client.Publish("orders", `{"id":1}`); err != nil {
-		panic(err)
-	}
+ if err := client.Publish("orders", `{"id":1}`); err != nil {
+  panic(err)
+ }
 }
 ```
 

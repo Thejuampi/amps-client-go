@@ -30,9 +30,10 @@ make build            # go build ./...
 make test             # go test ./... -skip Integration
 make test-race        # go test -race ./... -skip Integration
 make integration-test # go test ./... -run Integration
+make integration-fakeamps # run strict fakeamps-backed integration gates
 make vet              # go vet
 make fmt              # go fmt
-make release          # vet + test + build (release gate)
+make release          # static-scan + unit + race + build + fakeamps integration + parity + coverage + perf
 ```
 
 ## Coverage Policy (Enforced)
@@ -40,6 +41,20 @@ make release          # vet + test + build (release gate)
 - Coverage gate is required before merge: `make coverage-check`.
 - `./amps/...` thresholds are strict: aggregate `>=90%`, pure files `100%`, IO/stateful files `>=80%`.
 - Test design target for changed areas is `>=80%`, but gate values above are mandatory.
+
+## Release Gate Policy
+
+- Release verification is `make release`.
+- Release may not skip or relax fakeamps-backed integration.
+- Release may not skip or relax parity validation.
+- Strict release environments must provide the sibling C++ reference tree at `../amps-c++-client-5.3.5.1-Windows`.
+- Strict release must run both:
+	- `go test -count=1 ./amps -run Integration` against ephemeral fakeamps endpoints
+	- `go test -count=1 ./tools/fakeamps -run Integration`
+- SemVer selection for release:
+	- patch for fixes, hardening, tests, and release-process-only changes
+	- minor for backwards-compatible feature additions
+	- major for breaking API or behavior changes
 
 ## Coding Conventions
 
