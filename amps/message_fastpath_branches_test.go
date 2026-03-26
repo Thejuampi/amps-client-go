@@ -106,6 +106,22 @@ func TestParseHeaderTrustedCTSubIDLongCommandBranch(t *testing.T) {
 	}
 }
 
+func TestParseHeaderTrustedCTSubIDNonPublishCommandBranch(t *testing.T) {
+	var header = new(_Header)
+	var end, ok = parseHeaderTrustedCTSubID(header, []byte("\"c\":\"subscribe\",\"t\":\"orders\",\"sub_id\":\"sub-1\"}tail"), 0)
+	if !ok || end != len("\"c\":\"subscribe\",\"t\":\"orders\",\"sub_id\":\"sub-1\"}") || header.command != CommandSubscribe {
+		t.Fatalf("expected non-publish command path success, end=%d ok=%v command=%d", end, ok, header.command)
+	}
+}
+
+func TestParseHeaderTrustedCTSubIDSuccessBranch(t *testing.T) {
+	var header = new(_Header)
+	var end, ok = parseHeaderTrusted(header, []byte("{\"c\":\"publish\",\"t\":\"orders\",\"sub_id\":\"sub-1\"}tail"))
+	if !ok || end != len("{\"c\":\"publish\",\"t\":\"orders\",\"sub_id\":\"sub-1\"}") || header.command != CommandPublish {
+		t.Fatalf("expected trusted CT/sub_id success branch, end=%d ok=%v command=%d", end, ok, header.command)
+	}
+}
+
 func TestParseHeaderCheckedUnquotedCommaBranch(t *testing.T) {
 	var header = new(_Header)
 	var _, err = parseHeaderChecked(header, []byte(`{"bs":2,"c":"p"}`))

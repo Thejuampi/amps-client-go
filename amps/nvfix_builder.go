@@ -62,9 +62,10 @@ func (nmb *NvfixMessageBuilder) AppendBytes(tag []byte, value []byte, valOffset 
 	if len(tag) == 0 {
 		return errors.New("illegal argument: no tag value provided to NVFIX builder")
 	}
-	if valOffset < 0 || valLength < 0 || valOffset > len(value) || valOffset+valLength > len(value) {
+	if !isValidSliceRange(value, valOffset, valLength) {
 		return errors.New("illegal argument: invalid NVFIX value range")
 	}
+	var end = valOffset + valLength
 
 	sizeNeeded := len(tag) + 1 + valLength + 2
 	nmb.checkCapacity(sizeNeeded)
@@ -72,7 +73,7 @@ func (nmb *NvfixMessageBuilder) AppendBytes(tag []byte, value []byte, valOffset 
 
 	nmb.message = append(nmb.message, tag...)
 	nmb.message = append(nmb.message, '=')
-	nmb.message = append(nmb.message, value[valOffset:valOffset+valLength]...)
+	nmb.message = append(nmb.message, value[valOffset:end]...)
 	nmb.message = append(nmb.message, nmb.fieldSeparator)
 
 	return nil
@@ -80,7 +81,8 @@ func (nmb *NvfixMessageBuilder) AppendBytes(tag []byte, value []byte, valOffset 
 
 // AppendStrings executes the exported appendstrings operation.
 func (nmb *NvfixMessageBuilder) AppendStrings(tag string, value string) error {
-	return nmb.AppendBytes([]byte(tag), []byte(value), 0, len([]byte(value)))
+	var valueBytes = []byte(value)
+	return nmb.AppendBytes([]byte(tag), valueBytes, 0, len(valueBytes))
 }
 
 // NewNVFIXBuilder returns a new NVFIXBuilder.

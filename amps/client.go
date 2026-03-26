@@ -2022,6 +2022,7 @@ func (client *Client) executeAsync(
 	var routeID string
 	var syncAckRouteID string
 	var systemAcks int
+	var openedSyncAck bool
 	userAcks, hasUserAcks := command.AckType()
 	var waitForProcessedAck = true
 
@@ -2094,6 +2095,7 @@ func (client *Client) executeAsync(
 
 		if systemAcks != AckTypeNone {
 			client.setSyncAckProcessing(make(chan _Result, 1))
+			openedSyncAck = true
 			if isSubscribe && routeID != commandID {
 				syncAckRouteID = commandID
 			}
@@ -2113,6 +2115,9 @@ func (client *Client) executeAsync(
 			})
 		}
 		if err != nil {
+			if openedSyncAck {
+				client.closeSyncAckProcessing()
+			}
 			return commandID, err
 		}
 		if syncAckRouteID != "" {
@@ -2165,10 +2170,14 @@ func (client *Client) executeAsync(
 		systemAcks = AckTypeProcessed
 
 		client.setSyncAckProcessing(make(chan _Result, 1))
+		openedSyncAck = true
 		routeID = commandID
 
 		err := client.addRoute(commandID, routeMessageHandler, systemAcks, userAcks, false, false, false, nil)
 		if err != nil {
+			if openedSyncAck {
+				client.closeSyncAckProcessing()
+			}
 			return commandID, err
 		}
 

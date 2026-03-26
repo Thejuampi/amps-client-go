@@ -219,21 +219,6 @@ func (ms *MessageStream) setCurrentFromQueue(message *Message) {
 	ms.consumeConflateState()
 }
 
-func (ms *MessageStream) isSOWOnlyComplete(message *Message) bool {
-	return atomic.LoadInt32(&ms.state) == messageStreamStateSOWOnly &&
-		message != nil &&
-		message.header.command == CommandGroupEnd
-}
-
-func (ms *MessageStream) isStatsOnlyComplete(message *Message) bool {
-	if atomic.LoadInt32(&ms.state) != messageStreamStateStatsOnly || message == nil {
-		return false
-	}
-
-	ackType, hasAckType := message.AckType()
-	return hasAckType && ackType == AckTypeStats
-}
-
 // Next executes the exported next operation.
 func (ms *MessageStream) Next() (message *Message) {
 	if ms.timedOut.Swap(false) {
@@ -278,12 +263,16 @@ func (ms *MessageStream) Next() (message *Message) {
 		}
 	}
 
-	if ms.isSOWOnlyComplete(returnVal) {
+	var state = atomic.LoadInt32(&ms.state)
+	if state == messageStreamStateSOWOnly && returnVal != nil && returnVal.header.command == CommandGroupEnd {
 		ms.setState(messageStreamStateComplete)
 		cleanupRoutes(cleanupQueryOnly)
-	} else if ms.isStatsOnlyComplete(returnVal) {
-		ms.setState(messageStreamStateComplete)
-		cleanupRoutes(cleanupCommandThenQuery)
+	} else if state == messageStreamStateStatsOnly && returnVal != nil {
+		ackType, hasAckType := returnVal.AckType()
+		if hasAckType && ackType == AckTypeStats {
+			ms.setState(messageStreamStateComplete)
+			cleanupRoutes(cleanupCommandThenQuery)
+		}
 	}
 
 	return returnVal

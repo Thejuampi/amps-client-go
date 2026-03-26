@@ -233,6 +233,34 @@ func TestFixAndNVFixBuildersRangeErrorsCoverage(t *testing.T) {
 	}
 }
 
+func TestFixBuilderRejectsOverflowingRangeEnd(t *testing.T) {
+	var fixBuilder = NewFIXBuilder()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("expected overflow-safe FIX range error, got panic %v", recovered)
+		}
+	}()
+
+	if err := fixBuilder.AppendBytes(35, []byte("A"), 1, math.MaxInt); err == nil {
+		t.Fatalf("expected overflow-safe FIX range error")
+	}
+}
+
+func TestNVFIXBuilderRejectsOverflowingRangeEnd(t *testing.T) {
+	var nvBuilder = NewNVFIXBuilder()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("expected overflow-safe NVFIX range error, got panic %v", recovered)
+		}
+	}()
+
+	if err := nvBuilder.AppendBytes([]byte("k"), []byte("v"), 1, math.MaxInt); err == nil {
+		t.Fatalf("expected overflow-safe NVFIX range error")
+	}
+}
+
 func TestNVFIXBuilderGrowthPreservesExistingBytes(t *testing.T) {
 	builder := NewNVFIXBuilder()
 	if builder == nil {

@@ -6,6 +6,7 @@ STATICCHECK_VERSION ?= v0.7.0
 INEFFASSIGN_VERSION ?= v0.2.0
 ERRCHECK_VERSION ?= v1.10.0
 GOVULNCHECK_VERSION ?= v1.1.4
+COVERPROFILE ?= $(abspath coverage.out)
 
 .PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan vuln-scan tidy clean parity-check coverage-check perf-check release
 
@@ -72,8 +73,8 @@ parity-check:
 	$(GO) run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 
 coverage-check:
-	$(GO) test -count=1 ./amps/... -coverprofile=coverage.out
-	$(GO) run ./tools/coveragegate -profile coverage.out
+	$(GO) test -count=1 ./amps/... -coverprofile=$(COVERPROFILE)
+	$(GO) run ./tools/coveragegate -profile $(COVERPROFILE)
 
 perf-check:
 	$(GO) run ./tools/perfgate -baseline tools/perf_baseline.json

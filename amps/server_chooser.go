@@ -129,10 +129,20 @@ func (chooser *DefaultServerChooser) Remove(uri string) {
 		return
 	}
 
+	var currentIndex = chooser.index
+	if currentIndex < 0 || currentIndex >= len(chooser.endpoints) {
+		currentIndex = 0
+	}
+
 	filtered := make([]chooserEndpoint, 0, len(chooser.endpoints))
-	for _, endpoint := range chooser.endpoints {
+	var removedBeforeCurrent int
+	for index, endpoint := range chooser.endpoints {
 		if endpoint.uri != uri {
 			filtered = append(filtered, endpoint)
+			continue
+		}
+		if index < currentIndex {
+			removedBeforeCurrent++
 		}
 	}
 	chooser.endpoints = filtered
@@ -140,7 +150,8 @@ func (chooser *DefaultServerChooser) Remove(uri string) {
 		chooser.index = 0
 		return
 	}
-	if chooser.index >= len(chooser.endpoints) {
+	chooser.index = currentIndex - removedBeforeCurrent
+	if chooser.index < 0 || chooser.index >= len(chooser.endpoints) {
 		chooser.index = 0
 	}
 }

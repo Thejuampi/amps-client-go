@@ -1317,6 +1317,25 @@ func TestExecuteAsyncDisconnectDuringRouteRegistrationDoesNotLeaveRoute(t *testi
 	}
 }
 
+func TestExecuteAsyncRouteRegistrationFailureClosesSyncAckProcessing(t *testing.T) {
+	var client = NewClient("execute-async-route-registration-failure")
+	client.connected.Store(true)
+	client.routes.Store("sub-registration-failure", func(*Message) error { return nil })
+
+	_, err := client.executeAsync(
+		NewCommand("subscribe").SetTopic("orders").SetSubID("sub-registration-failure"),
+		nil,
+		false,
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected route registration failure")
+	}
+	if client.getSyncAckProcessing() != nil {
+		t.Fatalf("expected sync ack processing cleanup after route registration failure")
+	}
+}
+
 func TestExecuteAsyncSubscribeProcessedFailureRemovesRoute(t *testing.T) {
 	var client = NewClient("execute-async-subscribe-failure-cleanup")
 	var conn = newTestConn()

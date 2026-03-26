@@ -93,6 +93,18 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 	if resetMessage {
 		msg.resetForParse()
 	}
+	if len(array) > 5 && array[0] == '"' {
+		if array[1] == 'c' && array[2] == '"' && array[3] == ':' && array[4] == '"' {
+			if end, ok := parseHeaderTrustedCTSubID(msg.header, array, 0); ok {
+				return array[end:], nil
+			}
+		}
+		if array[1] == 't' && array[2] == '"' && array[3] == ':' {
+			if end, ok := parseHeaderTrustedTopicOnly(msg.header, array, 0); ok {
+				return array[end:], nil
+			}
+		}
+	}
 	if len(array) > 6 && array[0] == '{' && array[1] == '"' && array[2] == 'c' && array[3] == '"' && array[4] == ':' && array[5] == '"' {
 		if end, ok := parseHeaderTrustedCTSubID(msg.header, array, 1); ok {
 			return array[end:], nil
@@ -279,6 +291,15 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 	var subIDEnd = i
 
 	if cmdEnd == cmdStart+1 && array[cmdStart] == 'p' {
+		header.command = CommandPublish
+	} else if cmdEnd == cmdStart+7 &&
+		array[cmdStart] == 'p' &&
+		array[cmdStart+1] == 'u' &&
+		array[cmdStart+2] == 'b' &&
+		array[cmdStart+3] == 'l' &&
+		array[cmdStart+4] == 'i' &&
+		array[cmdStart+5] == 's' &&
+		array[cmdStart+6] == 'h' {
 		header.command = CommandPublish
 	} else {
 		header.command = commandBytesToInt(array[cmdStart:cmdEnd])

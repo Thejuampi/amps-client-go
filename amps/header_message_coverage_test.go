@@ -23,6 +23,9 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	if _, ok := parseUint32Value([]byte("4294967296")); ok {
 		t.Fatalf("overflow parseUint32Value should fail")
 	}
+	if _, ok := parseUint32Value([]byte("18446744073709551616")); ok {
+		t.Fatalf("wrapped parseUint32Value should fail")
+	}
 	if _, ok := parseUint32Value(nil); ok {
 		t.Fatalf("empty parseUint32Value should fail")
 	}

@@ -1,7 +1,19 @@
 package amps
 
-import "errors"
-import "strconv"
+import (
+	"errors"
+	"strconv"
+)
+
+func isValidSliceRange(value []byte, offset int, length int) bool {
+	if offset < 0 || length < 0 {
+		return false
+	}
+	if offset > len(value) || length > len(value)-offset {
+		return false
+	}
+	return true
+}
 
 // FixMessageBuilder builds protocol payload data for publish and helper APIs.
 type FixMessageBuilder struct {
@@ -76,9 +88,10 @@ func (fmb *FixMessageBuilder) AppendBytes(tag int, value []byte, offset int, len
 	if tag < 0 {
 		return errors.New("illegal argument: negative tag value used in FIX builder")
 	}
-	if offset < 0 || length < 0 || offset > len(value) || offset+length > len(value) {
+	if !isValidSliceRange(value, offset, length) {
 		return errors.New("illegal argument: invalid FIX value range")
 	}
+	var end = offset + length
 
 	tagValue := []byte(strconv.Itoa(tag))
 	tagSize := len(tagValue)
@@ -89,7 +102,7 @@ func (fmb *FixMessageBuilder) AppendBytes(tag int, value []byte, offset int, len
 
 	fmb.message = append(fmb.message, tagValue...)
 	fmb.message = append(fmb.message, '=')
-	fmb.message = append(fmb.message, value[offset:offset+length]...)
+	fmb.message = append(fmb.message, value[offset:end]...)
 	fmb.message = append(fmb.message, fmb.fieldSeparator)
 
 	return nil
