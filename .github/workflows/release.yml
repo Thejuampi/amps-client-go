@@ -34,11 +34,14 @@ jobs:
       RELEASE_DRY_RUN: ${{ github.event.inputs.dry_run }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          clean: false
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin "+refs/heads/main:refs/remotes/origin/main" --tags --prune
+          git checkout -B main refs/remotes/origin/main
 
       - name: Configure authenticated git remote
         shell: bash
