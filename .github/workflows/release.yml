@@ -38,6 +38,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          clean: false
 
       - name: Configure authenticated git remote
         shell: bash
