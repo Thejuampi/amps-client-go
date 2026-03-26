@@ -7,6 +7,11 @@ on:
         description: "Release version in X.Y.Z format"
         required: true
         type: string
+      runner_labels:
+        description: "JSON array of runs-on labels"
+        required: true
+        default: '["ubuntu-latest"]'
+        type: string
       dry_run:
         description: "Validate the full release flow without committing, tagging, pushing, or publishing"
         required: true
@@ -22,7 +27,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJson(github.event.inputs.runner_labels) }}
     env:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
       RELEASE_TAG: v${{ github.event.inputs.version }}
