@@ -246,6 +246,39 @@ func TestPostLogonRecoveryDoesNotReplayTrackedSubscribeTwice(t *testing.T) {
 	}
 }
 
+func TestPostLogonRecoveryDoesNotResubscribeAfterFailedUnsubscribe(t *testing.T) {
+	client := NewClient("recovery-unsubscribe-order")
+	failedConn := newTestConn()
+	client.connected.Store(true)
+	client.connection = failedConn
+	client.SetRetryOnDisconnect(true)
+
+	manager := NewDefaultSubscriptionManager()
+	client.SetSubscriptionManager(manager)
+	manager.Subscribe(func(*Message) error { return nil }, NewCommand("subscribe").SetTopic("orders").SetSubID("sub-unsub-retry"), AckTypeProcessed)
+
+	_ = failedConn.Close()
+
+	if err := client.Unsubscribe("sub-unsub-retry"); err == nil {
+		t.Fatalf("expected unsubscribe send failure")
+	}
+
+	replayConn := newTestConn()
+	client.connection = replayConn
+	client.connected.Store(true)
+	client.stopped.Store(false)
+
+	client.postLogonRecovery()
+
+	payload := string(replayConn.WrittenBytes())
+	if strings.Contains(payload, `"c":"subscribe"`) {
+		t.Fatalf("did not expect recovery to replay subscribe after failed unsubscribe, got %q", payload)
+	}
+	if !strings.Contains(payload, `"c":"unsubscribe"`) {
+		t.Fatalf("expected recovery to replay queued unsubscribe, got %q", payload)
+	}
+}
+
 func TestPostLogonRecoverySkipsPublishReplayedStateWhenReplayFails(t *testing.T) {
 	client := NewClient("recovery-publish-replay-failure")
 	client.SetPublishStore(&replayFailurePublishStore{

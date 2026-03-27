@@ -256,7 +256,8 @@ func (ms *MessageStream) Next() (message *Message) {
 			if len(ms.commandID) > 0 {
 				_ = ms.client.deleteRoute(ms.commandID)
 				ms.commandID = ""
-			} else if len(ms.queryID) > 0 {
+			}
+			if len(ms.queryID) > 0 {
 				_ = ms.client.deleteRoute(ms.queryID)
 				ms.queryID = ""
 			}
@@ -328,6 +329,7 @@ func (ms *MessageStream) Close() (err error) {
 			}
 
 			ms.commandID = ""
+			ms.queryID = ""
 			ms.unsubscribeID = ""
 		} else if len(ms.queryID) > 0 {
 

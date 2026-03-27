@@ -199,6 +199,25 @@ func queueSubCanAccept(sub *subscription) bool {
 	return queueInFlightCountForSub(sub) < sub.maxBacklog
 }
 
+func queueSubEligibleForDelivery(sub *subscription, topic string, payload []byte, publisher net.Conn) bool {
+	if sub == nil || !sub.isQueue {
+		return false
+	}
+	if sub.pullMode {
+		return false
+	}
+	if sub.paused.Load() {
+		return false
+	}
+	if publisher != nil && !*flagEcho && sub.conn == publisher {
+		return false
+	}
+	if !sub.matches(topic, payload) {
+		return false
+	}
+	return queueSubCanAccept(sub)
+}
+
 func selectQueuePublishTarget(topic string, payload []byte, publisher net.Conn) *subscription {
 	var eligible []*subscription
 
@@ -206,25 +225,7 @@ func selectQueuePublishTarget(topic string, payload []byte, publisher net.Conn) 
 		var ss = value.(*subscriberSet)
 		ss.mu.RLock()
 		for sub := range ss.subs {
-			if !sub.isQueue {
-				continue
-			}
-			if sub.pullMode {
-				continue
-			}
-			if sub.paused.Load() {
-				continue
-			}
-			if publisher != nil && !*flagEcho && sub.conn == publisher {
-				continue
-			}
-			if !topicMatches(topic, sub.topic) {
-				continue
-			}
-			if sub.filter != "" && len(payload) > 0 && !evaluateFilter(sub.filter, payload) {
-				continue
-			}
-			if !queueSubCanAccept(sub) {
+			if !queueSubEligibleForDelivery(sub, topic, payload, publisher) {
 				continue
 			}
 			eligible = append(eligible, sub)
@@ -396,13 +397,7 @@ func selectQueueRedeliveryTarget(lease *queueLease) *subscription {
 		var ss = value.(*subscriberSet)
 		ss.mu.RLock()
 		for sub := range ss.subs {
-			if !sub.isQueue {
-				continue
-			}
-			if sub.paused.Load() {
-				continue
-			}
-			if !topicMatches(lease.topic, sub.topic) {
+			if !queueSubEligibleForDelivery(sub, lease.topic, lease.payload, nil) {
 				continue
 			}
 			eligible = append(eligible, sub)

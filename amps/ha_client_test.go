@@ -391,6 +391,24 @@ func TestHAClientConnectAndLogonNoChooserFallsBackToClientURI(t *testing.T) {
 	}
 }
 
+func TestHAClientConnectAndLogonAfterDisconnectClearsStoppedState(t *testing.T) {
+	ha := NewHAClient("ha-reconnect-after-disconnect")
+	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:1/amps/json"})
+	ha.SetReconnectDelay(0)
+	ha.SetReconnectDelayStrategy(nil)
+	ha.SetTimeout(20 * time.Millisecond)
+
+	_ = ha.Disconnect()
+
+	err := ha.ConnectAndLogon()
+	if err == nil {
+		t.Fatalf("expected refused or timeout error after reconnect attempt")
+	}
+	if strings.Contains(err.Error(), "HAClient is stopped") {
+		t.Fatalf("expected exported ConnectAndLogon to clear stopped state after Disconnect, got %v", err)
+	}
+}
+
 func TestHAClientReconnectWaitNilStrategyUsesDelay(t *testing.T) {
 	ha := NewHAClient("ha-reconnect-wait")
 	d, err := ha.reconnectWait(nil, 42*time.Millisecond, "")

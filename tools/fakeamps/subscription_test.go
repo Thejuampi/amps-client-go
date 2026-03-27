@@ -383,6 +383,61 @@ func TestRequeueMessagePrefersDifferentQueueSubscriber(t *testing.T) {
 	removeQueueLease("requeue-key")
 }
 
+func TestRequeueMessageSkipsSubscribersWhoseFiltersRejectPayload(t *testing.T) {
+	var topic = "queue://orders.requeue.filter"
+
+	var connA, peerA = net.Pipe()
+	var connB, peerB = net.Pipe()
+	defer connA.Close()
+	defer peerA.Close()
+	defer connB.Close()
+	defer peerB.Close()
+
+	var stats connStats
+	var writerA = newConnWriter(connA, &stats)
+	var writerB = newConnWriter(connB, &stats)
+	defer writerA.close()
+	defer writerB.close()
+
+	var subA = &subscription{subID: "subA", topic: topic, writer: writerA, isQueue: true}
+	var subB = &subscription{subID: "subB", topic: topic, filter: `/kind = 'match'`, writer: writerB, isQueue: true}
+	registerSubscription(topic, subA)
+	registerSubscription(topic, subB)
+	defer unregisterSubscription(topic, subA)
+	defer unregisterSubscription(topic, subB)
+	defer removeQueueLease("requeue-filter-key")
+	defer func() {
+		queuePendingMu.Lock()
+		delete(queuePending, topic)
+		queuePendingMu.Unlock()
+		queueRedeliveryMu.Lock()
+		delete(queueRedeliveryCursor, topic)
+		queueRedeliveryMu.Unlock()
+	}()
+
+	var lease = &queueLease{
+		topic:       topic,
+		subID:       "subA",
+		sowKey:      "requeue-filter-key",
+		bookmark:    "bm-filter",
+		payload:     []byte(`{"kind":"different"}`),
+		timestamp:   "ts1",
+		messageType: "json",
+		leasePeriod: time.Second,
+	}
+
+	requeueMessage(lease)
+
+	if body, ok := tryReadFrameBodyFromConn(peerB, 100*time.Millisecond); ok {
+		t.Fatalf("expected filter-mismatched subscriber to receive no redelivery, got %s", body)
+	}
+
+	var pending = popPendingQueueMessage(topic)
+	if pending == nil || pending.sowKey != "requeue-filter-key" {
+		t.Fatalf("expected rejected redelivery to remain pending, got %#v", pending)
+	}
+}
+
 func TestRequeueMessageRoundRobinAcrossQueueSubscribers(t *testing.T) {
 	var topic = "queue://orders.roundrobin"
 

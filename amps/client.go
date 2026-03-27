@@ -2009,9 +2009,18 @@ func (client *Client) executeAsync(
 	commandID := client.makeCommandID()
 	command.SetCommandID(commandID)
 
+	stopUnsubscribeReplayTracking := func() {
+		if !retryCommandOnDisconnect || subscriptionManager == nil || command.header.command != CommandUnsubscribe {
+			return
+		}
+		subID, _ := command.SubID()
+		subscriptionManager.Unsubscribe(subID)
+	}
+
 	if !client.connected.Load() {
 		unlockClient()
 		if retryCommandOnDisconnect {
+			stopUnsubscribeReplayTracking()
 			client.queueRetryCommand(command, messageHandler)
 			return commandID, nil
 		}
@@ -2023,6 +2032,7 @@ func (client *Client) executeAsync(
 	var syncAckRouteID string
 	var systemAcks int
 	var openedSyncAck bool
+	var postSendCleanup func() error
 	userAcks, hasUserAcks := command.AckType()
 	var waitForProcessedAck = true
 
@@ -2143,27 +2153,28 @@ func (client *Client) executeAsync(
 
 		systemAcks = AckTypeNone
 		client.closeSyncAckProcessing()
+		stopUnsubscribeReplayTracking()
 		subID, hasSubID := command.SubID()
 		if !hasSubID || subID == "all" {
-			if err := client.clearRoutes(); err != nil {
-				return subID, errors.New("Error deleting routes")
+			postSendCleanup = func() error {
+				if err := client.clearRoutes(); err != nil {
+					return errors.New("Error deleting routes")
+				}
+				return nil
 			}
 		} else {
-
-			err := client.deleteRoute(subID)
-			if err != nil {
-				return subID, errors.New("Error deleting route")
-			}
 			var mappedRouteID = client.routeIDForUnsubscribe(subID)
-			if mappedRouteID != "" && mappedRouteID != subID {
-				err = client.deleteRoute(mappedRouteID)
-				if err != nil {
-					return subID, errors.New("Error deleting route")
+			postSendCleanup = func() error {
+				if err := client.deleteRoute(subID); err != nil {
+					return errors.New("Error deleting route")
 				}
+				if mappedRouteID != "" && mappedRouteID != subID {
+					if err := client.deleteRoute(mappedRouteID); err != nil {
+						return errors.New("Error deleting route")
+					}
+				}
+				return nil
 			}
-		}
-		if retryCommandOnDisconnect && subscriptionManager != nil {
-			subscriptionManager.Unsubscribe(subID)
 		}
 
 	case CommandFlush:
@@ -2262,6 +2273,11 @@ func (client *Client) executeAsync(
 			}
 
 			if result.Status {
+				if postSendCleanup != nil {
+					if err := postSendCleanup(); err != nil {
+						return routeID, err
+					}
+				}
 				return routeID, nil
 			}
 
@@ -2282,6 +2298,12 @@ func (client *Client) executeAsync(
 
 			client.handleSendFailure(command, sendErr)
 			return commandID, NewError(DisconnectedError, sendErr)
+		}
+
+		if postSendCleanup != nil {
+			if err := postSendCleanup(); err != nil {
+				return routeID, err
+			}
 		}
 
 		return routeID, nil

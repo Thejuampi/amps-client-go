@@ -144,6 +144,9 @@ func singleDefaultEndpoint(chooser ServerChooser) (string, Authenticator, bool) 
 
 // ConnectAndLogon loops through selected endpoints until connect and logon succeed or timeout occurs.
 func (ha *HAClient) ConnectAndLogon() error {
+	if ha != nil {
+		ha.stopped.Store(false)
+	}
 	return ha.connectAndLogon(context.Background())
 }
 

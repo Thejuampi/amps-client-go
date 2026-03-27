@@ -1289,6 +1289,79 @@ func TestClientUnsubscribeRemovesQueryBackedSubscriptionState(t *testing.T) {
 	}
 }
 
+func TestClientUnsubscribeSendFailureQueuesRetryAndStopsResubscribeTracking(t *testing.T) {
+	var client = NewClient("unsubscribe-send-failure-state")
+	var conn = newTestConn()
+	var handler = func(*Message) error { return nil }
+	var manager = NewDefaultSubscriptionManager()
+	var stream = newMessageStream(client)
+
+	client.connected.Store(true)
+	client.connection = conn
+	client.SetRetryOnDisconnect(true)
+	client.SetSubscriptionManager(manager)
+
+	manager.Subscribe(handler, NewCommand("subscribe").SetTopic("orders").SetSubID("sub-unsub-failure"), AckTypeProcessed)
+
+	stream.SetSubscription("qid-unsub-failure", "sub-unsub-failure")
+	client.routes.Store("qid-unsub-failure", handler)
+	client.messageStreams.Store("qid-unsub-failure", stream)
+	client.registerUnsubscribeRoute("sub-unsub-failure", "qid-unsub-failure")
+
+	_ = conn.Close()
+
+	if err := client.Unsubscribe("sub-unsub-failure"); err == nil {
+		t.Fatalf("expected unsubscribe send failure")
+	}
+
+	manager.lock.RLock()
+	_, tracked := manager.subscriptions["sub-unsub-failure"]
+	manager.lock.RUnlock()
+	if tracked {
+		t.Fatalf("expected unsubscribe send failure to stop subscription manager replay tracking")
+	}
+
+	var state = ensureClientState(client)
+	state.lock.Lock()
+	defer state.lock.Unlock()
+	if len(state.pendingRetry) != 1 {
+		t.Fatalf("expected one queued retry command after unsubscribe send failure, got %d", len(state.pendingRetry))
+	}
+	if command, _ := state.pendingRetry[0].command.Command(); command != "unsubscribe" {
+		t.Fatalf("expected queued retry command to remain unsubscribe, got %q", command)
+	}
+}
+
+func TestClientUnsubscribeWhileDisconnectedStopsResubscribeTracking(t *testing.T) {
+	var client = NewClient("unsubscribe-disconnected-state")
+	var manager = NewDefaultSubscriptionManager()
+
+	client.SetRetryOnDisconnect(true)
+	client.SetSubscriptionManager(manager)
+	manager.Subscribe(func(*Message) error { return nil }, NewCommand("subscribe").SetTopic("orders").SetSubID("sub-unsub-disconnected"), AckTypeProcessed)
+
+	if err := client.Unsubscribe("sub-unsub-disconnected"); err != nil {
+		t.Fatalf("expected disconnected unsubscribe to queue for retry, got %v", err)
+	}
+
+	manager.lock.RLock()
+	_, tracked := manager.subscriptions["sub-unsub-disconnected"]
+	manager.lock.RUnlock()
+	if tracked {
+		t.Fatalf("expected disconnected unsubscribe to stop subscription manager replay tracking")
+	}
+
+	var state = ensureClientState(client)
+	state.lock.Lock()
+	defer state.lock.Unlock()
+	if len(state.pendingRetry) != 1 {
+		t.Fatalf("expected one queued retry command after disconnected unsubscribe, got %d", len(state.pendingRetry))
+	}
+	if command, _ := state.pendingRetry[0].command.Command(); command != "unsubscribe" {
+		t.Fatalf("expected queued retry command to remain unsubscribe, got %q", command)
+	}
+}
+
 func TestExecuteAsyncDisconnectDuringRouteRegistrationDoesNotLeaveRoute(t *testing.T) {
 	var client = NewClient("execute-async-disconnect-registration")
 	var conn = newTestConn()
