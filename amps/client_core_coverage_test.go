@@ -451,6 +451,22 @@ func TestClientReadRoutineAdditionalBranches(t *testing.T) {
 	client.readRoutine()
 }
 
+func TestClientReadRoutineMalformedHeaderDisconnectsClient(t *testing.T) {
+	client := NewClient("read-routine-malformed-header")
+	conn := newTestConn()
+	client.connection = conn
+	client.connected.Store(true)
+	client.stopped.Store(false)
+	client.SetErrorHandler(func(error) {})
+
+	conn.enqueueRead(append(buildFramePrefix(1), byte('x')))
+	client.readRoutine()
+
+	if client.connected.Load() || client.connection != nil {
+		t.Fatalf("expected malformed header to disconnect client")
+	}
+}
+
 func TestClientSowAndSubscribeAsyncReadRoutineCopiesRetainedMessages(t *testing.T) {
 	var client = NewClient("read-routine-sow-copy")
 	var conn = newTestConn()
@@ -734,6 +750,29 @@ func TestClientAddSubscribeRouteDirectCoverage(t *testing.T) {
 
 	if handlerCalls != 3 {
 		t.Fatalf("expected filtered direct handler calls for first processed ack, completed ack, and publish, got %d", handlerCalls)
+	}
+}
+
+func TestClientAddSubscribeRouteDirectRemovesRouteOnFailedCompletedAck(t *testing.T) {
+	var client = NewClient("route-direct-failed-completed")
+	var err = client.addSubscribeRouteDirect("route-direct-failed-completed", func(*Message) error { return nil }, AckTypeProcessed|AckTypeCompleted, false)
+	if err != nil {
+		t.Fatalf("addSubscribeRouteDirect failed: %v", err)
+	}
+
+	var routeValue, exists = client.routes.Load("route-direct-failed-completed")
+	if !exists {
+		t.Fatalf("expected direct route to be stored")
+	}
+
+	var completedAckType = AckTypeCompleted
+	var failedAckMessage = &Message{header: &_Header{command: CommandAck, ackType: &completedAckType, status: []byte("failure")}}
+	err = routeValue.(func(*Message) error)(failedAckMessage)
+	if err != nil {
+		t.Fatalf("failed completed ack callback failed: %v", err)
+	}
+	if _, exists = client.routes.Load("route-direct-failed-completed"); exists {
+		t.Fatalf("expected failed completed ack to remove route")
 	}
 }
 

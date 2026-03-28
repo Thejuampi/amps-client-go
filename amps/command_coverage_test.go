@@ -170,6 +170,34 @@ func TestCommandSettersAndGettersCoverage(t *testing.T) {
 	if value, ok := command.Options(); !ok || value != "replace" {
 		t.Fatalf("unexpected options: %q ok=%v", value, ok)
 	}
+
+	messageCommand := cloneCommand(command)
+	messageCommand.SetSubIDs("s1,s2")
+	message := messageCommand.GetMessage()
+	if message == nil {
+		t.Fatalf("expected command message conversion")
+	}
+	if ack, ok := message.AckType(); !ok || ack != (AckTypeProcessed|AckTypeStats) {
+		t.Fatalf("unexpected converted ack type: %d ok=%v", ack, ok)
+	}
+	if batchSize, ok := message.BatchSize(); !ok || batchSize != 20 {
+		t.Fatalf("unexpected converted batch size: %d ok=%v", batchSize, ok)
+	}
+	if filter, ok := message.Filter(); !ok || filter != "/id > 10" {
+		t.Fatalf("unexpected converted filter: %q ok=%v", filter, ok)
+	}
+	if options, ok := message.Options(); !ok || options != "replace" {
+		t.Fatalf("unexpected converted options: %q ok=%v", options, ok)
+	}
+	if queryID, ok := message.QueryID(); !ok || queryID != "qid" {
+		t.Fatalf("unexpected converted query id: %q ok=%v", queryID, ok)
+	}
+	if subIDs, ok := message.SubIDs(); !ok || subIDs != "s1,s2" {
+		t.Fatalf("unexpected converted sub ids: %q ok=%v", subIDs, ok)
+	}
+	if topN, ok := message.TopN(); !ok || topN != 15 {
+		t.Fatalf("unexpected converted top_n: %d ok=%v", topN, ok)
+	}
 	if value, ok := command.OrderBy(); !ok || value != "/id desc" {
 		t.Fatalf("unexpected order by: %q ok=%v", value, ok)
 	}
@@ -331,6 +359,12 @@ func TestCommandNilReceiverCoverage(t *testing.T) {
 	var nilCommand *Command
 	if got := nilCommand.GetCommandEnum(); got != CommandUnknown {
 		t.Fatalf("nil command enum should be unknown, got %d", got)
+	}
+	if nilCommand.Data() != nil {
+		t.Fatalf("nil command data should be nil")
+	}
+	if got := nilCommand.GetTimeout(); got != 0 {
+		t.Fatalf("nil command timeout should be zero, got %d", got)
 	}
 	if nilCommand.SetCommandEnum(CommandPublish) != nil {
 		t.Fatalf("nil SetCommandEnum should return nil")

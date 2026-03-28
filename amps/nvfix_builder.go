@@ -38,7 +38,7 @@ func (nmb *NvfixMessageBuilder) checkCapacity(bytesNeeded int) {
 
 // Clear executes the exported clear operation.
 func (nmb *NvfixMessageBuilder) Clear() {
-	nmb.message = make([]byte, 0)
+	nmb.message = nmb.message[:0]
 	nmb.size = 0
 }
 

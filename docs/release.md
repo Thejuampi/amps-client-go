@@ -1,6 +1,6 @@
 # Release Process
 
-Strict releases in this repository are driven by `make release` from an environment that has both:
+Strict local releases in this repository are driven by `make release` from an environment that has both:
 
 - the sibling C++ parity reference tree at `../amps-c++-client-5.3.5.1-Windows`
 - the ability to build and run `tools/fakeamps`
@@ -52,9 +52,14 @@ Run it from `main` on a machine that has the sibling C++ reference tree.
 
 ## GitHub Actions Release Workflow
 
-The `Release` workflow also uses the strict release gates, but it requires a prepared runner with the sibling C++ reference tree available at `../amps-c++-client-5.3.5.1-Windows`.
+The `Release` workflow runs `make release-hosted`.
 
-If that tree is missing, the workflow must fail rather than skip parity.
+That keeps the same release gates as local release, except parity is conditional:
+
+- if `../amps-c++-client-5.3.5.1-Windows` exists on the runner, parity runs
+- if it does not exist, parity is skipped and the rest of the hosted release gates still run
+
+Use local `make release` when you need the full strict parity-validated release path.
 
 ## One-time Setup
 
@@ -108,7 +113,7 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - fakeamps-backed `./amps` integration tests pass.
 - `tools/fakeamps` integration tests pass.
 - Coverage gate passes.
-- Parity check passes with the sibling C++ reference tree present.
+- Parity check passes when the sibling C++ reference tree is present.
 - Perf gate passes.
 
 ## What Gets Published
@@ -130,9 +135,9 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - Validation fails:
   - Fix the failing code or tests, then rerun the workflow.
 
-- Workflow fails because the C++ reference tree is missing:
-  - Use a prepared runner that provides `../amps-c++-client-5.3.5.1-Windows`.
-  - Or perform the strict release locally with `release.local.ps1`.
+- Workflow ran without parity because the C++ reference tree is missing:
+  - Use a runner that provides `../amps-c++-client-5.3.5.1-Windows` if you want parity in GitHub Actions.
+  - Or perform the strict local release path with `release.local.ps1`.
 
 ## Verification
 

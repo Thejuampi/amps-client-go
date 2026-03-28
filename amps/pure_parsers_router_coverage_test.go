@@ -113,6 +113,18 @@ func TestCompositeMessageBuilderAndParserErrorCoverage(t *testing.T) {
 	}
 }
 
+func TestCompositeMessageBuilderClearPreservesCapacity(t *testing.T) {
+	builder := NewCompositeMessageBuilder()
+	if err := builder.Append("alpha"); err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	beforeCap := cap(builder.GetBytes())
+	builder.Clear()
+	if cap(builder.GetBytes()) != beforeCap {
+		t.Fatalf("expected composite builder clear to preserve capacity")
+	}
+}
+
 func TestFixAndNVFixBuildersCoverage(t *testing.T) {
 	fixBuilder := NewFIXBuilder()
 	if fixBuilder == nil {
@@ -230,6 +242,30 @@ func TestFixAndNVFixBuildersRangeErrorsCoverage(t *testing.T) {
 	}
 	if err := nvBuilder.AppendBytes([]byte("k"), []byte("v"), 0, 2); err == nil {
 		t.Fatalf("expected value offset+length out-of-range error")
+	}
+}
+
+func TestFIXBuilderClearPreservesCapacity(t *testing.T) {
+	builder := NewFIXBuilder()
+	if err := builder.Append(35, "A"); err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	beforeCap := cap(builder.Bytes())
+	builder.Clear()
+	if cap(builder.Bytes()) != beforeCap {
+		t.Fatalf("expected FIX builder clear to preserve capacity")
+	}
+}
+
+func TestNVFIXBuilderClearPreservesCapacity(t *testing.T) {
+	builder := NewNVFIXBuilder()
+	if err := builder.AppendStrings("k", "v"); err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	beforeCap := cap(builder.Bytes())
+	builder.Clear()
+	if cap(builder.Bytes()) != beforeCap {
+		t.Fatalf("expected NVFIX builder clear to preserve capacity")
 	}
 }
 

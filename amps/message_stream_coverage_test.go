@@ -183,6 +183,108 @@ func TestMessageStreamHasNextAndMessageHandlerCoverage(t *testing.T) {
 	}
 }
 
+func TestMessageStreamCloseRemovesQueryRouteForCommandBackedNonSubscription(t *testing.T) {
+	client := NewClient("stream-close-query-route")
+	stream := newMessageStream(client)
+	stream.commandID = "cmd-9"
+	stream.queryID = "qid-9"
+	stream.setStatsOnly()
+	client.routes.Store("cmd-9", func(*Message) error { return nil })
+	client.routes.Store("qid-9", func(*Message) error { return nil })
+
+	if err := stream.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+	if _, ok := client.routes.Load("cmd-9"); ok {
+		t.Fatalf("expected command route removed")
+	}
+	if _, ok := client.routes.Load("qid-9"); ok {
+		t.Fatalf("expected query route removed")
+	}
+	if stream.commandID != "" || stream.queryID != "" || stream.unsubscribeID != "" {
+		t.Fatalf("expected ids cleared after close")
+	}
+	if stream.state != messageStreamStateComplete {
+		t.Fatalf("expected complete state after close")
+	}
+}
+
+func TestMessageStreamNextClearsIDsWhenClientMissing(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.commandID = "cid-missing"
+	stream.queryID = "qid-missing"
+	stream.setSowOnly()
+	stream.current = &Message{header: &_Header{command: CommandGroupEnd}}
+
+	if message := stream.Next(); message == nil {
+		t.Fatalf("expected group-end message")
+	}
+	if stream.commandID != "" || stream.queryID != "" {
+		t.Fatalf("expected clientless cleanup to clear ids")
+	}
+}
+
+func TestMessageStreamCloseQueryOnlySubscribedPath(t *testing.T) {
+	client := NewClient("stream-close-query-only")
+	stream := newMessageStream(client)
+	stream.queryID = "qid-only"
+	stream.setState(messageStreamStateComplete)
+
+	err := stream.Close()
+	if err == nil {
+		t.Fatalf("expected query-only close on completed stream to attempt unsubscribe")
+	}
+	if stream.queryID != "" {
+		t.Fatalf("expected query id cleared after close")
+	}
+}
+
+func TestMessageStreamCloseQueryOnlyNonCompleteRemovesRoute(t *testing.T) {
+	client := NewClient("stream-close-query-only-remove")
+	stream := newMessageStream(client)
+	stream.queryID = "qid-remove"
+	client.routes.Store("qid-remove", func(*Message) error { return nil })
+
+	if err := stream.Close(); err != nil {
+		t.Fatalf("expected query-only non-complete close to succeed, got %v", err)
+	}
+	if _, ok := client.routes.Load("qid-remove"); ok {
+		t.Fatalf("expected query route removed")
+	}
+}
+
+func TestMessageStreamCloseNilClientClearsAllIDs(t *testing.T) {
+	stream := newMessageStream(nil)
+	stream.commandID = "cid-nil"
+	stream.queryID = "qid-nil"
+	stream.unsubscribeID = "unsub-nil"
+
+	if err := stream.Close(); err != nil {
+		t.Fatalf("expected nil-client close to succeed, got %v", err)
+	}
+	if stream.commandID != "" || stream.queryID != "" || stream.unsubscribeID != "" {
+		t.Fatalf("expected nil-client close to clear all ids")
+	}
+}
+
+func TestMessageStreamCloseSubscribedFallsBackToCommandIDWhenUnsubscribeIDEmpty(t *testing.T) {
+	client := NewClient("stream-close-unsub-fallback")
+	client.connected.Store(true)
+	client.connection = newTestConn()
+
+	stream := newMessageStream(client)
+	stream.commandID = "cmd-fallback"
+	stream.unsubscribeID = ""
+	stream.setState(messageStreamStateSubscribed)
+
+	if err := stream.Close(); err != nil {
+		t.Fatalf("expected subscribed close fallback to succeed, got %v", err)
+	}
+	if stream.commandID != "" || stream.unsubscribeID != "" {
+		t.Fatalf("expected ids cleared after subscribed close fallback")
+	}
+}
+
 func TestMessageStreamConflateOnlyAppliesToSubscriptions(t *testing.T) {
 	stream := newMessageStream(nil)
 	stream.Conflate()

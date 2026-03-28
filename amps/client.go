@@ -20,7 +20,7 @@ import (
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.8.6"
+	ClientVersion = "0.8.7"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
@@ -606,13 +606,13 @@ func (client *Client) readRoutine() {
 
 			filteredFrame := client.applyTransportFilter(TransportFilterInbound, client.receiveBuffer[client.readPosition:endByte])
 			if len(filteredFrame) < 4 {
-				client.onError(NewError(ProtocolError, "invalid inbound frame"))
+				client.onConnectionError(NewError(ProtocolError, "invalid inbound frame"))
 				return
 			}
 
 			left, err := parseHeader(client.message, true, filteredFrame[4:])
 			if err != nil {
-				client.onError(NewError(ProtocolError))
+				client.onConnectionError(NewError(ProtocolError, err))
 				return
 			}
 
@@ -621,23 +621,23 @@ func (client *Client) readRoutine() {
 
 					left, err = parseHeader(client.message, false, left)
 					if err != nil {
-						client.onError(NewError(ProtocolError, err))
+						client.onConnectionError(NewError(ProtocolError, err))
 						return
 					}
 
 					if client.message.header.messageLength == nil {
-						client.onError(NewError(ProtocolError, "SOW record missing message length"))
+						client.onConnectionError(NewError(ProtocolError, "SOW record missing message length"))
 						return
 					}
 
 					dataLength := *client.message.header.messageLength
 					if dataLength > uint(len(left)) {
-						client.onError(NewError(ProtocolError, "SOW record payload exceeds frame bounds"))
+						client.onConnectionError(NewError(ProtocolError, "SOW record payload exceeds frame bounds"))
 						return
 					}
 					maxInt := int(^uint(0) >> 1)
 					if dataLength > uint(maxInt) {
-						client.onError(NewError(ProtocolError, "SOW record payload length exceeds int bounds"))
+						client.onConnectionError(NewError(ProtocolError, "SOW record payload length exceeds int bounds"))
 						return
 					}
 					dataLengthValue := int(dataLength) // #nosec G115 -- checked bounds above
@@ -1094,7 +1094,7 @@ func shouldDeleteFailedSubscribeRoute(message *Message) bool {
 	}
 
 	ack, hasAck := message.AckType()
-	if !hasAck || ack != AckTypeProcessed {
+	if !hasAck || (ack != AckTypeProcessed && ack != AckTypeCompleted) {
 		return false
 	}
 
@@ -1546,16 +1546,24 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		}
 
 		connection, err := clientTLSDialContext(ctx, dialNetwork, parsedURI.Host, client.tlsConfig)
-		client.connection = connection
 		if err != nil {
+			if connection != nil {
+				_ = connection.Close()
+			}
+			client.connection = nil
 			return classifyDialError(err)
 		}
+		client.connection = connection
 	} else {
 		connection, err := clientNetDialContext(ctx, dialNetwork, parsedURI.Host)
-		client.connection = connection
 		if err != nil {
+			if connection != nil {
+				_ = connection.Close()
+			}
+			client.connection = nil
 			return classifyDialError(err)
 		}
+		client.connection = connection
 	}
 	if err := applySocketOptions(client.connection, socketOptions); err != nil {
 		_ = client.connection.Close()
@@ -2494,7 +2502,6 @@ func (client *Client) Unsubscribe(subID ...string) error {
 func (client *Client) Disconnect() (err error) {
 	client.closeSyncAckProcessing()
 	client.lock.Lock()
-	defer client.lock.Unlock()
 	client.markManualDisconnect(true)
 	if state := ensureClientState(client); state != nil {
 		state.lock.Lock()
@@ -2511,13 +2518,9 @@ func (client *Client) Disconnect() (err error) {
 	client.connected.Store(false)
 	client.logging = false
 	client.stopped.Store(true)
+	var connection = client.connection
+	client.connection = nil
 	client.connectionStateLock.Unlock()
-	client.signalDisconnect()
-	client.notifyConnectionState(ConnectionStateShutdown)
-
-	if err = client.clearRoutes(); err != nil {
-		return NewError(ConnectionError, err)
-	}
 
 	client.heartbeatLock.Lock()
 	if client.heartbeatTimeoutID != nil {
@@ -2526,11 +2529,14 @@ func (client *Client) Disconnect() (err error) {
 	}
 	client.heartbeatTimestamp = 0
 	client.heartbeatLock.Unlock()
+	client.lock.Unlock()
 
-	client.connectionStateLock.Lock()
-	var connection = client.connection
-	client.connection = nil
-	client.connectionStateLock.Unlock()
+	client.signalDisconnect()
+	client.notifyConnectionState(ConnectionStateShutdown)
+
+	if err = client.clearRoutes(); err != nil {
+		return NewError(ConnectionError, err)
+	}
 
 	if connection != nil {
 		client.closeSyncAckProcessing()

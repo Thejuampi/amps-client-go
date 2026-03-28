@@ -8,6 +8,19 @@ import (
 )
 
 func TestHeaderParseAndWriteCoverage(t *testing.T) {
+	roundTripHeader := newHeader()
+	roundTripHeader.messageType = []byte("json")
+	roundTripBuffer := bytes.NewBuffer(nil)
+	if err := roundTripHeader.write(roundTripBuffer); err != nil {
+		t.Fatalf("messageType round-trip write failed: %v", err)
+	}
+	roundTripMessage := &Message{header: new(_Header)}
+	if _, err := parseHeader(roundTripMessage, true, roundTripBuffer.Bytes()); err != nil {
+		t.Fatalf("messageType round-trip parse failed: %v", err)
+	}
+	if string(roundTripMessage.header.messageType) != "json" {
+		t.Fatalf("expected messageType to survive round-trip, got %q", string(roundTripMessage.header.messageType))
+	}
 	if _, ok := parseUintBytes(nil); ok {
 		t.Fatalf("empty parseUintBytes should fail")
 	}
@@ -155,6 +168,25 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 		t.Fatalf("expected empty header encoding, got %q", noCommand.String())
 	}
 
+	unknownCommand := bytes.NewBuffer(nil)
+	unknownHeader := newHeader()
+	if err := unknownHeader.write(unknownCommand); err != nil {
+		t.Fatalf("unknown header write failed: %v", err)
+	}
+	if unknownCommand.String() != "{}" {
+		t.Fatalf("expected unknown command header to omit c, got %q", unknownCommand.String())
+	}
+
+	messageTypeOnly := bytes.NewBuffer(nil)
+	typedHeader := newHeader()
+	typedHeader.messageType = []byte("json")
+	if err := typedHeader.write(messageTypeOnly); err != nil {
+		t.Fatalf("messageType-only header write failed: %v", err)
+	}
+	if !strings.Contains(messageTypeOnly.String(), `"mt":"json"`) {
+		t.Fatalf("expected messageType to be serialized without version, got %q", messageTypeOnly.String())
+	}
+
 	var nilMessage *Message
 	if _, err := parseHeader(nilMessage, true, []byte("{}")); err == nil {
 		t.Fatalf("expected parseHeader nil message error")
@@ -287,6 +319,20 @@ func TestParseHeaderMalformedAndStateCoverage(t *testing.T) {
 	if _, err := parseHeader(message, true, []byte("{\"c\":\"p\",\"f\\\"ilter\":\"v\\\\x\"}")); err != nil {
 		t.Fatalf("expected escaped key/value parse to succeed: %v", err)
 	}
+
+	if _, err := parseHeader(message, true, []byte(`{"bs": 2, "e": 42, "s": 99}`)); err != nil {
+		t.Fatalf("expected numeric fields with whitespace to parse: %v", err)
+	}
+
+	message.header.topic = []byte("existing-topic")
+	message.header.command = CommandPublish
+	if _, err := parseHeader(message, false, []byte(`{"c":"ack","bs":2,`)); err == nil {
+		t.Fatalf("expected malformed header error")
+	}
+	topic, hasTopic := message.Topic()
+	if !hasTopic || topic != "existing-topic" || message.header.command != CommandPublish {
+		t.Fatalf("expected parse failure to leave existing header state unchanged")
+	}
 }
 
 func TestMessageCopyAndReplaceCoverage(t *testing.T) {
@@ -314,6 +360,7 @@ func TestMessageCopyAndReplaceCoverage(t *testing.T) {
 	message.header.messageLength = func() *uint { v := uint(6); return &v }()
 	message.header.options = []byte("opts")
 	message.header.orderBy = []byte("/id desc")
+	message.header.clientName = []byte("client")
 	message.header.queryID = []byte("qid")
 	message.header.reason = []byte("reason")
 	message.header.recordsDeleted = func() *uint { v := uint(7); return &v }()
@@ -331,15 +378,25 @@ func TestMessageCopyAndReplaceCoverage(t *testing.T) {
 	message.header.topic = []byte("topic")
 	message.header.topicMatches = func() *uint { v := uint(13); return &v }()
 	message.header.userID = []byte("user")
+	message.header.password = []byte("secret")
+	message.header.version = []byte("5.3.5.1")
+	message.header.messageType = []byte("json")
 
 	copied := message.Copy()
 	if copied == nil || copied == message {
 		t.Fatalf("expected independent copy")
 	}
+	if string(copied.header.password) != "secret" || string(copied.header.version) != "5.3.5.1" || string(copied.header.messageType) != "json" || string(copied.header.clientName) != "client" {
+		t.Fatalf("expected copy to preserve internal header fields")
+	}
 	copied.data[0] = 'X'
 	copied.header.commandID[0] = 'X'
+	copied.header.password[0] = 'S'
 	if string(message.data) != "payload" || string(message.header.commandID) != "cid" {
 		t.Fatalf("copy mutation should not affect source")
+	}
+	if string(message.header.password) != "secret" {
+		t.Fatalf("password copy mutation should not affect source")
 	}
 
 	replacement := &Message{header: new(_Header)}
@@ -552,6 +609,28 @@ func TestMessageAccessorsCoverage(t *testing.T) {
 		t.Fatalf("expected reset valid message")
 	}
 
+	var nilInternal *Message
+	nilInternal.reset()
+	nilInternal.resetForParse()
+
+	zeroMessage := &Message{}
+	zeroMessage.reset()
+	if zeroMessage.header == nil || zeroMessage.header.command != CommandUnknown || !zeroMessage.valid || zeroMessage.rawTransmissionUnixNano == 0 {
+		t.Fatalf("expected reset to initialize zero-value message")
+	}
+
+	parseResetMessage := &Message{}
+	parseResetMessage.resetForParse()
+	if parseResetMessage.header == nil || parseResetMessage.header.command != CommandUnknown || !parseResetMessage.valid || parseResetMessage.rawTransmissionUnixNano != 0 {
+		t.Fatalf("expected resetForParse to initialize zero-value message")
+	}
+
+	parsedMessage := &Message{}
+	leftover, err := parseHeader(parsedMessage, false, []byte(`{"t":"orders"}tail`))
+	if err != nil || string(leftover) != "tail" {
+		t.Fatalf("expected parseHeader without reset to initialize header, left=%q err=%v", string(leftover), err)
+	}
+
 	var nilMsg *Message
 	if nilMsg.SetAckTypeEnum(1) != nil {
 		t.Fatalf("expected nil SetAckTypeEnum")
@@ -570,7 +649,7 @@ func TestMessageAccessorsCoverage(t *testing.T) {
 		t.Fatalf("expected nil DeepCopy")
 	}
 	nilMsg.Disown()
-	if nilMsg.GetBookmarkSeqNo() != 0 || nilMsg.GetIgnoreAutoAck() || nilMsg.GetMessage() != nil || nilMsg.GetRawData() != nil || nilMsg.GetRawTransmissionTime() != "" || nilMsg.GetSubscriptionHandle() != "" {
+	if nilMsg.GetBookmarkSeqNo() != 0 || nilMsg.GetIgnoreAutoAck() || nilMsg.GetMessage() != nil || nilMsg.GetRawData() != nil || nilMsg.GetRawTransmissionTime() != "" || nilMsg.GetSubscriptionHandle() != "" || nilMsg.Data() != nil {
 		t.Fatalf("unexpected nil message getter values")
 	}
 	if nilMsg.SetBookmarkSeqNo(1) != nil || nilMsg.SetIgnoreAutoAck(true) != nil || nilMsg.SetSubscriptionHandle("x") != nil || nilMsg.SetClientImpl(nil) != nil {

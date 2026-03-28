@@ -127,3 +127,31 @@ func TestFileBookmarkStoreAppendUpsertForWritesExistingRecord(t *testing.T) {
 		t.Fatalf("expected WAL replay to recover bookmark, got %q", mostRecent)
 	}
 }
+
+func TestNewFileBookmarkStoreWithOptionsHidesPartialStateAfterReplayError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmark_partial_state.json")
+	options := FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        false,
+		CheckpointInterval: 1,
+	}
+
+	store := NewFileBookmarkStoreWithOptions(path, options)
+	if _, err := store.LogWithError(bookmarkMessage("sub-partial", "10|1|")); err != nil {
+		t.Fatalf("seed bookmark store failed: %v", err)
+	}
+	if err := os.WriteFile(path+".wal", []byte("not-json\n"), 0o600); err != nil {
+		t.Fatalf("write malformed wal: %v", err)
+	}
+
+	reloaded := NewFileBookmarkStoreWithOptions(path, options)
+	if err := reloaded.LoadError(); err == nil {
+		t.Fatalf("expected retained replay error")
+	}
+	if mostRecent := reloaded.GetMostRecent("sub-partial"); mostRecent != "" {
+		t.Fatalf("expected load error to hide partial bookmark state, got %q", mostRecent)
+	}
+	if oldest := reloaded.GetOldestBookmarkSeq("sub-partial"); oldest != 0 {
+		t.Fatalf("expected load error to hide partial bookmark sequence, got %d", oldest)
+	}
+}

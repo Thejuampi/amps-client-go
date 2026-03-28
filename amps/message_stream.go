@@ -81,12 +81,29 @@ func (ms *MessageStream) FromExistingHandler(handler func(*Message) error) *Mess
 	return ms
 }
 
+func (ms *MessageStream) resetForConfiguration() {
+	if ms == nil {
+		return
+	}
+	ms.current = nil
+	ms.timedOut.Store(false)
+	if ms.queue != nil {
+		ms.queue.clear()
+	}
+	ms.lock.Lock()
+	ms.sowKeyMap = nil
+	ms.lock.Unlock()
+}
+
 // SetAcksOnly configures the stream to consume ack-only responses.
 func (ms *MessageStream) SetAcksOnly(commandID string) *MessageStream {
 	if ms == nil {
 		return nil
 	}
+	ms.resetForConfiguration()
 	ms.commandID = commandID
+	ms.queryID = ""
+	ms.unsubscribeID = ""
 	ms.setState(messageStreamStateReading)
 	return ms
 }
@@ -96,8 +113,10 @@ func (ms *MessageStream) SetSOWOnly(commandID string, queryID string) *MessageSt
 	if ms == nil {
 		return nil
 	}
+	ms.resetForConfiguration()
 	ms.commandID = commandID
 	ms.queryID = queryID
+	ms.unsubscribeID = ""
 	ms.setSowOnly()
 	return ms
 }
@@ -107,10 +126,14 @@ func (ms *MessageStream) SetStatsOnly(commandID string, queryID ...string) *Mess
 	if ms == nil {
 		return nil
 	}
+	ms.resetForConfiguration()
 	ms.commandID = commandID
 	if len(queryID) > 0 {
 		ms.queryID = queryID[0]
+	} else {
+		ms.queryID = ""
 	}
+	ms.unsubscribeID = ""
 	ms.setStatsOnly()
 	return ms
 }
@@ -120,6 +143,7 @@ func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, q
 	if ms == nil {
 		return nil
 	}
+	ms.resetForConfiguration()
 	ms.commandID = routeID
 	ms.unsubscribeID = routeID
 	if unsubscribeID != "" {
@@ -127,6 +151,8 @@ func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, q
 	}
 	if len(queryID) > 0 {
 		ms.queryID = queryID[0]
+	} else {
+		ms.queryID = ""
 	}
 	ms.setState(messageStreamStateSubscribed)
 	return ms
@@ -234,45 +260,32 @@ func (ms *MessageStream) Next() (message *Message) {
 	returnVal := ms.current
 	ms.current = nil
 
-	const (
-		cleanupQueryOnly = iota
-		cleanupCommandThenQuery
-	)
-
-	cleanupRoutes := func(mode int) {
+	cleanupRoutes := func() {
 		if ms.client == nil {
 			ms.commandID = ""
 			ms.queryID = ""
 			return
 		}
 
-		switch mode {
-		case cleanupQueryOnly:
-			if len(ms.queryID) > 0 {
-				_ = ms.client.deleteRoute(ms.queryID)
-				ms.queryID = ""
-			}
-		case cleanupCommandThenQuery:
-			if len(ms.commandID) > 0 {
-				_ = ms.client.deleteRoute(ms.commandID)
-				ms.commandID = ""
-			}
-			if len(ms.queryID) > 0 {
-				_ = ms.client.deleteRoute(ms.queryID)
-				ms.queryID = ""
-			}
+		if len(ms.commandID) > 0 {
+			_ = ms.client.deleteRoute(ms.commandID)
+			ms.commandID = ""
+		}
+		if len(ms.queryID) > 0 {
+			_ = ms.client.deleteRoute(ms.queryID)
+			ms.queryID = ""
 		}
 	}
 
 	var state = atomic.LoadInt32(&ms.state)
 	if state == messageStreamStateSOWOnly && returnVal != nil && returnVal.header.command == CommandGroupEnd {
 		ms.setState(messageStreamStateComplete)
-		cleanupRoutes(cleanupQueryOnly)
+		cleanupRoutes()
 	} else if state == messageStreamStateStatsOnly && returnVal != nil {
 		ackType, hasAckType := returnVal.AckType()
 		if hasAckType && ackType == AckTypeStats {
 			ms.setState(messageStreamStateComplete)
-			cleanupRoutes(cleanupCommandThenQuery)
+			cleanupRoutes()
 		}
 	}
 
@@ -301,22 +314,29 @@ func (ms *MessageStream) isConflating() bool {
 
 // Close is an alias for Disconnect.
 func (ms *MessageStream) Close() (err error) {
+	removeMessageStream := func(routeID string) {
+		ms.client.messageStreams.Delete(routeID)
+	}
+	removeRoute := func(routeID string) {
+		ms.client.routes.Delete(routeID)
+	}
+
 	if ms.client == nil {
 		ms.commandID = ""
 		ms.queryID = ""
 		ms.unsubscribeID = ""
 	} else {
 		if len(ms.commandID) > 0 {
-			ms.client.messageStreams.Delete(ms.commandID)
+			removeMessageStream(ms.commandID)
 		}
 		if len(ms.queryID) > 0 {
-			ms.client.messageStreams.Delete(ms.queryID)
+			removeMessageStream(ms.queryID)
 		}
 		if len(ms.commandID) > 0 {
 
 			if atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed {
 				if ms.queryID != "" && ms.queryID != ms.unsubscribeID {
-					ms.client.routes.Delete(ms.queryID)
+					removeRoute(ms.queryID)
 				}
 				ms.setState(messageStreamStateComplete)
 				if ms.unsubscribeID != "" {
@@ -325,7 +345,10 @@ func (ms *MessageStream) Close() (err error) {
 					err = ms.client.Unsubscribe(ms.commandID)
 				}
 			} else {
-				ms.client.routes.Delete(ms.commandID)
+				removeRoute(ms.commandID)
+				if ms.queryID != "" && ms.queryID != ms.commandID {
+					removeRoute(ms.queryID)
+				}
 			}
 
 			ms.commandID = ""
@@ -337,7 +360,7 @@ func (ms *MessageStream) Close() (err error) {
 				ms.setState(messageStreamStateComplete)
 				err = ms.client.Unsubscribe(ms.queryID)
 			} else {
-				ms.client.routes.Delete(ms.queryID)
+				removeRoute(ms.queryID)
 			}
 
 			ms.queryID = ""

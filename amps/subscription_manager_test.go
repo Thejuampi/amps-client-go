@@ -496,3 +496,53 @@ func TestDefaultSubscriptionManagerFailedResubscribeHandlerPanicReturnsError(t *
 		t.Fatalf("expected tracked replay state to remain after handler panic, got %d subscriptions", remainingSubscriptions)
 	}
 }
+
+func TestDefaultSubscriptionManagerSubscribeResumeTracksOnlyOwnedIDs(t *testing.T) {
+	manager := NewDefaultSubscriptionManager()
+	var existing = &trackedResumeGroup{
+		command:           NewCommand("subscribe").SetSubID("sub-a"),
+		requestedAckTypes: AckTypeProcessed,
+		members:           map[string]struct{}{"sub-a": {}},
+	}
+	manager.resumed["sub-a"] = existing
+	manager.resumedGroups[existing] = struct{}{}
+
+	manager.subscribeResume(NewCommand("subscribe").SetSubID("sub-a,sub-b"), AckTypeCompleted)
+
+	group := manager.resumed["sub-b"]
+	if group == nil || group == existing {
+		t.Fatalf("expected sub-b to be tracked by a new resume group")
+	}
+	subID, ok := group.command.SubID()
+	if !ok || subID != "sub-b" {
+		t.Fatalf("expected resume group command to track only owned ids, got %q ok=%v", subID, ok)
+	}
+	if len(manager.resumedGroups) != 2 {
+		t.Fatalf("expected two resume groups after overlap, got %d", len(manager.resumedGroups))
+	}
+}
+
+func TestTrackedResumeGroupConcurrentBookmarkSnapshot(t *testing.T) {
+	client := NewClient("resume-group-race")
+	client.SetBookmarkStore(&fixedBookmarkStore{recent: map[string]string{
+		"sub-a": "1|100|",
+		"sub-b": "2|200|",
+		"sub-c": "3|300|",
+	}})
+	group := &trackedResumeGroup{members: map[string]struct{}{"sub-a": {}, "sub-b": {}}}
+	done := make(chan struct{})
+
+	go func() {
+		for idx := 0; idx < 1000; idx++ {
+			_ = combinedResumeBookmark(client, group)
+		}
+		close(done)
+	}()
+
+	for idx := 0; idx < 1000; idx++ {
+		group.addMember("sub-c")
+		group.removeMember("sub-c")
+	}
+
+	<-done
+}

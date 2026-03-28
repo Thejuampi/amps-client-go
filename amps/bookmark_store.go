@@ -370,6 +370,7 @@ type FileBookmarkStore struct {
 	options            FileStoreOptions
 	opsSinceCheckpoint uint64
 	loadErr            error
+	sequenceExhausted  bool
 }
 
 // NewFileBookmarkStore returns a new FileBookmarkStore.
@@ -397,6 +398,48 @@ func (store *FileBookmarkStore) LoadError() error {
 	store.lock.RLock()
 	defer store.lock.RUnlock()
 	return store.loadErr
+}
+
+// GetMostRecent returns the current most recent value.
+func (store *FileBookmarkStore) GetMostRecent(subID string) string {
+	if store == nil || subID == "" {
+		return ""
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return ""
+	}
+	return store.MemoryBookmarkStore.GetMostRecent(subID)
+}
+
+// IsDiscarded reports whether discarded is true for the receiver.
+func (store *FileBookmarkStore) IsDiscarded(message *Message) bool {
+	if store == nil {
+		return false
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return false
+	}
+	return store.MemoryBookmarkStore.IsDiscarded(message)
+}
+
+// GetOldestBookmarkSeq returns the current oldest bookmark seq value.
+func (store *FileBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
+	if store == nil || subID == "" {
+		return 0
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return 0
+	}
+	return store.MemoryBookmarkStore.GetOldestBookmarkSeq(subID)
 }
 
 func (store *FileBookmarkStore) loadCheckpoint() error {
@@ -428,12 +471,22 @@ func (store *FileBookmarkStore) loadCheckpoint() error {
 		return err
 	}
 
+	maxSeqNo := uint64(0)
+	for _, entry := range state.Entries {
+		if entry.Record.SeqNo > maxSeqNo {
+			maxSeqNo = entry.Record.SeqNo
+		}
+	}
+	for _, value := range state.DiscardedUpTo {
+		if value > maxSeqNo {
+			maxSeqNo = value
+		}
+	}
+
 	store.lock.Lock()
 	defer store.lock.Unlock()
 
-	if state.NextSeqNo == 0 {
-		state.NextSeqNo = 1
-	}
+	state.NextSeqNo, store.sequenceExhausted = deriveNextStoreSequence(maxSeqNo, state.NextSeqNo)
 
 	store.nextSeqNo = state.NextSeqNo
 	store.records = make(map[string]map[string]*bookmarkRecord)
@@ -570,7 +623,7 @@ func (store *FileBookmarkStore) applyUpsertLocked(subID string, bookmark string,
 		store.discardedUpTo[subID] = copied.SeqNo
 	}
 	if copied.SeqNo >= store.nextSeqNo {
-		store.nextSeqNo = copied.SeqNo + 1
+		store.nextSeqNo, store.sequenceExhausted = advanceStoreSequence(copied.SeqNo)
 	}
 }
 
@@ -594,6 +647,7 @@ func (store *FileBookmarkStore) applyWalRecordLocked(record bookmarkWalRecord) {
 			store.mostRecent = make(map[string]string)
 			store.discardedUpTo = make(map[string]uint64)
 			store.nextSeqNo = 1
+			store.sequenceExhausted = false
 			return
 		}
 		for _, subID := range record.SubIDs {
@@ -695,6 +749,10 @@ func (store *FileBookmarkStore) LogWithError(message *Message) (uint64, error) {
 		record = *records[bookmark]
 		record.Count++
 	} else {
+		if store.sequenceExhausted {
+			store.lock.Unlock()
+			return 0, NewError(CommandError, "bookmark sequence space exhausted")
+		}
 		record = bookmarkRecord{SeqNo: store.nextSeqNo, Count: 1}
 	}
 

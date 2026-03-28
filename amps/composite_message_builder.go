@@ -9,7 +9,7 @@ type CompositeMessageBuilder struct {
 
 // Clear executes the exported clear operation.
 func (cmb *CompositeMessageBuilder) Clear() {
-	cmb.message = make([]byte, 0)
+	cmb.message = cmb.message[:0]
 }
 
 func (cmb *CompositeMessageBuilder) buildHeader(length int) {

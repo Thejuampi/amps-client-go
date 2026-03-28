@@ -4,6 +4,7 @@ import "encoding/json"
 
 type commandSnapshot struct {
 	Command       string  `json:"command"`
+	CommandEnum   *int    `json:"command_enum,omitempty"`
 	AckType       *int    `json:"ack_type,omitempty"`
 	BatchSize     *uint   `json:"batch_size,omitempty"`
 	Bookmark      string  `json:"bookmark,omitempty"`
@@ -33,6 +34,8 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 	snapshot := commandSnapshot{Data: nil}
 	if command.header != nil {
 		snapshot.Command = commandIntToString(command.header.command)
+		value := command.header.command
+		snapshot.CommandEnum = &value
 		if command.header.ackType != nil {
 			value := *command.header.ackType
 			snapshot.AckType = &value
@@ -102,6 +105,9 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 
 func commandFromSnapshot(snapshot commandSnapshot) *Command {
 	command := NewCommand(snapshot.Command)
+	if snapshot.CommandEnum != nil {
+		command.header.command = *snapshot.CommandEnum
+	}
 
 	if snapshot.AckType != nil {
 		value := *snapshot.AckType

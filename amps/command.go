@@ -315,7 +315,12 @@ func (com *Command) CorrelationID() (string, bool) {
 }
 
 // Data executes the exported data operation.
-func (com *Command) Data() []byte { return com.data }
+func (com *Command) Data() []byte {
+	if com == nil {
+		return nil
+	}
+	return com.data
+}
 
 // Expiration executes the exported expiration operation.
 func (com *Command) Expiration() (uint, bool) {
@@ -443,6 +448,9 @@ func (com *Command) SetSequence(sequence uint64) *Command {
 
 // GetTimeout returns the command timeout value in milliseconds.
 func (com *Command) GetTimeout() int {
+	if com == nil {
+		return 0
+	}
 	return com.timeout
 }
 

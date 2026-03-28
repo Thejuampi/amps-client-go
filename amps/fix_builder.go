@@ -64,7 +64,7 @@ func (fmb *FixMessageBuilder) checkCapacity(bytesNeeded int) {
 
 // Clear executes the exported clear operation.
 func (fmb *FixMessageBuilder) Clear() {
-	fmb.message = make([]byte, 0)
+	fmb.message = fmb.message[:0]
 	fmb.size = 0
 }
 

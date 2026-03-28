@@ -64,6 +64,18 @@ func TestRetryOnDisconnectToggleBehavior(t *testing.T) {
 	if pendingWithRetry != 1 {
 		t.Fatalf("expected one queued retry command when retry enabled, got %d", pendingWithRetry)
 	}
+
+	_, err = client.ExecuteAsync(NewCommand("sow_delete").SetTopic("orders").SetData([]byte(`{"id":1}`)), nil)
+	if err != nil {
+		t.Fatalf("expected SOW delete to queue for retry when retry enabled, got error: %v", err)
+	}
+
+	state.lock.Lock()
+	pendingWithSOWDelete := len(state.pendingRetry)
+	state.lock.Unlock()
+	if pendingWithSOWDelete != 2 {
+		t.Fatalf("expected SOW delete retry to be queued, got %d pending commands", pendingWithSOWDelete)
+	}
 }
 
 func TestTimerCommandPathWritesStartAndStop(t *testing.T) {
@@ -364,6 +376,12 @@ func TestHandleSendFailureOnlyForPublishCommands(t *testing.T) {
 	client.handleSendFailure(NewCommand("publish").SetTopic("orders").SetData([]byte("x")), errors.New("fail"))
 	if !called {
 		t.Fatalf("expected failed write callback for publish command")
+	}
+
+	called = false
+	client.handleSendFailure(NewCommand("sow_delete").SetTopic("orders").SetData([]byte("x")), errors.New("fail"))
+	if !called {
+		t.Fatalf("expected failed write callback for sow_delete command")
 	}
 }
 

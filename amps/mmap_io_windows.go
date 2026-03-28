@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 )
 
+var mmapSyncDirectory = syncDirectoryPath
+
 func mmapReadFile(path string) ([]byte, error) {
 	return os.ReadFile(path) // #nosec G304 -- path is configured by trusted caller
 }
@@ -27,5 +29,8 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 	if err := os.WriteFile(tmpPath, data, perm); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	return mmapSyncDirectory(directory)
 }

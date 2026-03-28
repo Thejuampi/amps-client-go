@@ -122,6 +122,8 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			}
 		case 'l':
 			header.leasePeriod = value
+		case 'm':
+			header.messageType = value
 		case 't':
 			header.timestamp = value
 		}
@@ -487,9 +489,10 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		_, _ = buffer.WriteString(closeNumberValue)
 	}
 
-	if header.command >= 0 {
+	command := commandIntToString(header.command)
+	if command != "" {
 		_, _ = buffer.WriteString(`"c":"`)
-		_, _ = buffer.WriteString(commandIntToString(header.command))
+		_, _ = buffer.WriteString(command)
 		_, _ = buffer.WriteString(closeStringValue)
 	}
 	if header.commandID != nil {
@@ -559,9 +562,9 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 	}
 	if header.version != nil {
 		writeStringField("version", header.version)
-		if header.messageType != nil {
-			writeStringField("mt", header.messageType)
-		}
+	}
+	if header.messageType != nil {
+		writeStringField("mt", header.messageType)
 	}
 
 	if buffer.Len() == 1 {

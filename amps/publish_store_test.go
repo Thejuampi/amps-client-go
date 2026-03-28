@@ -3,6 +3,7 @@ package amps
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -624,6 +625,28 @@ func TestFilePublishStoreWALFailurePaths(t *testing.T) {
 	}
 }
 
+func TestMemoryPublishStorePreservesCustomCommandEnum(t *testing.T) {
+	store := NewMemoryPublishStore()
+	command := NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":11}`))
+	const customCommand = 123456
+	command.SetCommandEnum(customCommand)
+
+	sequence, err := store.Store(command)
+	if err != nil || sequence == 0 {
+		t.Fatalf("store failed: seq=%d err=%v", sequence, err)
+	}
+
+	err = store.Replay(func(replayed *Command) error {
+		if replayed.GetCommandEnum() != customCommand {
+			t.Fatalf("expected replayed command enum %d, got %d", customCommand, replayed.GetCommandEnum())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("replay failed: %v", err)
+	}
+}
+
 func TestFilePublishStoreLoadPropagatesCheckpointError(t *testing.T) {
 	// load() calls loadCheckpoint() first; a parse failure there should be
 	// returned by load() without calling replayWal.
@@ -664,5 +687,116 @@ func TestNewFilePublishStoreWithOptionsRetainsLoadError(t *testing.T) {
 	}
 	if seq != 0 {
 		t.Fatalf("expected zero sequence when load failed, got %d", seq)
+	}
+	if err = store.Flush(10 * time.Millisecond); err == nil {
+		t.Fatalf("expected Flush to surface retained load error")
+	}
+}
+
+func TestNewFilePublishStoreWithOptionsHidesPartialStateAfterReplayError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_partial_state.json")
+	options := FileStoreOptions{
+		UseWAL:             true,
+		SyncOnWrite:        false,
+		CheckpointInterval: 1,
+	}
+
+	store := NewFilePublishStoreWithOptions(path, options)
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	if err != nil || sequence == 0 {
+		t.Fatalf("seed publish store failed: seq=%d err=%v", sequence, err)
+	}
+	if err := os.WriteFile(path+".wal", []byte("not-json\n"), 0o600); err != nil {
+		t.Fatalf("write malformed wal: %v", err)
+	}
+
+	reloaded := NewFilePublishStoreWithOptions(path, options)
+	if err := reloaded.LoadError(); err == nil {
+		t.Fatalf("expected retained replay error")
+	}
+	if count := reloaded.UnpersistedCount(); count != 0 {
+		t.Fatalf("expected load error to hide partial publish state, got %d", count)
+	}
+	if lowest := reloaded.GetLowestUnpersisted(); lowest != 0 {
+		t.Fatalf("expected load error to hide partial publish low watermark, got %d", lowest)
+	}
+	if err := reloaded.Replay(func(*Command) error { return nil }); err == nil {
+		t.Fatalf("expected Replay to surface retained load error")
+	}
+}
+
+func TestFilePublishStoreLoadCheckpointDerivesNextSequenceFromEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_next_seq.json")
+	state := publishStoreFileState{
+		NextSequence: 0,
+		Records: []publishStoreRecord{{
+			Sequence: 9,
+			Command:  snapshotFromCommand(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`))),
+		}},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal checkpoint failed: %v", err)
+	}
+	if err = os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write checkpoint failed: %v", err)
+	}
+
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":2}`)))
+	if err != nil {
+		t.Fatalf("store after reload failed: %v", err)
+	}
+	if sequence != 10 {
+		t.Fatalf("expected derived next sequence 10, got %d", sequence)
+	}
+}
+
+func TestFilePublishStoreRuntimeSequenceExhaustionRejectsNewCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_sequence_exhaustion.json")
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	store.nextSequence = math.MaxUint64
+
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	if err != nil || sequence != math.MaxUint64 {
+		t.Fatalf("expected first max sequence store to succeed, got seq=%d err=%v", sequence, err)
+	}
+
+	sequence, err = store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":2}`)))
+	if err == nil {
+		t.Fatalf("expected new command after max sequence to fail")
+	}
+	if sequence != 0 {
+		t.Fatalf("expected failed overflow store to return zero sequence, got %d", sequence)
+	}
+}
+
+func TestFilePublishStoreLoadCheckpointMaxSequenceRejectsNewCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "publish_store_max_checkpoint.json")
+	state := publishStoreFileState{
+		NextSequence: 0,
+		Records: []publishStoreRecord{{
+			Sequence: math.MaxUint64,
+			Command:  snapshotFromCommand(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`))),
+		}},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal checkpoint failed: %v", err)
+	}
+	if err = os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write checkpoint failed: %v", err)
+	}
+
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	if count := store.UnpersistedCount(); count != 1 {
+		t.Fatalf("expected checkpoint data to remain readable, got %d entries", count)
+	}
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":2}`)))
+	if err == nil {
+		t.Fatalf("expected exhausted checkpoint sequence to reject new command")
+	}
+	if sequence != 0 {
+		t.Fatalf("expected exhausted checkpoint store to return zero sequence, got %d", sequence)
 	}
 }

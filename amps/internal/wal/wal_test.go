@@ -195,3 +195,107 @@ func TestReplayIgnoresUnterminatedFinalLine(t *testing.T) {
 		t.Fatalf("unexpected replayed line: %q", lines[0])
 	}
 }
+
+func TestDurabilitySyncCoverage(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "ops.wal")
+	checkpointPath := filepath.Join(tempDir, "checkpoint.json")
+
+	originalSyncFile := syncFile
+	originalSyncDirectory := syncDirectory
+	defer func() {
+		syncFile = originalSyncFile
+		syncDirectory = originalSyncDirectory
+	}()
+
+	fileSyncs := 0
+	dirSyncs := 0
+	syncFile = func(*os.File) error {
+		fileSyncs++
+		return nil
+	}
+	syncDirectory = func(string) error {
+		dirSyncs++
+		return nil
+	}
+
+	if err := WriteAtomic(checkpointPath, []byte("checkpoint"), 0o600); err != nil {
+		t.Fatalf("writeatomic failed: %v", err)
+	}
+	if fileSyncs != 1 || dirSyncs != 1 {
+		t.Fatalf("expected writeatomic to sync file and directory once, got file=%d dir=%d", fileSyncs, dirSyncs)
+	}
+
+	fileSyncs = 0
+	dirSyncs = 0
+	if err := Append(logPath, []byte("first\n"), true); err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	if fileSyncs != 1 || dirSyncs != 1 {
+		t.Fatalf("expected first synced append to sync file and directory once, got file=%d dir=%d", fileSyncs, dirSyncs)
+	}
+
+	fileSyncs = 0
+	dirSyncs = 0
+	if err := Truncate(logPath); err != nil {
+		t.Fatalf("truncate failed: %v", err)
+	}
+	if fileSyncs != 1 || dirSyncs != 1 {
+		t.Fatalf("expected truncate to sync file and directory once, got file=%d dir=%d", fileSyncs, dirSyncs)
+	}
+}
+
+func TestDurabilitySyncErrorCoverage(t *testing.T) {
+	tempDir := t.TempDir()
+	checkpointPath := filepath.Join(tempDir, "checkpoint.json")
+	logPath := filepath.Join(tempDir, "ops.wal")
+	createPath := filepath.Join(tempDir, "ops-create.wal")
+
+	originalSyncFile := syncFile
+	originalSyncDirectory := syncDirectory
+	defer func() {
+		syncFile = originalSyncFile
+		syncDirectory = originalSyncDirectory
+	}()
+
+	syncFile = func(*os.File) error { return errors.New("sync file failed") }
+	if err := WriteAtomic(checkpointPath, []byte("checkpoint"), 0o600); err == nil {
+		t.Fatalf("expected writeatomic syncFile failure")
+	}
+	if err := Append(logPath, []byte("entry\n"), true); err == nil {
+		t.Fatalf("expected append syncFile failure")
+	}
+	if err := Truncate(logPath); err == nil {
+		t.Fatalf("expected truncate syncFile failure")
+	}
+
+	syncFile = func(*os.File) error { return nil }
+	syncDirectory = func(string) error { return errors.New("sync directory failed") }
+	if err := WriteAtomic(checkpointPath, []byte("checkpoint"), 0o600); err == nil {
+		t.Fatalf("expected writeatomic syncDirectory failure")
+	}
+	if err := Append(createPath, []byte("entry\n"), true); err == nil {
+		t.Fatalf("expected append syncDirectory failure on create path")
+	}
+	if err := Truncate(logPath); err == nil {
+		t.Fatalf("expected truncate syncDirectory failure")
+	}
+}
+
+func TestWriteAtomicCurrentDirectoryCoverage(t *testing.T) {
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	tempDir := t.TempDir()
+	if err = os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+
+	if err = WriteAtomic("checkpoint.local", []byte("checkpoint"), 0o600); err != nil {
+		t.Fatalf("writeatomic in current directory failed: %v", err)
+	}
+}

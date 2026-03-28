@@ -110,7 +110,7 @@ func (client *Client) shouldRetryCommand(commandType int) bool {
 	}
 
 	switch commandType {
-	case CommandSubscribe, CommandDeltaSubscribe, CommandSOW, CommandSOWAndSubscribe, CommandSOWAndDeltaSubscribe, CommandFlush, CommandUnsubscribe, commandStartTimer, commandStopTimer:
+	case CommandSubscribe, CommandDeltaSubscribe, CommandSOW, CommandSOWAndSubscribe, CommandSOWAndDeltaSubscribe, CommandSOWDelete, CommandFlush, CommandUnsubscribe, commandStartTimer, commandStopTimer:
 		return true
 	default:
 		return false
@@ -181,6 +181,14 @@ func commandToMessage(command *Command) *Message {
 	}
 
 	message.header.command = command.header.command
+	if command.header.ackType != nil {
+		ackType := *command.header.ackType
+		message.header.ackType = &ackType
+	}
+	if command.header.batchSize != nil {
+		batchSize := *command.header.batchSize
+		message.header.batchSize = &batchSize
+	}
 	if command.header.commandID != nil {
 		message.header.commandID = append([]byte(nil), command.header.commandID...)
 	}
@@ -197,15 +205,37 @@ func commandToMessage(command *Command) *Message {
 		var expiration = *command.header.expiration
 		message.header.expiration = &expiration
 	}
+	if command.header.filter != nil {
+		message.header.filter = append([]byte(nil), command.header.filter...)
+	}
+	if command.header.options != nil {
+		message.header.options = append([]byte(nil), command.header.options...)
+	}
+	if command.header.orderBy != nil {
+		message.header.orderBy = append([]byte(nil), command.header.orderBy...)
+	}
+	if command.header.queryID != nil {
+		message.header.queryID = append([]byte(nil), command.header.queryID...)
+	}
 	if command.header.sowKey != nil {
 		message.header.sowKey = append([]byte(nil), command.header.sowKey...)
+	}
+	if command.header.sowKeys != nil {
+		message.header.sowKeys = append([]byte(nil), command.header.sowKeys...)
 	}
 	if command.header.subID != nil {
 		message.header.subID = append([]byte(nil), command.header.subID...)
 	}
+	if command.header.subIDs != nil {
+		message.header.subIDs = append([]byte(nil), command.header.subIDs...)
+	}
 	if command.header.sequenceID != nil {
 		sequence := *command.header.sequenceID
 		message.header.sequenceID = &sequence
+	}
+	if command.header.topN != nil {
+		topN := *command.header.topN
+		message.header.topN = &topN
 	}
 	if command.data != nil {
 		message.data = append([]byte(nil), command.data...)
@@ -219,7 +249,7 @@ func (client *Client) handleSendFailure(command *Command, sendErr error) {
 		return
 	}
 
-	if command.header.command != CommandPublish && command.header.command != CommandDeltaPublish {
+	if command.header.command != CommandPublish && command.header.command != CommandDeltaPublish && command.header.command != CommandSOWDelete {
 		return
 	}
 

@@ -10,6 +10,8 @@ import (
 	"unsafe"
 )
 
+var mmapSyncDirectory = syncDirectoryPath
+
 func mmapReadFile(path string) (_ []byte, err error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -124,5 +126,8 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 		_ = os.Remove(tmpPath)
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err = os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	return mmapSyncDirectory(directory)
 }

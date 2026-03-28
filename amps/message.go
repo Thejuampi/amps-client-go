@@ -56,8 +56,14 @@ const (
 )
 
 func (msg *Message) reset() {
-	var header = ensureMessageHeader(msg)
-	if header != nil {
+	if msg == nil {
+		return
+	}
+	var header = msg.header
+	if header == nil {
+		header = newHeader()
+		msg.header = header
+	} else {
 		header.reset()
 	}
 	msg.data = nil
@@ -71,8 +77,14 @@ func (msg *Message) reset() {
 }
 
 func (msg *Message) resetForParse() {
-	var header = ensureMessageHeader(msg)
-	if header != nil {
+	if msg == nil {
+		return
+	}
+	var header = msg.header
+	if header == nil {
+		header = newHeader()
+		msg.header = header
+	} else {
 		header.reset()
 	}
 	msg.data = nil
@@ -89,38 +101,56 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 	if msg == nil {
 		return array, errors.New("message object error (null pointer)")
 	}
-
+	var header *_Header
 	if resetMessage {
 		msg.resetForParse()
+		header = ensureMessageHeader(msg)
+	} else {
+		header = ensureMessageHeader(msg)
 	}
-	if len(array) > 5 && array[0] == '"' {
-		if array[1] == 'c' && array[2] == '"' && array[3] == ':' && array[4] == '"' {
-			if end, ok := parseHeaderTrustedCTSubID(msg.header, array, 0); ok {
+
+	parseIntoHeader := func(target *_Header) ([]byte, error) {
+		if len(array) > 5 && array[0] == '"' {
+			if array[1] == 'c' && array[2] == '"' && array[3] == ':' && array[4] == '"' {
+				if end, ok := parseHeaderTrustedCTSubID(target, array, 0); ok {
+					return array[end:], nil
+				}
+			}
+			if array[1] == 't' && array[2] == '"' && array[3] == ':' {
+				if end, ok := parseHeaderTrustedTopicOnly(target, array, 0); ok {
+					return array[end:], nil
+				}
+			}
+		}
+		if len(array) > 6 && array[0] == '{' && array[1] == '"' && array[2] == 'c' && array[3] == '"' && array[4] == ':' && array[5] == '"' {
+			if end, ok := parseHeaderTrustedCTSubID(target, array, 1); ok {
 				return array[end:], nil
 			}
 		}
-		if array[1] == 't' && array[2] == '"' && array[3] == ':' {
-			if end, ok := parseHeaderTrustedTopicOnly(msg.header, array, 0); ok {
+		if len(array) > 5 && array[0] == '{' && array[1] == '"' && array[2] == 't' && array[3] == '"' && array[4] == ':' {
+			if end, ok := parseHeaderTrustedTopicOnly(target, array, 1); ok {
 				return array[end:], nil
 			}
 		}
-	}
-	if len(array) > 6 && array[0] == '{' && array[1] == '"' && array[2] == 'c' && array[3] == '"' && array[4] == ':' && array[5] == '"' {
-		if end, ok := parseHeaderTrustedCTSubID(msg.header, array, 1); ok {
+
+		if end, ok := parseHeaderTrusted(target, array); ok {
 			return array[end:], nil
 		}
+
+		return parseHeaderChecked(target, array)
 	}
-	if len(array) > 5 && array[0] == '{' && array[1] == '"' && array[2] == 't' && array[3] == '"' && array[4] == ':' {
-		if end, ok := parseHeaderTrustedTopicOnly(msg.header, array, 1); ok {
-			return array[end:], nil
+
+	if !resetMessage {
+		original := *header
+		left, err := parseIntoHeader(header)
+		if err != nil {
+			*header = original
+			return left, err
 		}
+		return left, nil
 	}
 
-	if end, ok := parseHeaderTrusted(msg.header, array); ok {
-		return array[end:], nil
-	}
-
-	return parseHeaderChecked(msg.header, array)
+	return parseIntoHeader(header)
 }
 
 func parseHeaderTrusted(header *_Header, array []byte) (int, bool) {
@@ -214,6 +244,9 @@ func parseHeaderTrusted(header *_Header, array []byte) (int, bool) {
 				return 0, false
 			}
 			valueEnd = index
+			if valueEnd == valueStart {
+				return 0, false
+			}
 		}
 
 		parseFieldTrusted(header, array[keyStart:keyEnd], array[valueStart:valueEnd])
@@ -338,9 +371,15 @@ func parseHeaderTrustedTopicOnly(header *_Header, array []byte, index int) (int,
 		if array[valueEnd] == '}' {
 			break
 		}
+		if array[valueEnd] == ',' || isJSONWhitespace(array[valueEnd]) || array[valueEnd] == '"' || array[valueEnd] == '\\' {
+			return 0, false
+		}
 		valueEnd++
 	}
 	if valueEnd >= n {
+		return 0, false
+	}
+	if valueEnd == valueStart {
 		return 0, false
 	}
 
@@ -457,10 +496,16 @@ func parseHeaderChecked(header *_Header, array []byte) ([]byte, error) {
 				valueStart = index + 1
 				escaped = false
 			case ',':
+				if valueStart == index {
+					return array, errors.New("malformed AMPS header")
+				}
 				state = inHeader
 				valueEnd = index
 				header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
 			case '}':
+				if valueStart == index {
+					return array, errors.New("malformed AMPS header")
+				}
 				header.parseField(array[keyStart:keyEnd], array[valueStart:index])
 				return array[index+1:], nil
 			}
@@ -536,6 +581,10 @@ func (msg *Message) Copy() *Message {
 		message.header.commandID = make([]byte, len(header.commandID))
 		copy(message.header.commandID, header.commandID)
 	}
+	if header.clientName != nil {
+		message.header.clientName = make([]byte, len(header.clientName))
+		copy(message.header.clientName, header.clientName)
+	}
 	if header.correlationID != nil {
 		message.header.correlationID = make([]byte, len(header.correlationID))
 		copy(message.header.correlationID, header.correlationID)
@@ -564,6 +613,10 @@ func (msg *Message) Copy() *Message {
 		msgLen := *header.messageLength
 		message.header.messageLength = &msgLen
 	}
+	if header.messageType != nil {
+		message.header.messageType = make([]byte, len(header.messageType))
+		copy(message.header.messageType, header.messageType)
+	}
 	if header.options != nil {
 		message.header.options = make([]byte, len(header.options))
 		copy(message.header.options, header.options)
@@ -571,6 +624,10 @@ func (msg *Message) Copy() *Message {
 	if header.orderBy != nil {
 		message.header.orderBy = make([]byte, len(header.orderBy))
 		copy(message.header.orderBy, header.orderBy)
+	}
+	if header.password != nil {
+		message.header.password = make([]byte, len(header.password))
+		copy(message.header.password, header.password)
 	}
 	if header.queryID != nil {
 		message.header.queryID = make([]byte, len(header.queryID))
@@ -639,6 +696,10 @@ func (msg *Message) Copy() *Message {
 	if header.userID != nil {
 		message.header.userID = make([]byte, len(header.userID))
 		copy(message.header.userID, header.userID)
+	}
+	if header.version != nil {
+		message.header.version = make([]byte, len(header.version))
+		copy(message.header.version, header.version)
 	}
 
 	return message
@@ -734,7 +795,12 @@ func (msg *Message) CorrelationID() (string, bool) {
 }
 
 // Data executes the exported data operation.
-func (msg *Message) Data() []byte { return msg.data }
+func (msg *Message) Data() []byte {
+	if msg == nil {
+		return nil
+	}
+	return msg.data
+}
 
 // SetData sets payload bytes.
 func (msg *Message) SetData(data []byte) *Message {

@@ -37,6 +37,7 @@ type MemoryPublishStore struct {
 	entries           map[uint64]*Command
 	lastPersisted     uint64
 	nextSequence      uint64
+	sequenceExhausted bool
 	errorOnPublishGap bool
 	drainedCh         chan struct{}
 }
@@ -112,8 +113,10 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 	if command.header != nil && command.header.sequenceID != nil && *command.header.sequenceID > 0 {
 		sequence = *command.header.sequenceID
 	} else {
+		if store.sequenceExhausted {
+			return 0, NewError(CommandError, "publish sequence space exhausted")
+		}
 		sequence = store.nextSequence
-		store.nextSequence++
 	}
 
 	cloned := cloneCommand(command)
@@ -123,7 +126,7 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 		store.reopenDrainSignalLocked()
 	}
 	if sequence >= store.nextSequence {
-		store.nextSequence = sequence + 1
+		store.nextSequence, store.sequenceExhausted = advanceStoreSequence(sequence)
 	}
 	return sequence, nil
 }
@@ -341,6 +344,104 @@ func (store *FilePublishStore) LoadError() error {
 	return store.loadErr
 }
 
+// Replay executes the exported replay operation.
+func (store *FilePublishStore) Replay(replayer func(*Command) error) error {
+	if store == nil {
+		return errors.New("nil publish store")
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return loadErr
+	}
+	return store.MemoryPublishStore.Replay(replayer)
+}
+
+// ReplaySingle executes the exported replaysingle operation.
+func (store *FilePublishStore) ReplaySingle(replayer func(*Command) error, sequence uint64) (bool, error) {
+	if store == nil {
+		return false, errors.New("nil publish store")
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return false, loadErr
+	}
+	return store.MemoryPublishStore.ReplaySingle(replayer, sequence)
+}
+
+// UnpersistedCount executes the exported unpersistedcount operation.
+func (store *FilePublishStore) UnpersistedCount() int {
+	if store == nil {
+		return 0
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return 0
+	}
+	return store.MemoryPublishStore.UnpersistedCount()
+}
+
+// GetLowestUnpersisted returns the current lowest unpersisted value.
+func (store *FilePublishStore) GetLowestUnpersisted() uint64 {
+	if store == nil {
+		return 0
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return 0
+	}
+	return store.MemoryPublishStore.GetLowestUnpersisted()
+}
+
+// GetLastPersisted returns the current last persisted value.
+func (store *FilePublishStore) GetLastPersisted() uint64 {
+	if store == nil {
+		return 0
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return 0
+	}
+	return store.MemoryPublishStore.GetLastPersisted()
+}
+
+// ErrorOnPublishGap executes the exported erroronpublishgap operation.
+func (store *FilePublishStore) ErrorOnPublishGap() bool {
+	if store == nil {
+		return false
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return false
+	}
+	return store.MemoryPublishStore.ErrorOnPublishGap()
+}
+
+// Flush executes the exported flush operation.
+func (store *FilePublishStore) Flush(timeout time.Duration) error {
+	if store == nil {
+		return errors.New("nil publish store")
+	}
+	store.lock.RLock()
+	var loadErr = store.loadErr
+	store.lock.RUnlock()
+	if loadErr != nil {
+		return loadErr
+	}
+	return store.MemoryPublishStore.Flush(timeout)
+}
+
 // appendWalNoLock writes a WAL record for the given store operation.
 // It never acquires store.lock; callers may invoke it with or without the
 // store mutex held.
@@ -456,9 +557,13 @@ func (store *FilePublishStore) loadCheckpoint() error {
 	if err = json.Unmarshal(data, &state); err != nil {
 		return err
 	}
-	if state.NextSequence == 0 {
-		state.NextSequence = 1
+	highestSequence := state.LastPersisted
+	for _, record := range state.Records {
+		if record.Sequence > highestSequence {
+			highestSequence = record.Sequence
+		}
 	}
+	state.NextSequence, store.sequenceExhausted = deriveNextStoreSequence(highestSequence, state.NextSequence)
 
 	store.lock.Lock()
 	store.entries = make(map[uint64]*Command)
@@ -492,7 +597,7 @@ func (store *FilePublishStore) applyWalRecordLocked(record publishStoreWalRecord
 			store.reopenDrainSignalLocked()
 		}
 		if sequence >= store.nextSequence {
-			store.nextSequence = sequence + 1
+			store.nextSequence, store.sequenceExhausted = advanceStoreSequence(sequence)
 		}
 	case "discard":
 		if store.errorOnPublishGap && record.Sequence < store.lastPersisted {
@@ -573,6 +678,10 @@ func (store *FilePublishStore) Store(command *Command) (uint64, error) {
 	if command.header != nil && command.header.sequenceID != nil && *command.header.sequenceID > 0 {
 		sequence = *command.header.sequenceID
 	} else {
+		if store.sequenceExhausted {
+			store.lock.Unlock()
+			return 0, NewError(CommandError, "publish sequence space exhausted")
+		}
 		sequence = store.nextSequence
 	}
 

@@ -115,3 +115,73 @@ func TestMessageStreamCloseIsIdempotentForSubscribedQueryStreams(t *testing.T) {
 		t.Fatalf("expected idempotent close to avoid duplicate unsubscribe, got %d queued commands", secondPending)
 	}
 }
+
+func TestMessageStreamSOWOnlyCompletionCleansBothRouteIDs(t *testing.T) {
+	client := NewClient("sow-route-cleanup")
+	stream := newMessageStream(client)
+	stream.SetSOWOnly("cid-sow", "qid-sow")
+	client.routes.Store("cid-sow", func(*Message) error { return nil })
+	client.routes.Store("qid-sow", func(*Message) error { return nil })
+
+	stream.current = &Message{header: &_Header{command: CommandGroupEnd}}
+	if message := stream.Next(); message == nil {
+		t.Fatalf("expected group-end message")
+	}
+	if _, exists := client.routes.Load("cid-sow"); exists {
+		t.Fatalf("expected SOW completion to remove command route")
+	}
+	if _, exists := client.routes.Load("qid-sow"); exists {
+		t.Fatalf("expected SOW completion to remove query route")
+	}
+}
+
+func TestMessageStreamReconfigurationClearsStaleIDs(t *testing.T) {
+	stream := newMessageStream(NewClient("stream-reconfigure"))
+	stream.SetSubscription("cid-1", "sub-1", "qid-1")
+	stream.SetStatsOnly("cid-2")
+	if stream.queryID != "" || stream.unsubscribeID != "" {
+		t.Fatalf("expected stats-only reconfigure to clear stale ids, got query=%q unsubscribe=%q", stream.queryID, stream.unsubscribeID)
+	}
+
+	stream.SetSOWOnly("cid-3", "qid-3")
+	stream.SetAcksOnly("cid-4")
+	if stream.queryID != "" || stream.unsubscribeID != "" {
+		t.Fatalf("expected ack-only reconfigure to clear stale ids, got query=%q unsubscribe=%q", stream.queryID, stream.unsubscribeID)
+	}
+}
+
+func TestMessageStreamReconfigurationClearsTransientState(t *testing.T) {
+	stream := newMessageStream(NewClient("stream-reconfigure-state"))
+	stream.current = &Message{data: []byte("stale")}
+	stream.queue.enqueue(&Message{data: []byte("queued")})
+	stream.timedOut.Store(true)
+	stream.setSubID("sub-reconfigure")
+	stream.Conflate()
+	stream.sowKeyMap["k1"] = &Message{data: []byte("conflated")}
+
+	stream.SetAcksOnly("cid-reset")
+
+	if stream.current != nil {
+		t.Fatalf("expected reconfigure to clear current message")
+	}
+	if stream.Depth() != 0 {
+		t.Fatalf("expected reconfigure to clear queued messages, got depth %d", stream.Depth())
+	}
+	if stream.timedOut.Load() {
+		t.Fatalf("expected reconfigure to clear timeout state")
+	}
+	if stream.sowKeyMap != nil {
+		t.Fatalf("expected reconfigure to clear conflate state")
+	}
+}
+
+func TestMessageStreamResetForConfigurationNilAndZeroValue(t *testing.T) {
+	var nilStream *MessageStream
+	nilStream.resetForConfiguration()
+
+	var zeroStream MessageStream
+	zeroStream.resetForConfiguration()
+	if zeroStream.current != nil || zeroStream.timedOut.Load() {
+		t.Fatalf("expected zero-value resetForConfiguration to be a noop cleanup")
+	}
+}

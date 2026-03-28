@@ -223,6 +223,36 @@ func TestHeaderParseTopicOnlyUnquotedFastPath(t *testing.T) {
 	}
 }
 
+func TestHeaderParseTopicOnlyUnquotedFastPathRejectsTrailingFields(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	left, err := parseHeader(message, true, []byte(`{"t":orders,"c":"p"}tail`))
+	if err != nil {
+		t.Fatalf("parse header failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	topic, hasTopic := message.Topic()
+	if !hasTopic || topic != "orders" {
+		t.Fatalf("unexpected topic: has=%v value=%q", hasTopic, topic)
+	}
+	if message.header.command != CommandPublish {
+		t.Fatalf("expected fallback parser to preserve trailing fields")
+	}
+}
+
+func TestHeaderParseTopicOnlyUnquotedFastPathRejectsEmptyTopic(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	if _, err := parseHeader(message, true, []byte(`{"t":}tail`)); err == nil {
+		t.Fatalf("expected empty unquoted topic to fail parsing")
+	}
+	if _, err := parseHeader(message, true, []byte(`{"t":,"c":"p"}tail`)); err == nil {
+		t.Fatalf("expected empty unquoted topic before comma to fail parsing")
+	}
+}
+
 func TestHeaderWriteStrictParityFixtureExactOutput(t *testing.T) {
 	var header = strictParityHeaderWriteBenchmarkHeader()
 	var buffer = bytes.NewBuffer(nil)

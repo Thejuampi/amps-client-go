@@ -9,6 +9,12 @@ import (
 	"path/filepath"
 )
 
+var syncFile = func(file *os.File) error {
+	return file.Sync()
+}
+
+var syncDirectory = syncDirectoryPath
+
 func Write(path string, data []byte) error {
 	if path == "" {
 		return errors.New("wal path is required")
@@ -34,10 +40,25 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 		}
 	}
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, mode); err != nil {
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode) // #nosec G304 -- path is provided by store configuration
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = syncFile(file); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	return syncDirectory(directory)
 }
 
 func Append(path string, data []byte, syncWrite bool) (err error) {
@@ -53,21 +74,27 @@ func Append(path string, data []byte, syncWrite bool) (err error) {
 			return err
 		}
 	}
+	_, statErr := os.Stat(path)
+	created := errors.Is(statErr, os.ErrNotExist)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 -- path is provided by store configuration
 	if err != nil {
 		return err
 	}
-	defer func() {
-		closeErr := file.Close()
-		if err == nil && closeErr != nil {
-			err = closeErr
-		}
-	}()
 	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
 		return err
 	}
 	if syncWrite {
-		return file.Sync()
+		if err = syncFile(file); err != nil {
+			_ = file.Close()
+			return err
+		}
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	if syncWrite && created {
+		return syncDirectory(directory)
 	}
 	return nil
 }
@@ -164,9 +191,17 @@ func Truncate(path string) error {
 	if path == "" {
 		return errors.New("wal path is required")
 	}
+	directory := filepath.Dir(path)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600) // #nosec G304 -- path is provided by store configuration
 	if err != nil {
 		return err
 	}
-	return file.Close()
+	if err = syncFile(file); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return syncDirectory(directory)
 }

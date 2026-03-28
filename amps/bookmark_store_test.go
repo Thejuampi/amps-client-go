@@ -1,6 +1,9 @@
 package amps
 
 import (
+	"encoding/json"
+	"math"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -262,5 +265,89 @@ func TestFileBookmarkStoreSaveCheckpointErrorPreservesMutationCounter(t *testing
 	}
 	if store.opsSinceCheckpoint != 9 {
 		t.Fatalf("expected mutation counter to remain unchanged on save failure, got %d", store.opsSinceCheckpoint)
+	}
+}
+
+func TestFileBookmarkStoreLoadCheckpointDerivesNextSeqFromEntries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmark_store_next_seq.json")
+	state := bookmarkFileState{
+		NextSeqNo: 0,
+		Entries: []bookmarkFileEntry{{
+			SubID:    "sub-next",
+			Bookmark: "10|1|",
+			Record: bookmarkRecord{
+				SeqNo: 7,
+				Count: 1,
+			},
+		}},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal checkpoint failed: %v", err)
+	}
+	if err = os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write checkpoint failed: %v", err)
+	}
+
+	store := NewFileBookmarkStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	seqNo, err := store.LogWithError(bookmarkMessage("sub-next", "10|2|"))
+	if err != nil {
+		t.Fatalf("log after reload failed: %v", err)
+	}
+	if seqNo != 8 {
+		t.Fatalf("expected derived next sequence 8, got %d", seqNo)
+	}
+}
+
+func TestFileBookmarkStoreRuntimeSequenceExhaustionRejectsNewBookmark(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmark_store_sequence_exhaustion.json")
+	store := NewFileBookmarkStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	store.nextSeqNo = math.MaxUint64
+
+	seqNo, err := store.LogWithError(bookmarkMessage("sub-overflow", "10|1|"))
+	if err != nil || seqNo != math.MaxUint64 {
+		t.Fatalf("expected first max sequence log to succeed, got seq=%d err=%v", seqNo, err)
+	}
+
+	seqNo, err = store.LogWithError(bookmarkMessage("sub-overflow", "10|2|"))
+	if err == nil {
+		t.Fatalf("expected new bookmark after max sequence to fail")
+	}
+	if seqNo != 0 {
+		t.Fatalf("expected failed overflow log to return zero sequence, got %d", seqNo)
+	}
+}
+
+func TestFileBookmarkStoreLoadCheckpointMaxSequenceRejectsNewBookmark(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmark_store_max_checkpoint.json")
+	state := bookmarkFileState{
+		NextSeqNo: 0,
+		Entries: []bookmarkFileEntry{{
+			SubID:    "sub-max",
+			Bookmark: "10|1|",
+			Record: bookmarkRecord{
+				SeqNo: math.MaxUint64,
+				Count: 1,
+			},
+		}},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal checkpoint failed: %v", err)
+	}
+	if err = os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write checkpoint failed: %v", err)
+	}
+
+	store := NewFileBookmarkStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	if recent := store.GetMostRecent("sub-max"); recent != "10|1|" {
+		t.Fatalf("expected checkpoint data to remain readable, got %q", recent)
+	}
+	seqNo, err := store.LogWithError(bookmarkMessage("sub-max", "10|2|"))
+	if err == nil {
+		t.Fatalf("expected exhausted checkpoint sequence to reject new bookmark")
+	}
+	if seqNo != 0 {
+		t.Fatalf("expected exhausted checkpoint log to return zero sequence, got %d", seqNo)
 	}
 }

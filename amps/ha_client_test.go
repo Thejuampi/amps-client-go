@@ -2,6 +2,7 @@ package amps
 
 import (
 	"context"
+	"errors"
 	"net"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,21 @@ func (chooser *delayedChooser) Add(uri string) ServerChooser {
 	return chooser
 }
 func (chooser *delayedChooser) Remove(string) {}
+
+type failureClearingChooser struct {
+	uri string
+}
+
+func (chooser *failureClearingChooser) CurrentURI() string                  { return chooser.uri }
+func (chooser *failureClearingChooser) CurrentAuthenticator() Authenticator { return nil }
+func (chooser *failureClearingChooser) ReportFailure(error, ConnectionInfo) { chooser.uri = "" }
+func (chooser *failureClearingChooser) ReportSuccess(ConnectionInfo)        {}
+func (chooser *failureClearingChooser) Error() string                       { return "" }
+func (chooser *failureClearingChooser) Add(uri string) ServerChooser {
+	chooser.uri = uri
+	return chooser
+}
+func (chooser *failureClearingChooser) Remove(string) {}
 
 type errorReconnectStrategy struct{}
 
@@ -246,6 +262,30 @@ func TestHAHandleDisconnectGuards(t *testing.T) {
 	}
 }
 
+func TestHAHandleDisconnectReportsReconnectFailure(t *testing.T) {
+	ha := NewHAClient("ha-handle-disconnect-report")
+	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:1/amps/json"})
+	ha.SetReconnectDelay(0)
+	ha.SetReconnectDelayStrategy(errorReconnectStrategy{})
+	ha.SetTimeout(0)
+
+	reported := make(chan error, 1)
+	ha.Client().SetExceptionListener(ExceptionListenerFunc(func(err error) {
+		reported <- err
+	}))
+
+	ha.handleDisconnect(NewError(ConnectionError, "trigger reconnect"))
+
+	select {
+	case err := <-reported:
+		if err == nil || !strings.Contains(err.Error(), "delay strategy failure") {
+			t.Fatalf("expected reconnect failure to be reported, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected reconnect failure to be reported")
+	}
+}
+
 func TestHADisconnectCancelsReconnectLoop(t *testing.T) {
 	ha := NewHAClient("ha-cancel-reconnect")
 	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:1/amps/json"})
@@ -350,6 +390,49 @@ func TestHADisconnectCancelsBlockedDial(t *testing.T) {
 	}
 }
 
+func TestHADisconnectCancelsTopLevelConnectAndLogon(t *testing.T) {
+	originalDial := clientNetDialContext
+	released := make(chan struct{})
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = network
+		_ = address
+		<-ctx.Done()
+		close(released)
+		return nil, ctx.Err()
+	}
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	ha := NewHAClient("ha-top-level-cancel")
+	ha.SetServerChooser(&fixedChooser{uri: "tcp://127.0.0.1:19000/amps/json"})
+	ha.SetReconnectDelay(0)
+	ha.SetTimeout(0)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- ha.ConnectAndLogon()
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	_ = ha.Disconnect()
+
+	select {
+	case <-released:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected Disconnect to cancel top-level ConnectAndLogon dial")
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("expected ConnectAndLogon to return cancellation error")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected ConnectAndLogon to return promptly after Disconnect")
+	}
+}
+
 func TestCreateFileBackedAliases(t *testing.T) {
 	tempDir := t.TempDir()
 	publishPath := filepath.Join(tempDir, "publish.json")
@@ -417,6 +500,59 @@ func TestHAClientReconnectWaitNilStrategyUsesDelay(t *testing.T) {
 	}
 	if d != 42*time.Millisecond {
 		t.Fatalf("expected fallback delay 42ms, got %v", d)
+	}
+}
+
+func TestHAClientConnectAndLogonDoesNotReuseStaleURIAfterChooserExhaustion(t *testing.T) {
+	ha := NewHAClient("ha-stale-uri")
+	ha.SetServerChooser(&failureClearingChooser{uri: "tcp://127.0.0.1:1/amps/json"})
+	ha.SetReconnectDelay(0)
+	ha.SetReconnectDelayStrategy(nil)
+	ha.SetTimeout(100 * time.Millisecond)
+
+	err := ha.ConnectAndLogon()
+	if err == nil || !strings.Contains(err.Error(), "server chooser does not contain any URIs") {
+		t.Fatalf("expected chooser exhaustion error, got %v", err)
+	}
+}
+
+func TestHADisconnectDuringChooserLookupPreventsDial(t *testing.T) {
+	originalDial := clientNetDialContext
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	dialed := make(chan struct{}, 1)
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = ctx
+		_ = network
+		_ = address
+		dialed <- struct{}{}
+		return nil, errors.New("unexpected dial")
+	}
+
+	ha := NewHAClient("ha-chooser-disconnect")
+	ha.SetServerChooser(&delayedChooser{uri: "tcp://127.0.0.1:19000/amps/json", delay: 40 * time.Millisecond})
+	ha.SetReconnectDelay(0)
+	ha.SetTimeout(0)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- ha.ConnectAndLogon()
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	_ = ha.Disconnect()
+
+	select {
+	case <-dialed:
+		t.Fatalf("expected Disconnect during chooser lookup to prevent dialing")
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "DisconnectedError") {
+			t.Fatalf("expected disconnected error after chooser cancellation, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected ConnectAndLogon to return promptly after Disconnect")
 	}
 }
 

@@ -8,7 +8,17 @@ ERRCHECK_VERSION ?= v1.10.0
 GOVULNCHECK_VERSION ?= v1.1.4
 COVERPROFILE ?= $(abspath coverage.out)
 
-.PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan vuln-scan tidy clean parity-check coverage-check perf-check release
+ifeq ($(OS),Windows_NT)
+PARITY_CHECK_IF_AVAILABLE = @if exist ..\amps-c++-client-5.3.5.1-Windows ( $(MAKE) parity-check ) else ( echo Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found. )
+else
+PARITY_CHECK_IF_AVAILABLE = @if [ -d ../amps-c++-client-5.3.5.1-Windows ]; then \
+	$(MAKE) parity-check; \
+else \
+	echo "Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found."; \
+fi
+endif
+
+.PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted
 
 help:
 	@echo Available targets:
@@ -72,6 +82,9 @@ clean:
 parity-check:
 	$(GO) run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 
+parity-check-if-available:
+	$(PARITY_CHECK_IF_AVAILABLE)
+
 coverage-check:
 	$(GO) test -count=1 ./amps/... -coverprofile=$(COVERPROFILE)
 	$(GO) run ./tools/coveragegate -profile $(COVERPROFILE)
@@ -79,5 +92,8 @@ coverage-check:
 perf-check:
 	$(GO) run ./tools/perfgate -baseline tools/perf_baseline.json
 
-release: static-scan test test-race build integration-fakeamps parity-check coverage-check perf-check
+release: static-scan perf-check test test-race build integration-fakeamps parity-check coverage-check
 	@echo Release checks passed for $(VERSION).
+
+release-hosted: static-scan perf-check test test-race build integration-fakeamps parity-check-if-available coverage-check
+	@echo Hosted release checks passed for $(VERSION).

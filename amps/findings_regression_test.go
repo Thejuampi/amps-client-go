@@ -1,6 +1,9 @@
 package amps
 
 import (
+	"context"
+	"errors"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -61,6 +64,63 @@ func TestFilePublishStoreWithoutWALPersistsMutations(t *testing.T) {
 	reloaded := NewFilePublishStoreWithOptions(path, options)
 	if got := reloaded.UnpersistedCount(); got != 1 {
 		t.Fatalf("UnpersistedCount() = %d, want 1", got)
+	}
+}
+
+func TestClientConnectDoesNotKeepConnectionWhenDialReturnsErrorWithConn(t *testing.T) {
+	originalDial := clientNetDialContext
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	conn := newTestConn()
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = ctx
+		_ = network
+		_ = address
+		return conn, errors.New("dial failed")
+	}
+
+	client := NewClient("connect-error-conn")
+	if err := client.Connect("tcp://127.0.0.1:9007/amps/json"); err == nil {
+		t.Fatalf("expected connect failure")
+	}
+	if client.connection != nil {
+		t.Fatalf("expected failed connect to leave connection nil")
+	}
+	if !conn.closed {
+		t.Fatalf("expected failed connect to close returned connection")
+	}
+}
+
+func TestClientDisconnectConnectionStateListenerCanReenterClientLock(t *testing.T) {
+	client := NewClient("disconnect-reentrant-listener")
+	listenerRan := make(chan struct{}, 1)
+	client.AddConnectionStateListener(ConnectionStateListenerFunc(func(state ConnectionState) {
+		if state != ConnectionStateShutdown {
+			return
+		}
+		client.lock.Lock()
+		_ = client.connection
+		client.lock.Unlock()
+		listenerRan <- struct{}{}
+	}))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Disconnect()
+	}()
+
+	select {
+	case <-listenerRan:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected connection state listener to reenter client lock without deadlock")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected Disconnect to return after listener reentry")
 	}
 }
 

@@ -22,9 +22,62 @@ type DefaultSubscriptionManager struct {
 }
 
 type trackedResumeGroup struct {
+	lock              sync.RWMutex
 	command           *Command
 	requestedAckTypes int
 	members           map[string]struct{}
+}
+
+func (group *trackedResumeGroup) addMember(subID string) bool {
+	if group == nil || subID == "" {
+		return false
+	}
+	group.lock.Lock()
+	defer group.lock.Unlock()
+	if group.members == nil {
+		group.members = make(map[string]struct{})
+	}
+	if _, exists := group.members[subID]; exists {
+		return false
+	}
+	group.members[subID] = struct{}{}
+	return true
+}
+
+func (group *trackedResumeGroup) removeMember(subID string) bool {
+	if group == nil || subID == "" {
+		return false
+	}
+	group.lock.Lock()
+	defer group.lock.Unlock()
+	if _, exists := group.members[subID]; !exists {
+		return false
+	}
+	delete(group.members, subID)
+	return true
+}
+
+func (group *trackedResumeGroup) memberIDs() []string {
+	if group == nil {
+		return nil
+	}
+	group.lock.RLock()
+	defer group.lock.RUnlock()
+	var memberIDs = make([]string, 0, len(group.members))
+	for memberID := range group.members {
+		memberIDs = append(memberIDs, memberID)
+	}
+	sort.Strings(memberIDs)
+	return memberIDs
+}
+
+func (group *trackedResumeGroup) memberCount() int {
+	if group == nil {
+		return 0
+	}
+	group.lock.RLock()
+	defer group.lock.RUnlock()
+	return len(group.members)
 }
 
 // NewDefaultSubscriptionManager returns a new DefaultSubscriptionManager.
@@ -147,11 +200,7 @@ func combinedResumeBookmark(client *Client, group *trackedResumeGroup) string {
 	}
 
 	var publishers = make(map[uint64]uint64)
-	var memberIDs = make([]string, 0, len(group.members))
-	for memberID := range group.members {
-		memberIDs = append(memberIDs, memberID)
-	}
-	sort.Strings(memberIDs)
+	var memberIDs = group.memberIDs()
 
 	for _, memberID := range memberIDs {
 		var recent = bookmarkStore.GetMostRecent(memberID)
@@ -216,8 +265,8 @@ func (manager *DefaultSubscriptionManager) removeResumedSubID(subID string) {
 		return
 	}
 	delete(manager.resumed, subID)
-	delete(group.members, subID)
-	if len(group.members) == 0 {
+	group.removeMember(subID)
+	if group.memberCount() == 0 {
 		delete(manager.resumedGroups, group)
 	}
 }
@@ -227,7 +276,7 @@ func (manager *DefaultSubscriptionManager) removeResumeGroup(group *trackedResum
 		return
 	}
 	delete(manager.resumedGroups, group)
-	for memberID := range group.members {
+	for _, memberID := range group.memberIDs() {
 		delete(manager.resumed, memberID)
 	}
 }
@@ -260,20 +309,23 @@ func (manager *DefaultSubscriptionManager) subscribeResume(command *Command, req
 	}
 
 	var group = &trackedResumeGroup{
-		command:           cloneCommand(command),
 		requestedAckTypes: requestedAckTypes,
 		members:           make(map[string]struct{}),
 	}
 	var saved bool
+	var savedIDs = make([]string, 0, len(ids))
 	for _, id := range ids {
 		if _, exists := manager.resumed[id]; exists {
 			continue
 		}
 		manager.resumed[id] = group
-		group.members[id] = struct{}{}
+		if group.addMember(id) {
+			savedIDs = append(savedIDs, id)
+		}
 		saved = true
 	}
 	if saved {
+		group.command = cloneCommandWithSubID(command, strings.Join(savedIDs, ","))
 		manager.resumedGroups[group] = struct{}{}
 	}
 }

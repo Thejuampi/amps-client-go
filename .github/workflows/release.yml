@@ -94,11 +94,6 @@ jobs:
             exit 1
           fi
 
-          if [[ ! -d "../amps-c++-client-5.3.5.1-Windows" ]]; then
-            echo "Release requires ../amps-c++-client-5.3.5.1-Windows on the runner."
-            exit 1
-          fi
-
       - name: Update version files
         shell: bash
         run: |
@@ -114,7 +109,7 @@ jobs:
           fi
 
       - name: Release gates
-        run: make release
+        run: make release-hosted
 
       - name: Vulnerability scan (advisory)
         continue-on-error: true
@@ -181,6 +176,11 @@ jobs:
             echo "- Version: ${RELEASE_VERSION}"
             echo "- Tag: ${RELEASE_TAG}"
             echo "- Dry run: ${RELEASE_DRY_RUN}"
+            if [[ -d ../amps-c++-client-5.3.5.1-Windows ]]; then
+              echo "- Parity check: executed"
+            else
+              echo "- Parity check: skipped because ../amps-c++-client-5.3.5.1-Windows is absent"
+            fi
             if [[ "${RELEASE_DRY_RUN}" != "true" ]]; then
               echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
             fi
