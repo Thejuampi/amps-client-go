@@ -481,15 +481,16 @@ func (client *Client) maybeAutoAck(message *Message) {
 		return
 	}
 
-	topic := string(header.topic)
-	bookmark := string(header.bookmark)
-	subID := string(header.subID)
+	topic := unsafeStringFromBytes(header.topic)
+	subID := unsafeStringFromBytes(header.subID)
 	key := makeAckBatchKey(topic, subID)
 	batch := state.pendingAcks[key]
 	if batch == nil {
-		batch = &pendingAckBatch{topic: topic, subID: subID}
+		sep := strings.Index(key, "\x1f")
+		batch = &pendingAckBatch{topic: key[:sep], subID: key[sep+1:]}
 		state.pendingAcks[key] = batch
 	}
+	bookmark := string(header.bookmark)
 	batch.bookmarks = append(batch.bookmarks, bookmark)
 	state.pendingAckCount++
 	batchSize := state.ackBatchSize
