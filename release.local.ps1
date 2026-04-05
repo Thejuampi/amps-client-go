@@ -67,10 +67,11 @@ if ($branch -ne "main") {
 	Fail "Current branch is '$branch'. Switch to 'main' first."
 }
 
-$status = (& git status --porcelain --untracked-files=no).Trim()
+$statusOutput = & git status --porcelain --untracked-files=no
 if ($LASTEXITCODE -ne 0) {
 	Fail "Could not read git status."
 }
+$status = if ($null -eq $statusOutput) { "" } else { ($statusOutput | Out-String).Trim() }
 if ($status.Length -gt 0) {
 	Fail "Working tree is not clean. Commit/stash/discard changes before releasing."
 }
@@ -117,10 +118,11 @@ if ($version -notmatch '^\d+\.\d+\.\d+$') {
 }
 $tag = "v$version"
 
-$existingTag = (& git tag --list $tag).Trim()
+$existingTagOutput = & git tag --list $tag
 if ($LASTEXITCODE -ne 0) {
 	Fail "Could not query existing tags."
 }
+$existingTag = if ($null -eq $existingTagOutput) { "" } else { ($existingTagOutput | Out-String).Trim() }
 if ($existingTag -eq $tag) {
 	Fail "Tag '$tag' already exists."
 }
