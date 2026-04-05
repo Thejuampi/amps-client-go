@@ -204,11 +204,11 @@ func TestClientCoreWrappersCoverage(t *testing.T) {
 	}
 
 	client.SetHeartbeat(2)
-	if client.heartbeatInterval != 2 || client.heartbeatTimeout != 4 {
+	if client.heartbeatInterval.Load() != 2 || client.heartbeatTimeout.Load() != 4 {
 		t.Fatalf("unexpected default heartbeat timeout")
 	}
 	client.SetHeartbeat(2, 3)
-	if client.heartbeatTimeout != 3 {
+	if client.heartbeatTimeout.Load() != 3 {
 		t.Fatalf("unexpected explicit heartbeat timeout")
 	}
 
@@ -283,14 +283,14 @@ func TestClientCoreWrappersCoverage(t *testing.T) {
 	}
 
 	client.heartbeatTimeoutID = time.NewTimer(time.Hour)
-	client.heartbeatTimeout = 0
-	client.heartbeatTimestamp = 1
+	client.heartbeatTimeout.Store(0)
+	client.heartbeatTimestamp.Store(1)
 	client.onHeartbeatAbsence()
 
 	client.heartbeatTimeoutID = time.NewTimer(time.Hour)
-	client.heartbeatTimeout = 1
-	client.heartbeatInterval = 0
-	client.heartbeatTimestamp = uint(time.Now().Unix()) - 10
+	client.heartbeatTimeout.Store(1)
+	client.heartbeatInterval.Store(0)
+	client.heartbeatTimestamp.Store(uint32(time.Now().Unix()) - 10)
 	client.checkAndSendHeartbeat(true)
 	if errCalled == 0 {
 		t.Fatalf("expected heartbeat send failure to report error")
@@ -1596,8 +1596,8 @@ func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	heartbeatClient.connected.Store(true)
 	heartbeatClient.resetDisconnectSignal()
 	heartbeatClient.connection = heartbeatConn
-	heartbeatClient.heartbeatInterval = 1
-	heartbeatClient.heartbeatTimeout = 1
+	heartbeatClient.heartbeatInterval.Store(1)
+	heartbeatClient.heartbeatTimeout.Store(1)
 	heartbeatClient.SetErrorHandler(func(error) {})
 
 	hbResult := make(chan error, 1)
@@ -1925,8 +1925,8 @@ func TestClientEstablishHeartbeatAbortsOnDisconnect(t *testing.T) {
 	client.connected.Store(true)
 	client.resetDisconnectSignal()
 	client.connection = newTestConn()
-	client.heartbeatInterval = 1
-	client.heartbeatTimeout = 2
+	client.heartbeatInterval.Store(1)
+	client.heartbeatTimeout.Store(2)
 	client.SetErrorHandler(func(error) {})
 
 	var errCh = make(chan error, 1)
@@ -1953,8 +1953,8 @@ func TestClientEstablishHeartbeatTimeoutCoverage(t *testing.T) {
 	client.connected.Store(true)
 	client.resetDisconnectSignal()
 	client.connection = newTestConn()
-	client.heartbeatInterval = 1
-	client.heartbeatTimeout = 1
+	client.heartbeatInterval.Store(1)
+	client.heartbeatTimeout.Store(1)
 	client.SetErrorHandler(func(error) {})
 
 	start := time.Now()

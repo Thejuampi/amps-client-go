@@ -661,7 +661,9 @@ func (queue *_MessageQueue) clear() {
 	queue.closed = false
 	queue.clearNotEmptySignalLocked()
 
-	queue.ring = make([]*Message, queue.capacity)
+	for i := range queue.ring {
+		queue.ring[i] = nil
+	}
 	queue.notFull.Broadcast()
 }
 
