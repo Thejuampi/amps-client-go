@@ -48,10 +48,23 @@ For the current change set, the correct bump is a patch release.
 5. commits `release: vX.Y.Z`
 6. creates and pushes annotated tag `vX.Y.Z`
 7. publishes the GitHub Release with generated notes via `gh release create`
+8. verifies the remote tag, GitHub release, and Go module version visibility before declaring success
 
 The release perf gate is confirmatory rather than one-shot: `tools/perfgate` first runs the full benchmark set normally, then reruns only initially failing microbenchmarks with a longer benchtime before declaring a real regression. That keeps release validation strict while reducing false failures from shared-host benchmark noise.
 
 Run it from `main` on a machine that has the sibling C++ reference tree.
+
+Convenience targets:
+
+```bash
+make release
+make release-dry-run RELEASE_VERSION=0.8.10
+make release-local RELEASE_VERSION=0.8.10 RELEASE_FLAGS="-Yes"
+```
+
+- `make release` is verification only.
+- `make release-dry-run` runs the scripted release flow and then restores the version files instead of committing or publishing.
+- `make release-local` runs the local release script, optionally non-interactively when `RELEASE_VERSION` and `RELEASE_FLAGS="-Yes"` are provided.
 
 ## GitHub Actions Release Workflow
 
@@ -80,8 +93,9 @@ Local strict path:
 
 1. Ensure `../amps-c++-client-5.3.5.1-Windows` exists next to this repository.
 2. On Windows, run `.\tools\static-scan-linux.ps1` before commit when touching files with non-Windows build tags, or let `.\release.local.ps1` run that preflight for you during release prep.
-3. Optionally run `make release` manually if you want a dry run before changing any release files.
-4. Run `.\release.local.ps1` and provide the chosen `X.Y.Z` version.
+3. Optionally run `make release` manually if you want a verification-only pass before changing any release files.
+4. Prefer `make release-dry-run RELEASE_VERSION=X.Y.Z` as the rehearsal path.
+5. Run `make release-local RELEASE_VERSION=X.Y.Z RELEASE_FLAGS="-Yes"` for the non-interactive scripted publish, or `.\release.local.ps1` if you want prompts.
 
 Prepared-runner GitHub Actions path:
 

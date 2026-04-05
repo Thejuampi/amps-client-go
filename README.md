@@ -211,6 +211,36 @@ make vuln-scan
 make release
 ```
 
+`make release` is the **verification pipeline only**. It does not edit version files, create tags, or publish a GitHub release.
+
+## Release Automation
+
+Use the scripted local release flow when you want the repository to handle everything that can be automated safely:
+
+```bash
+make release-dry-run RELEASE_VERSION=0.8.10
+make release-local RELEASE_VERSION=0.8.10 RELEASE_FLAGS="-Yes"
+```
+
+What those automated paths handle for you:
+
+- run the Linux-target static-analysis preflight from Windows before any version edit
+- update `VERSION`, `README.md`, and `amps/client.go`
+- run `make release`
+- show the release diff before publish
+- create the release commit and annotated tag
+- push `main` and the tag
+- publish the GitHub release
+- verify the remote tag, GitHub release, and Go module version visibility
+
+The remaining manual or environment-dependent release inputs are intentionally small:
+
+- choose the SemVer bump
+- run from `main` with the sibling C++ reference tree at `..\amps-c++-client-5.3.5.1-Windows`
+- ensure `git` and `gh` credentials can push to `main`, create tags, and publish releases
+
+`make release-dry-run` is the safest rehearsal path: it runs the same scripted validation, then restores the version files automatically instead of committing or publishing anything.
+
 <details>
 <summary>Equivalent direct commands</summary>
 
