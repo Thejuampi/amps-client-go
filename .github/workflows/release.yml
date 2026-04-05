@@ -111,11 +111,12 @@ jobs:
         env:
           GH_TOKEN: ${{ env.GH_TOKEN }}
         run: |
-          $arguments = @('-Version', $env:RELEASE_VERSION, '-Yes', '-Hosted')
           if ($env:RELEASE_DRY_RUN -eq 'true') {
-            $arguments += '-DryRun'
+            & .\release.local.ps1 -Version $env:RELEASE_VERSION -Yes -Hosted -DryRun
           }
-          & .\release.local.ps1 @arguments
+          else {
+            & .\release.local.ps1 -Version $env:RELEASE_VERSION -Yes -Hosted
+          }
 
       - name: Vulnerability scan (advisory)
         continue-on-error: true
