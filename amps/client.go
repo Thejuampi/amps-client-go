@@ -417,7 +417,9 @@ func (client *Client) currentDisconnectSignal() <-chan struct{} {
 	client.disconnectLock.Lock()
 	defer client.disconnectLock.Unlock()
 	if client.disconnectCh == nil {
-		client.disconnectCh = newClientSignal(true)
+		client.disconnectCh = newClientSignal(!client.connected.Load())
+	} else if client.connected.Load() && clientSignalClosed(client.disconnectCh) {
+		client.disconnectCh = newClientSignal(false)
 	}
 	return client.disconnectCh
 }
@@ -497,7 +499,14 @@ func (client *Client) send(command *Command) (err error) {
 	filtered[1] = byte((filteredLength & 0x00FF0000) >> 16)
 	filtered[2] = byte((filteredLength & 0x0000FF00) >> 8)
 	filtered[3] = byte(filteredLength & 0x000000FF)
-	_, err = client.connection.Write(filtered)
+
+	client.connectionStateLock.Lock()
+	conn := client.connection
+	client.connectionStateLock.Unlock()
+	if conn == nil {
+		return errors.New("client is not connected while trying to send data")
+	}
+	_, err = conn.Write(filtered)
 
 	if err != nil {
 		client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket error while sending message (%v)", err)))
@@ -694,9 +703,6 @@ func (client *Client) onMessage(message *Message) (err error) {
 	if command == commandHeartbeat {
 		if hasHeartbeat {
 			nowUnix := time.Now().Unix()
-			if nowUnix < 0 {
-				return nil
-			}
 			timedelta := uint(nowUnix) - heartbeatTimestamp // #nosec G115 -- Unix timestamps are non-negative here
 			if timedelta > heartbeatInterval {
 				client.checkAndSendHeartbeat(true)
@@ -784,9 +790,11 @@ func (client *Client) deleteRoute(routeID string) (routeErr error) {
 	client.deleteUnsubscribeRoutesForRoute(routeID)
 
 	if messageStream, messageStreamExists := client.messageStreams.Load(routeID); messageStreamExists {
-		messageStream.(*MessageStream).client = nil
-		if atomic.LoadInt32(&messageStream.(*MessageStream).state) != messageStreamStateComplete {
-			routeErr = messageStream.(*MessageStream).Close()
+		if ms, ok := messageStream.(*MessageStream); ok {
+			ms.client = nil
+			if atomic.LoadInt32(&ms.state) != messageStreamStateComplete {
+				routeErr = ms.Close()
+			}
 		}
 		client.messageStreams.Delete(routeID)
 	}
@@ -1252,6 +1260,7 @@ func (client *Client) onConnectionError(err error) {
 		}
 		state.pendingAcks = make(map[string]*pendingAckBatch)
 		state.pendingAckCount = 0
+		state.pendingPublishByCmdID = make(map[string]*Command)
 		state.lock.Unlock()
 	}
 
@@ -1269,9 +1278,6 @@ func (client *Client) onConnectionError(err error) {
 
 func (client *Client) onHeartbeatAbsence() {
 	nowUnix := time.Now().Unix()
-	if nowUnix < 0 {
-		return
-	}
 	now := uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
 	heartbeatMissing := false
 
@@ -1302,11 +1308,7 @@ func (client *Client) establishHeartbeat() (hbError error) {
 
 	client.heartbeatLock.Lock()
 	nowUnix := time.Now().Unix()
-	if nowUnix < 0 {
-		client.heartbeatTimestamp = 0
-	} else {
-		client.heartbeatTimestamp = uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
-	}
+	client.heartbeatTimestamp = uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
 	heartbeatInterval := client.heartbeatInterval
 	heartbeatTimeout := client.heartbeatTimeout
 	client.heartbeatLock.Unlock()
@@ -1361,9 +1363,6 @@ func (client *Client) establishHeartbeat() (hbError error) {
 
 func (client *Client) checkAndSendHeartbeat(force bool) {
 	nowUnix := time.Now().Unix()
-	if nowUnix < 0 {
-		return
-	}
 	now := uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
 	shouldSend := false
 
@@ -1710,7 +1709,11 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 			logonFailed = NewError(TimedOutError, "logon timed out waiting for processed ack")
 		}
 	} else {
-		logonFailed = <-doneLoggingIn
+		select {
+		case logonFailed = <-doneLoggingIn:
+		case <-client.currentDisconnectSignal():
+			logonFailed = NewError(DisconnectedError, "client disconnected while waiting for logon ack")
+		}
 	}
 	client.logging = false
 
@@ -1923,7 +1926,12 @@ func (client *Client) Flush() (err error) {
 	if err != nil {
 		return err
 	}
-	return <-result
+	select {
+	case err := <-result:
+		return err
+	case <-client.currentDisconnectSignal():
+		return NewError(DisconnectedError, "client disconnected while waiting for flush ack")
+	}
 }
 
 // DeltaSubscribe executes the exported deltasubscribe operation.
@@ -2560,6 +2568,7 @@ func (client *Client) Disconnect() (err error) {
 	client.closeSyncAckProcessing()
 
 	client.notifyConnectionState(ConnectionStateDisconnected)
+	forgetClientState(client)
 	return NewError(DisconnectedError, "Client is not Connected")
 }
 

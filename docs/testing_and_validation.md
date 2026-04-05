@@ -90,7 +90,8 @@ Tracked files:
 Performance gate policy:
 
 - Regression is measured against `tools/perf_baseline.json`
-- Allowed regression threshold is `10%` for both `ns/op` and `allocs/op`
+- `tools/perfgate` collects repeated samples and compares the median result for each benchmark
+- Allowed regression threshold is `10%` for both `ns/op` and `allocs/op`, unless a benchmark is assigned to a baseline group with an explicit override
 
 Required output:
 

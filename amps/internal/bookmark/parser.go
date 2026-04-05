@@ -2,7 +2,7 @@ package bookmark
 
 func NormalizeSubID(subIDs string) string {
 	start := 0
-	for start <= len(subIDs) {
+	for start < len(subIDs) {
 		end := len(subIDs)
 		for index := start; index < len(subIDs); index++ {
 			if subIDs[index] == ',' {

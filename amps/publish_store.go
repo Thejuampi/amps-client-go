@@ -236,8 +236,7 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 	store.lock.Unlock()
 
 	if timeout <= 0 {
-		<-drainedCh
-		return nil
+		timeout = 24 * time.Hour
 	}
 
 	var timer = time.NewTimer(timeout)
@@ -282,8 +281,8 @@ func (store *MemoryPublishStore) GetLastPersisted() uint64 {
 	if store == nil {
 		return 0
 	}
-	store.lock.Lock()
-	defer store.lock.Unlock()
+	store.lock.RLock()
+	defer store.lock.RUnlock()
 	return store.lastPersisted
 }
 
@@ -302,8 +301,8 @@ func (store *MemoryPublishStore) ErrorOnPublishGap() bool {
 	if store == nil {
 		return false
 	}
-	store.lock.Lock()
-	defer store.lock.Unlock()
+	store.lock.RLock()
+	defer store.lock.RUnlock()
 	return store.errorOnPublishGap
 }
 

@@ -34,7 +34,6 @@ func (client *Client) GetNameHash() string {
 	return fmt.Sprintf("%x", unsafeStringHash(client.clientName))
 }
 
-// GetNameHashValue returns the numeric hash value of GetNameHash.
 func (client *Client) GetNameHashValue() uint64 {
 	if client == nil {
 		return 0
@@ -68,7 +67,6 @@ func (client *Client) GetServerVersionInfo() VersionInfo {
 	return ParseVersionInfo(client.serverVersion)
 }
 
-// GetServerVersion returns numeric server version representation.
 func (client *Client) GetServerVersion() uint64 {
 	if client == nil {
 		return 0

@@ -616,6 +616,11 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 			queue.endWait()
 		case <-timer.C:
 			queue.endWait()
+			queue.lock.Lock()
+			if queue._length > 0 && queue.waiters > 0 {
+				queue.notifyNotEmptyLocked()
+			}
+			queue.lock.Unlock()
 			return nil, false
 		}
 	}

@@ -714,3 +714,64 @@ func TestMessageStreamAdditionalBranchCoverage(t *testing.T) {
 		t.Fatalf("expected iterator timeout nil result")
 	}
 }
+
+func TestMessageQueueTimeoutNotifiesRemainingWaiter(t *testing.T) {
+	queue := newQueue(4)
+
+	secondDone := make(chan *Message, 1)
+	go func() {
+		message, ok := queue.waitDequeue()
+		if !ok {
+			secondDone <- nil
+			return
+		}
+		secondDone <- message
+	}()
+
+	firstDone := make(chan struct{})
+	go func() {
+		message, ok := queue.waitDequeueTimeout(10 * time.Millisecond)
+		if ok || message != nil {
+			t.Errorf("expected first waiter to time out")
+		}
+		close(firstDone)
+	}()
+
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		queue.lock.Lock()
+		waiters := queue.waiters
+		queue.lock.Unlock()
+		if waiters == 2 {
+			break
+		}
+		time.Sleep(1 * time.Millisecond)
+	}
+
+	queue.lock.Lock()
+	if queue.waiters != 2 {
+		queue.lock.Unlock()
+		t.Fatalf("expected two waiters before forcing timeout handoff, got %d", queue.waiters)
+	}
+	queue.ring[0] = &Message{header: &_Header{command: CommandPublish}, data: []byte("handoff")}
+	queue._length = 1
+	queue.first = 0
+	queue.last = 0
+	time.Sleep(15 * time.Millisecond)
+	queue.lock.Unlock()
+
+	select {
+	case <-firstDone:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected first waiter to time out")
+	}
+
+	select {
+	case message := <-secondDone:
+		if message == nil || string(message.Data()) != "handoff" {
+			t.Fatalf("expected second waiter to receive handed-off message, got %#v", message)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected remaining waiter to be notified")
+	}
+}

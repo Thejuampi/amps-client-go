@@ -368,6 +368,47 @@ func TestDefaultSubscriptionManagerPauseResumeReplayUsesCombinedBookmarks(t *tes
 	}
 }
 
+func TestDefaultSubscriptionManagerResubscribeOrdersResumeGroupsDeterministically(t *testing.T) {
+	for attempt := 0; attempt < 64; attempt++ {
+		manager := NewDefaultSubscriptionManager()
+		groupB := &trackedResumeGroup{
+			command:           NewCommand("subscribe").SetTopic("orders").SetSubID("sub-b"),
+			requestedAckTypes: AckTypeProcessed,
+			members:           map[string]struct{}{"sub-b": {}},
+		}
+		groupA := &trackedResumeGroup{
+			command:           NewCommand("subscribe").SetTopic("orders").SetSubID("sub-a"),
+			requestedAckTypes: AckTypeProcessed,
+			members:           map[string]struct{}{"sub-a": {}},
+		}
+		manager.resumedGroups[groupB] = struct{}{}
+		manager.resumedGroups[groupA] = struct{}{}
+
+		client := NewClient("resubscribe-order-test")
+		client.connected.Store(false)
+		client.SetRetryOnDisconnect(true)
+
+		if err := manager.Resubscribe(client); err != nil {
+			t.Fatalf("resubscribe should queue grouped retries, got %v", err)
+		}
+
+		state := ensureClientState(client)
+		state.lock.Lock()
+		if len(state.pendingRetry) != 2 {
+			state.lock.Unlock()
+			t.Fatalf("expected two queued resume-group retries, got %d", len(state.pendingRetry))
+		}
+		firstSubID, _ := state.pendingRetry[0].command.SubID()
+		secondSubID, _ := state.pendingRetry[1].command.SubID()
+		state.lock.Unlock()
+		forgetClientState(client)
+
+		if firstSubID != "sub-a" || secondSubID != "sub-b" {
+			t.Fatalf("expected deterministic resume-group order [sub-a sub-b], got [%s %s] on attempt %d", firstSubID, secondSubID, attempt)
+		}
+	}
+}
+
 func TestDefaultSubscriptionManagerHandledFailedReplayRemovesTrackedState(t *testing.T) {
 	manager := NewDefaultSubscriptionManager()
 	handler := func(*Message) error { return nil }

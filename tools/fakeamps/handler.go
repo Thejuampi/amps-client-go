@@ -594,7 +594,7 @@ func handleConnection(conn net.Conn) {
 			recordCount := 0
 			totalCount := 0
 			if sow != nil {
-				result := sow.query(topic, filter, topN, header.orderBy)
+				result := querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
 				totalCount = result.totalCount
 				mt := getTopicMessageType(topic)
 

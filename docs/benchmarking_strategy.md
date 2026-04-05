@@ -62,6 +62,8 @@ Sub-benchmark dimensions order:
 
 2. Go baseline
 - Keep `tools/perf_baseline.json` for stable micro gates.
+- `tools/perfgate` evaluates repeated samples and uses the median result per benchmark to reduce single-run noise.
+- Use benchmark groups in `tools/perf_baseline.json` only for known volatile microbenchmarks; keep the default threshold for the rest.
 - Capture tails with `tools/perfreport capture-go` for broader profiles.
 
 3. C baseline

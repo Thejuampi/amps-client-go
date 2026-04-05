@@ -138,6 +138,27 @@ func TestEvaluateFilterMath(t *testing.T) {
 	}
 }
 
+func TestIsMathExpressionIgnoresQuotedOperators(t *testing.T) {
+	cases := []struct {
+		name     string
+		filter   string
+		expected bool
+	}{
+		{name: "plus inside single quotes", filter: `/value = '1+1'`, expected: false},
+		{name: "star inside like", filter: `/name LIKE '%*%'`, expected: false},
+		{name: "minus inside double quotes", filter: `/value = "5-2"`, expected: false},
+		{name: "real math expression", filter: `/a + /b > 5`, expected: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if result := isMathExpression(tc.filter); result != tc.expected {
+				t.Fatalf("isMathExpression(%q) = %v, want %v", tc.filter, result, tc.expected)
+			}
+		})
+	}
+}
+
 func TestEvaluateFilterArrayQuantifiers(t *testing.T) {
 	var cases = []struct {
 		name     string
@@ -374,6 +395,16 @@ func TestSplitLogicalOp(t *testing.T) {
 				t.Errorf("splitLogicalOp(%q, %q) = %v, want %v", tc.expr, tc.op, result, tc.expected)
 			}
 		})
+	}
+}
+
+func TestSplitLogicalOpIgnoresEscapedQuotedOperators(t *testing.T) {
+	result, found := splitLogicalOp(`/text = 'don\'t OR split' AND /flag = 1`, " AND ")
+	if !found {
+		t.Fatalf("expected splitLogicalOp to find top-level AND")
+	}
+	if result[0] != `/text = 'don\'t OR split'` || result[1] != "/flag = 1" {
+		t.Fatalf("unexpected logical split result: %v", result)
 	}
 }
 

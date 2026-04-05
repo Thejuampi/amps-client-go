@@ -135,6 +135,40 @@ func TestMemoryBookmarkStoreGetMostRecentReturnsPublisherList(t *testing.T) {
 	}
 }
 
+func TestStoreSequenceHelpersDetectExhaustion(t *testing.T) {
+	next, exhausted := deriveNextStoreSequence(maxStoreSequence, 0)
+	if !exhausted || next != maxStoreSequence {
+		t.Fatalf("expected exhausted checkpoint sequence, got next=%d exhausted=%v", next, exhausted)
+	}
+
+	next, exhausted = advanceStoreSequence(maxStoreSequence)
+	if !exhausted || next != maxStoreSequence {
+		t.Fatalf("expected exhausted advanced sequence, got next=%d exhausted=%v", next, exhausted)
+	}
+}
+
+func TestFileBookmarkStoreWalPurgeClearsSequenceExhaustion(t *testing.T) {
+	store := NewFileBookmarkStore(filepath.Join(t.TempDir(), "bookmark_store_purge.json"))
+	store.lock.Lock()
+	store.records["sub-1"] = map[string]*bookmarkRecord{"10|1|": {SeqNo: 7, Count: 1}}
+	store.mostRecent["sub-1"] = "10|1|"
+	store.discardedUpTo["sub-1"] = 7
+	store.nextSeqNo = maxStoreSequence
+	store.sequenceExhausted = true
+	store.applyWalRecordLocked(bookmarkWalRecord{Type: "purge"})
+	store.lock.Unlock()
+
+	if len(store.records) != 0 || len(store.mostRecent) != 0 || len(store.discardedUpTo) != 0 {
+		t.Fatalf("expected purge to clear bookmark state")
+	}
+	if store.nextSeqNo != 1 {
+		t.Fatalf("expected purge to reset next sequence to 1, got %d", store.nextSeqNo)
+	}
+	if store.sequenceExhausted {
+		t.Fatalf("expected purge to clear sequence exhaustion")
+	}
+}
+
 func TestFileBookmarkStoreWrapperCoverage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bookmark_store_wrappers.json")
 	store := NewFileBookmarkStore(path)
@@ -315,6 +349,28 @@ func TestFileBookmarkStoreRuntimeSequenceExhaustionRejectsNewBookmark(t *testing
 	}
 	if seqNo != 0 {
 		t.Fatalf("expected failed overflow log to return zero sequence, got %d", seqNo)
+	}
+}
+
+func TestFileBookmarkStorePersistedRejectsNewBookmarkAfterSequenceExhaustion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bookmark_store_persisted_sequence_exhaustion.json")
+	store := NewFileBookmarkStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	store.nextSeqNo = math.MaxUint64
+
+	persisted, err := store.PersistedWithError("sub-overflow", "10|1|")
+	if err != nil || persisted != "10|1|" {
+		t.Fatalf("expected first max sequence persisted to succeed, persisted=%q err=%v", persisted, err)
+	}
+
+	persisted, err = store.PersistedWithError("sub-overflow", "10|2|")
+	if err == nil {
+		t.Fatalf("expected new persisted bookmark after max sequence to fail")
+	}
+	if persisted != "10|2|" {
+		t.Fatalf("expected failed persisted call to echo bookmark, got %q", persisted)
+	}
+	if mostRecent := store.GetMostRecent("sub-overflow"); mostRecent != "10|1|" {
+		t.Fatalf("expected failed overflow persisted to leave state unchanged, got %q", mostRecent)
 	}
 }
 

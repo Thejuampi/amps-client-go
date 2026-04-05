@@ -263,11 +263,11 @@ func (j *messageJournal) writeToDisk(topic, sowKey string, payload []byte, times
 	binary.BigEndian.PutUint32(lenBuf[:], uint32(recordSize))
 
 	j.diskFlushMu.Lock()
-	if _, err := j.diskFile.Write(lenBuf[:]); err != nil {
+	if _, err := j.diskWriter.Write(lenBuf[:]); err != nil {
 		j.diskFlushMu.Unlock()
 		return
 	}
-	if _, err := j.diskFile.Write(recBuf); err != nil {
+	if _, err := j.diskWriter.Write(recBuf); err != nil {
 		j.diskFlushMu.Unlock()
 		return
 	}

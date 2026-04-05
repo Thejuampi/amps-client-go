@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -226,6 +227,7 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 	}
 
 	if !foundEnd {
+		log.Printf("fakeamps: malformed AMPS header: missing closing brace")
 		return headerFields{}, nil
 	}
 	if i <= n {
@@ -481,7 +483,7 @@ func writeField(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(`,"`)
 	buf.WriteString(key)
 	buf.WriteString(`":"`)
-	buf.WriteString(value)
+	writeJSONString(buf, value)
 	buf.WriteByte('"')
 }
 
@@ -491,6 +493,33 @@ func writeNumericField(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(`":`)
 	buf.WriteString(value)
 }
+
+func writeJSONString(buf *bytes.Buffer, s string) {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			buf.WriteString(`\"`)
+		case '\\':
+			buf.WriteString(`\\`)
+		case '\n':
+			buf.WriteString(`\n`)
+		case '\r':
+			buf.WriteString(`\r`)
+		case '\t':
+			buf.WriteString(`\t`)
+		default:
+			if s[i] < 0x20 {
+				buf.WriteString(`\u00`)
+				buf.WriteByte(hexDigits[s[i]>>4])
+				buf.WriteByte(hexDigits[s[i]&0xf])
+			} else {
+				buf.WriteByte(s[i])
+			}
+		}
+	}
+}
+
+var hexDigits = []byte("0123456789abcdef")
 
 // ---------------------------------------------------------------------------
 // SowKey generation (when publish doesn't carry one and SOW cache is enabled).

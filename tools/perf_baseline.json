@@ -1,4 +1,9 @@
 {
+  "groups": {
+    "volatile-micro": {
+      "max_regression_pct": 25.0
+    }
+  },
   "benchmarks": {
     "BenchmarkHeaderHotWrite": {
       "ns_op": 73.17,
@@ -38,11 +43,13 @@
     },
     "BenchmarkMessageReset": {
       "ns_op": 12.73,
-      "allocs_op": 0.0
+      "allocs_op": 0.0,
+      "group": "volatile-micro"
     },
     "BenchmarkUnsafeStringFromBytes": {
       "ns_op": 0.273,
-      "allocs_op": 0.0
+      "allocs_op": 0.0,
+      "group": "volatile-micro"
     },
     "BenchmarkTrimASCIISpaces": {
       "ns_op": 4.475,
@@ -50,11 +57,13 @@
     },
     "BenchmarkSyncMapLoad": {
       "ns_op": 10.35,
-      "allocs_op": 0.0
+      "allocs_op": 0.0,
+      "group": "volatile-micro"
     },
     "BenchmarkSyncMapStore": {
       "ns_op": 331.3,
-      "allocs_op": 5.0
+      "allocs_op": 5.0,
+      "group": "volatile-micro"
     },
     "BenchmarkPublishSendFull": {
       "ns_op": 56.52,
@@ -66,23 +75,28 @@
     },
     "BenchmarkRouteHotManySubscriptions": {
       "ns_op": 67.4,
-      "allocs_op": 2.0
+      "allocs_op": 2.0,
+      "group": "volatile-micro"
     },
     "BenchmarkStreamConcurrentDequeue": {
       "ns_op": 51.59,
-      "allocs_op": 0.0
+      "allocs_op": 0.0,
+      "group": "volatile-micro"
     },
     "BenchmarkParseUintBytes": {
       "ns_op": 10.27,
-      "allocs_op": 0.0
+      "allocs_op": 0.0,
+      "group": "volatile-micro"
     },
     "BenchmarkParseUint32Value": {
       "ns_op": 6.977,
-      "allocs_op": 0.0
+      "allocs_op": 0.0,
+      "group": "volatile-micro"
     },
     "BenchmarkAckToString": {
       "ns_op": 0.1676,
-      "allocs_op": 0.0
+      "allocs_op": 0.0,
+      "group": "volatile-micro"
     }
   }
 }

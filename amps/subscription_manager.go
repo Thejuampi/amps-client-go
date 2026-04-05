@@ -414,22 +414,10 @@ func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Messag
 		return
 	}
 
-	var existingHandler func(*Message) error
-	manager.lock.RLock()
-	if messageHandler == nil {
-		if existing, exists := manager.subscriptions[subscriptionID]; exists {
-			existingHandler = existing.messageHandler
-		}
-	}
-	manager.lock.RUnlock()
-
 	manager.lock.Lock()
 	if messageHandler == nil {
 		if existing, exists := manager.subscriptions[subscriptionID]; exists {
 			messageHandler = existing.messageHandler
-		}
-		if messageHandler == nil {
-			messageHandler = existingHandler
 		}
 	}
 	manager.subscriptions[subscriptionID] = trackedSubscription{
@@ -512,30 +500,20 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 		ids = append(ids, subID)
 	}
 	failedHandler := manager.failedResubscribeHandler
-	manager.lock.RUnlock()
-
-	sort.Strings(ids)
-
-	manager.lock.RLock()
+	subscriptions := make([]trackedSubscription, 0, len(ids))
+	for _, subID := range ids {
+		if sub, ok := manager.subscriptions[subID]; ok {
+			subscriptions = append(subscriptions, sub)
+		}
+	}
 	var resumedGroups = make([]*trackedResumeGroup, 0, len(manager.resumedGroups))
 	for group := range manager.resumedGroups {
 		resumedGroups = append(resumedGroups, group)
 	}
 	manager.lock.RUnlock()
 	sort.Slice(resumedGroups, func(left int, right int) bool {
-		leftID, _ := resumedGroups[left].command.SubID()
-		rightID, _ := resumedGroups[right].command.SubID()
-		return leftID < rightID
+		return trackedSubscriptionID(resumedGroups[left].command) < trackedSubscriptionID(resumedGroups[right].command)
 	})
-
-	subscriptions := make([]trackedSubscription, 0, len(ids))
-	for _, subID := range ids {
-		manager.lock.RLock()
-		if sub, ok := manager.subscriptions[subID]; ok {
-			subscriptions = append(subscriptions, sub)
-		}
-		manager.lock.RUnlock()
-	}
 
 	state := ensureClientState(client)
 	noResubscribe := map[string]struct{}{}

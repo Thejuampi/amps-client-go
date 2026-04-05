@@ -24,6 +24,20 @@ func (authFailureAuthenticator) Retry(string, string) (string, error) {
 }
 func (authFailureAuthenticator) Completed(string, string, string) {}
 
+type recordingBookmarkStore struct {
+	version string
+}
+
+func (store *recordingBookmarkStore) Log(*Message) uint64                { return 0 }
+func (store *recordingBookmarkStore) Discard(string, uint64)             {}
+func (store *recordingBookmarkStore) DiscardMessage(*Message)            {}
+func (store *recordingBookmarkStore) GetMostRecent(string) string        { return "" }
+func (store *recordingBookmarkStore) IsDiscarded(*Message) bool          { return false }
+func (store *recordingBookmarkStore) Purge(...string)                    {}
+func (store *recordingBookmarkStore) GetOldestBookmarkSeq(string) uint64 { return 0 }
+func (store *recordingBookmarkStore) Persisted(string, string) string    { return "" }
+func (store *recordingBookmarkStore) SetServerVersion(version string)    { store.version = version }
+
 func isClientSignalClosed(signal <-chan struct{}) bool {
 	select {
 	case <-signal:
@@ -1626,6 +1640,37 @@ func TestClientFlushAckPathsCoverage(t *testing.T) {
 	}
 }
 
+func TestClientFlushAbortsOnDisconnect(t *testing.T) {
+	client := NewClient("flush-disconnect")
+	client.connected.Store(true)
+	client.connection = newTestConn()
+	client.resetDisconnectSignal()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.Flush()
+	}()
+
+	_, handler := waitForAnyRouteHandler(t, client)
+	ackType := AckTypeProcessed
+	_ = handler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ackType,
+		status:  []byte("success"),
+	}})
+	client.connected.Store(false)
+	client.signalDisconnect()
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "DisconnectedError") {
+			t.Fatalf("expected disconnected flush error, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected Flush to abort after disconnect")
+	}
+}
+
 func TestClientDisconnectSignalLifecycle(t *testing.T) {
 	var client = NewClient("disconnect-signal")
 	if !isClientSignalClosed(client.disconnectCh) {
@@ -1649,6 +1694,15 @@ func TestClientDisconnectSignalLifecycle(t *testing.T) {
 	}
 	if isClientSignalClosed(client.disconnectCh) {
 		t.Fatalf("expected refreshed disconnect signal to remain open")
+	}
+}
+
+func TestClientCurrentDisconnectSignalOpensForConnectedClient(t *testing.T) {
+	var client = NewClient("disconnect-signal-connected")
+	client.connected.Store(true)
+
+	if isClientSignalClosed(client.currentDisconnectSignal()) {
+		t.Fatalf("expected connected client disconnect signal to be open")
 	}
 }
 
@@ -1925,6 +1979,64 @@ func TestClientLogonAckPathsCoverage(t *testing.T) {
 	}
 }
 
+func TestClientLogonAckDisconnectCoverage(t *testing.T) {
+	client := NewClient("logon-disconnect")
+	client.connected.Store(true)
+	client.connection = newTestConn()
+	client.url, _ = url.Parse("tcp://user:pass@localhost:9007/amps/json")
+	client.SetErrorHandler(func(error) {})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.Logon()
+	}()
+
+	_, _ = waitForAnyRouteHandler(t, client)
+	client.connected.Store(false)
+	client.signalDisconnect()
+
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "DisconnectedError") {
+			t.Fatalf("expected disconnected logon error, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected Logon to abort after disconnect")
+	}
+}
+
+func TestClientLogonSuccessPropagatesServerVersionToBookmarkStore(t *testing.T) {
+	client := NewClient("logon-bookmark-version")
+	client.connected.Store(true)
+	client.connection = newTestConn()
+	client.url, _ = url.Parse("tcp://user:pass@localhost:9007/amps/json")
+	client.SetErrorHandler(func(error) {})
+	store := &recordingBookmarkStore{}
+	client.SetBookmarkStore(store)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- client.Logon()
+	}()
+
+	_, handler := waitForAnyRouteHandler(t, client)
+	ack := AckTypeProcessed
+	_ = handler(&Message{header: &_Header{
+		command:    CommandAck,
+		ackType:    &ack,
+		status:     []byte("success"),
+		version:    []byte("5.3.5.1"),
+		clientName: []byte("12345"),
+	}})
+
+	if err := <-result; err != nil {
+		t.Fatalf("expected successful logon, got %v", err)
+	}
+	if store.version != "5.3.5.1" {
+		t.Fatalf("expected bookmark store server version 5.3.5.1, got %q", store.version)
+	}
+}
+
 func TestClientLogonTimeoutCoverage(t *testing.T) {
 	timeoutClient := NewClient("logon-timeout")
 	timeoutClient.connected.Store(true)
@@ -1963,5 +2075,16 @@ func TestClientUtilityHelpersCoverage(t *testing.T) {
 	initial := client.makeCommandID()
 	if !strings.Contains(initial, "0") {
 		t.Fatalf("expected initial command id to contain sequence 0")
+	}
+}
+
+func TestUnsafeStringFromBytesSharesBackingBytes(t *testing.T) {
+	value := []byte("abc")
+
+	converted := unsafeStringFromBytes(value)
+	value[0] = 'z'
+
+	if converted != "zbc" {
+		t.Fatalf("expected unsafe conversion to share backing bytes, got %q", converted)
 	}
 }

@@ -62,3 +62,18 @@ func TestBuildFlatJSON(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 }
+
+func TestBuildFlatJSONDeterministicOrder(t *testing.T) {
+	fields := map[string]string{
+		"z": "1",
+		"a": "2",
+		"m": "3",
+	}
+
+	expected := `{"a":2,"m":3,"z":1}`
+	for attempt := 0; attempt < 5; attempt++ {
+		if got := string(buildFlatJSON(fields)); got != expected {
+			t.Fatalf("expected deterministic sorted JSON, got %s", got)
+		}
+	}
+}

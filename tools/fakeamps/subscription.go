@@ -125,16 +125,19 @@ func getQueueLease(sowKey string) *queueLease {
 }
 
 func requeueExpiredLeases() {
+	var expired []*queueLease
 	queueLeasesMu.Lock()
-	defer queueLeasesMu.Unlock()
-
 	now := time.Now()
 	for key, lease := range queueLeases {
 		if now.After(lease.deliveredAt.Add(lease.leasePeriod)) {
-			// Lease expired - requeue the message.
 			delete(queueLeases, key)
-			go requeueMessage(lease)
+			expired = append(expired, lease)
 		}
+	}
+	queueLeasesMu.Unlock()
+
+	for _, lease := range expired {
+		go requeueMessage(lease)
 	}
 }
 

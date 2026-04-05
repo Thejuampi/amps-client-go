@@ -1178,6 +1178,11 @@ func (client *Client) SetHTTPPreflightHeaders(headers []string) *Client {
 
 // RawConnection executes the exported rawconnection operation.
 func (client *Client) RawConnection() net.Conn {
+	if client == nil {
+		return nil
+	}
+	client.connectionStateLock.Lock()
+	defer client.connectionStateLock.Unlock()
 	return client.connection
 }
 

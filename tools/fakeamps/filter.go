@@ -875,13 +875,34 @@ func splitCompExpr(expr string) []string {
 
 func isMathExpression(filter string) bool {
 	mathOps := []string{"+", "-", "*", "/", "%"}
-	upper := strings.ToUpper(filter)
+	upper := stripQuoted(strings.ToUpper(filter))
 	for _, op := range mathOps {
 		if strings.Contains(upper, " "+op+" ") || strings.Contains(upper, op+" ") || strings.Contains(upper, " "+op) {
 			return true
 		}
 	}
 	return false
+}
+
+func stripQuoted(s string) string {
+	var buf strings.Builder
+	inQuote := false
+	quoteChar := byte(0)
+	for i := 0; i < len(s); i++ {
+		if inQuote {
+			if s[i] == quoteChar {
+				inQuote = false
+			}
+			continue
+		}
+		if s[i] == '\'' || s[i] == '"' {
+			inQuote = true
+			quoteChar = s[i]
+			continue
+		}
+		buf.WriteByte(s[i])
+	}
+	return buf.String()
 }
 
 func evaluateMathExpression(filter string, payload []byte) bool {

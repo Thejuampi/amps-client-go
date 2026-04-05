@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"sort"
 	"strings"
 )
 
@@ -159,17 +160,23 @@ func buildFlatJSON(fields map[string]string) []byte {
 		return []byte("{}")
 	}
 
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	buf := make([]byte, 0, 256)
 	buf = append(buf, '{')
 	first := true
-	for k, v := range fields {
+	for _, k := range keys {
 		if !first {
 			buf = append(buf, ',')
 		}
 		buf = append(buf, '"')
 		buf = append(buf, k...)
 		buf = append(buf, '"', ':')
-		buf = append(buf, v...)
+		buf = append(buf, fields[k]...)
 		first = false
 	}
 	buf = append(buf, '}')

@@ -6,6 +6,7 @@ import (
 	"compress/zlib"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type connWriter struct {
 	done      chan struct{}
 	stats     *connStats
 	closeOnce sync.Once
+	closed    atomic.Bool
 
 	// Compression
 	compress    bool
@@ -152,9 +154,9 @@ func (cw *connWriter) sendDirect(data []byte) {
 }
 
 func (cw *connWriter) enqueue(data []byte) {
-	defer func() {
-		_ = recover()
-	}()
+	if cw.closed.Load() {
+		return
+	}
 
 	select {
 	case cw.ch <- data:
@@ -172,6 +174,7 @@ func (cw *connWriter) failSlowConsumer() {
 }
 
 func (cw *connWriter) close() {
+	cw.closed.Store(true)
 	cw.closeOnce.Do(func() {
 		close(cw.ch)
 	})

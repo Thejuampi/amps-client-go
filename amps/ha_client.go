@@ -68,14 +68,17 @@ func (ha *HAClient) handleDisconnect(err error) {
 	if ha.stopped.Load() {
 		return
 	}
-	if !ha.reconnecting.CompareAndSwap(false, true) {
-		return
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+
 	ha.lock.Lock()
 	ha.reconnectCancel = cancel
 	ha.lock.Unlock()
+
+	if !ha.reconnecting.CompareAndSwap(false, true) {
+		cancel()
+		return
+	}
 
 	go func() {
 		defer func() {
@@ -88,7 +91,6 @@ func (ha *HAClient) handleDisconnect(err error) {
 		if ha.client != nil && shouldReportHAReconnectError(connectErr) {
 			ha.client.reportException(connectErr)
 		}
-		_ = err
 	}()
 }
 

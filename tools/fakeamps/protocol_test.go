@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -100,6 +101,33 @@ func TestBuildAckVariants(t *testing.T) {
 	dBody := string(sowDelete[4:])
 	if !strings.Contains(dBody, `"records_deleted":4`) || !strings.Contains(dBody, `"topic_matches":8`) {
 		t.Fatalf("unexpected sow delete ack body: %s", dBody)
+	}
+}
+
+func TestBuildAckEscapesJSONSpecialChars(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	frame := buildAck(buf, "processed", "cid-escape", "failure",
+		kv{k: "reason", v: "line1\nline2 \"quote\" \\\\ tab\tend"},
+	)
+
+	body := string(frame[4:])
+	expected := `"reason":"line1\nline2 \"quote\" \\\\ tab\tend"`
+	if !strings.Contains(body, expected) {
+		t.Fatalf("expected escaped reason in ack body, got %s", body)
+	}
+}
+
+func TestBuildAckEscapesJSONRoundTrip(t *testing.T) {
+	buf := bytes.NewBuffer(nil)
+	reason := "line1\nline2\rquote\"slash\\tab\tctrl\x01"
+	frame := buildAck(buf, "processed", "cid-roundtrip", "failure", kv{k: "reason", v: reason})
+
+	parsed := map[string]string{}
+	if err := json.Unmarshal(frame[4:], &parsed); err != nil {
+		t.Fatalf("expected valid ack JSON, got %v", err)
+	}
+	if parsed["reason"] != reason {
+		t.Fatalf("expected escaped reason round-trip %q, got %q", reason, parsed["reason"])
 	}
 }
 

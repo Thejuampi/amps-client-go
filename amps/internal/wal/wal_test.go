@@ -196,6 +196,29 @@ func TestReplayIgnoresUnterminatedFinalLine(t *testing.T) {
 	}
 }
 
+func TestReplayTrimsCRLFAndErrorsOnUnreadablePath(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "crlf.wal")
+	if err := os.WriteFile(logPath, []byte("first\r\nsecond\r\n"), 0o600); err != nil {
+		t.Fatalf("write wal: %v", err)
+	}
+
+	lines := make([]string, 0, 2)
+	if err := Replay(logPath, func(line []byte) error {
+		lines = append(lines, string(line))
+		return nil
+	}); err != nil {
+		t.Fatalf("replay failed: %v", err)
+	}
+	if len(lines) != 2 || lines[0] != "first" || lines[1] != "second" {
+		t.Fatalf("unexpected CRLF replay lines: %#v", lines)
+	}
+
+	if err := Replay(tempDir, func([]byte) error { return nil }); err == nil {
+		t.Fatalf("expected replay error for unreadable directory path")
+	}
+}
+
 func TestDurabilitySyncCoverage(t *testing.T) {
 	tempDir := t.TempDir()
 	logPath := filepath.Join(tempDir, "ops.wal")
@@ -282,6 +305,24 @@ func TestDurabilitySyncErrorCoverage(t *testing.T) {
 	}
 }
 
+func TestWALMkdirAllErrorCoverage(t *testing.T) {
+	tempDir := t.TempDir()
+	blockedParent := filepath.Join(tempDir, "blocked")
+	if err := os.WriteFile(blockedParent, []byte("file"), 0o600); err != nil {
+		t.Fatalf("write blocked parent: %v", err)
+	}
+
+	if err := WriteAtomic(filepath.Join(blockedParent, "checkpoint.json"), []byte("checkpoint"), 0o600); err == nil {
+		t.Fatalf("expected writeatomic mkdir failure")
+	}
+	if err := Append(filepath.Join(blockedParent, "ops.wal"), []byte("entry\n"), false); err == nil {
+		t.Fatalf("expected append mkdir failure")
+	}
+	if err := Truncate(filepath.Join(blockedParent, "ops.wal")); err == nil {
+		t.Fatalf("expected truncate mkdir failure")
+	}
+}
+
 func TestWriteAtomicCurrentDirectoryCoverage(t *testing.T) {
 	originalWD, err := os.Getwd()
 	if err != nil {
@@ -297,5 +338,41 @@ func TestWriteAtomicCurrentDirectoryCoverage(t *testing.T) {
 
 	if err = WriteAtomic("checkpoint.local", []byte("checkpoint"), 0o600); err != nil {
 		t.Fatalf("writeatomic in current directory failed: %v", err)
+	}
+}
+
+func TestAppendAndTruncateCurrentDirectoryCoverage(t *testing.T) {
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	tempDir := t.TempDir()
+	if err = os.Chdir(tempDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+
+	if err = Append("ops.local", []byte("entry\n"), true); err != nil {
+		t.Fatalf("append in current directory failed: %v", err)
+	}
+	data, err := os.ReadFile("ops.local")
+	if err != nil {
+		t.Fatalf("read appended wal failed: %v", err)
+	}
+	if string(data) != "entry\n" {
+		t.Fatalf("unexpected appended wal contents: %q", string(data))
+	}
+
+	if err = Truncate("ops.local"); err != nil {
+		t.Fatalf("truncate in current directory failed: %v", err)
+	}
+	data, err = os.ReadFile("ops.local")
+	if err != nil {
+		t.Fatalf("read truncated wal failed: %v", err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected truncated wal to be empty, got %q", string(data))
 	}
 }

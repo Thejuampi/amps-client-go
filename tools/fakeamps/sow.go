@@ -531,7 +531,7 @@ func (c *sowCache) deleteByFilter(topic, filter string) (int, []string) {
 	t.mu.Lock()
 	var deleted []string
 	for key, r := range t.records {
-		if r.isExpired() || evaluateFilter(filter, r.payload) {
+		if !r.isExpired() && evaluateFilter(filter, r.payload) {
 			deleted = append(deleted, key)
 			delete(t.records, key)
 		}

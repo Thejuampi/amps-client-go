@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -34,8 +36,8 @@ type benchmarkResult struct {
 	AllocsOp float64
 }
 
-func parseBenchOutput(output string) map[string]benchmarkResult {
-	results := map[string]benchmarkResult{}
+func parseBenchOutput(output string) map[string][]benchmarkResult {
+	results := map[string][]benchmarkResult{}
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -73,16 +75,43 @@ func parseBenchOutput(output string) map[string]benchmarkResult {
 			}
 		}
 		if hasNSOp && hasAllocsOp && nsOp > 0 {
-			results[name] = benchmarkResult{NSOp: nsOp, AllocsOp: allocsOp}
+			results[name] = append(results[name], benchmarkResult{NSOp: nsOp, AllocsOp: allocsOp})
 		}
 	}
 	return results
+}
+
+func medianFloat64(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	var sorted = slices.Clone(values)
+	slices.Sort(sorted)
+	return sorted[len(sorted)/2]
+}
+
+func summarizeBenchOutput(parsed map[string][]benchmarkResult) map[string]benchmarkResult {
+	summary := make(map[string]benchmarkResult, len(parsed))
+	for name, samples := range parsed {
+		nsValues := make([]float64, 0, len(samples))
+		allocValues := make([]float64, 0, len(samples))
+		for _, sample := range samples {
+			nsValues = append(nsValues, sample.NSOp)
+			allocValues = append(allocValues, sample.AllocsOp)
+		}
+		summary[name] = benchmarkResult{
+			NSOp:     medianFloat64(nsValues),
+			AllocsOp: medianFloat64(allocValues),
+		}
+	}
+	return summary
 }
 
 func main() {
 	baselinePath := flag.String("baseline", "tools/perf_baseline.json", "path to benchmark baseline JSON")
 	packagePath := flag.String("package", "./amps", "package path for benchmarks")
 	benchtime := flag.String("benchtime", "1s", "go test benchmark duration")
+	samples := flag.Int("samples", 5, "number of benchmark samples to collect")
 	maxRegression := flag.Float64("max-regression", 10.0, "max allowed regression percentage")
 	flag.Parse()
 
@@ -108,12 +137,12 @@ func main() {
 	}
 
 	benchmarkNames := make([]string, 0, len(baseline.Benchmarks))
-	for name := range baseline.Benchmarks {
+	for name := range maps.Keys(baseline.Benchmarks) {
 		benchmarkNames = append(benchmarkNames, regexp.QuoteMeta(name))
 	}
 	benchPattern := "^(" + strings.Join(benchmarkNames, "|") + ")$"
 
-	command := exec.Command("go", "test", *packagePath, "-run", "^$", "-bench", benchPattern, "-benchmem", "-count=1", "-benchtime="+*benchtime) // #nosec G204 -- arguments are passed without shell expansion
+	command := exec.Command("go", "test", *packagePath, "-run", "^$", "-bench", benchPattern, "-benchmem", "-count="+strconv.Itoa(*samples), "-benchtime="+*benchtime) // #nosec G204 -- arguments are passed without shell expansion
 	outputBytes, err := command.CombinedOutput()
 	output := string(outputBytes)
 	if err != nil {
@@ -121,7 +150,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	results := parseBenchOutput(output)
+	results := summarizeBenchOutput(parseBenchOutput(output))
 	failures := []string{}
 	for name, expected := range baseline.Benchmarks {
 		actual, ok := results[name]

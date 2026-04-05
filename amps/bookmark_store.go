@@ -896,6 +896,9 @@ func (store *FileBookmarkStore) PersistedWithError(subID string, bookmark string
 	if records := store.records[subID]; records != nil && records[bookmark] != nil {
 		record = *records[bookmark]
 		record.Discarded = true
+	} else if store.sequenceExhausted {
+		store.lock.Unlock()
+		return bookmark, NewError(CommandError, "bookmark sequence space exhausted")
 	}
 	walRecord := bookmarkWalRecord{
 		Type:     "upsert",

@@ -385,6 +385,9 @@ func (p *peerConn) syncCatchUp() error {
 		return nil
 	}
 
+	// TODO: implement bookmark negotiation during logon handshake so that
+	// the peer can tell the sender where it left off, avoiding duplicate
+	// replay of the entire journal on every reconnection.
 	var entries = journal.replayAll(0)
 	var index int
 	for index = 0; index < len(entries); index++ {
