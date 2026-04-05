@@ -545,6 +545,16 @@ func newOwnedMessage() *Message {
 	return &holder.Message
 }
 
+func copyMessageBytes(buffer []byte, source []byte) ([]byte, []byte) {
+	if source == nil {
+		return buffer, nil
+	}
+
+	var copied = buffer[:len(source)]
+	copy(copied, source)
+	return buffer[len(source):], copied
+}
+
 // Copy executes the exported copy operation.
 func (msg *Message) Copy() *Message {
 	if msg == nil {
@@ -576,10 +586,55 @@ func (msg *Message) Copy() *Message {
 	}
 
 	message.header.command = header.command
-	if msg.data != nil {
-		message.data = make([]byte, len(msg.data))
-		copy(message.data, msg.data)
+	var totalCopiedBytes = len(msg.data) +
+		len(header.bookmark) +
+		len(header.commandID) +
+		len(header.clientName) +
+		len(header.correlationID) +
+		len(header.filter) +
+		len(header.leasePeriod) +
+		len(header.messageType) +
+		len(header.options) +
+		len(header.orderBy) +
+		len(header.password) +
+		len(header.queryID) +
+		len(header.reason) +
+		len(header.sowKey) +
+		len(header.sowKeys) +
+		len(header.status) +
+		len(header.subID) +
+		len(header.subIDs) +
+		len(header.timestamp) +
+		len(header.topic) +
+		len(header.userID) +
+		len(header.version)
+	var needsCopiedBytes = msg.data != nil ||
+		header.bookmark != nil ||
+		header.commandID != nil ||
+		header.clientName != nil ||
+		header.correlationID != nil ||
+		header.filter != nil ||
+		header.leasePeriod != nil ||
+		header.messageType != nil ||
+		header.options != nil ||
+		header.orderBy != nil ||
+		header.password != nil ||
+		header.queryID != nil ||
+		header.reason != nil ||
+		header.sowKey != nil ||
+		header.sowKeys != nil ||
+		header.status != nil ||
+		header.subID != nil ||
+		header.subIDs != nil ||
+		header.timestamp != nil ||
+		header.topic != nil ||
+		header.userID != nil ||
+		header.version != nil
+	var copiedBytes []byte
+	if needsCopiedBytes {
+		copiedBytes = make([]byte, totalCopiedBytes)
 	}
+	copiedBytes, message.data = copyMessageBytes(copiedBytes, msg.data)
 
 	if header.ackType != nil {
 		ackType := *header.ackType
@@ -589,38 +644,20 @@ func (msg *Message) Copy() *Message {
 		batchSize := *header.batchSize
 		message.header.batchSize = &batchSize
 	}
-	if header.bookmark != nil {
-		message.header.bookmark = make([]byte, len(header.bookmark))
-		copy(message.header.bookmark, header.bookmark)
-	}
-	if header.commandID != nil {
-		message.header.commandID = make([]byte, len(header.commandID))
-		copy(message.header.commandID, header.commandID)
-	}
-	if header.clientName != nil {
-		message.header.clientName = make([]byte, len(header.clientName))
-		copy(message.header.clientName, header.clientName)
-	}
-	if header.correlationID != nil {
-		message.header.correlationID = make([]byte, len(header.correlationID))
-		copy(message.header.correlationID, header.correlationID)
-	}
+	copiedBytes, message.header.bookmark = copyMessageBytes(copiedBytes, header.bookmark)
+	copiedBytes, message.header.commandID = copyMessageBytes(copiedBytes, header.commandID)
+	copiedBytes, message.header.clientName = copyMessageBytes(copiedBytes, header.clientName)
+	copiedBytes, message.header.correlationID = copyMessageBytes(copiedBytes, header.correlationID)
 	if header.expiration != nil {
 		expiration := *header.expiration
 		message.header.expiration = &expiration
 	}
-	if header.filter != nil {
-		message.header.filter = make([]byte, len(header.filter))
-		copy(message.header.filter, header.filter)
-	}
+	copiedBytes, message.header.filter = copyMessageBytes(copiedBytes, header.filter)
 	if header.groupSequenceNumber != nil {
 		gseq := *header.groupSequenceNumber
 		message.header.groupSequenceNumber = &gseq
 	}
-	if header.leasePeriod != nil {
-		message.header.leasePeriod = make([]byte, len(header.leasePeriod))
-		copy(message.header.leasePeriod, header.leasePeriod)
-	}
+	copiedBytes, message.header.leasePeriod = copyMessageBytes(copiedBytes, header.leasePeriod)
 	if header.matches != nil {
 		matches := *header.matches
 		message.header.matches = &matches
@@ -629,30 +666,12 @@ func (msg *Message) Copy() *Message {
 		msgLen := *header.messageLength
 		message.header.messageLength = &msgLen
 	}
-	if header.messageType != nil {
-		message.header.messageType = make([]byte, len(header.messageType))
-		copy(message.header.messageType, header.messageType)
-	}
-	if header.options != nil {
-		message.header.options = make([]byte, len(header.options))
-		copy(message.header.options, header.options)
-	}
-	if header.orderBy != nil {
-		message.header.orderBy = make([]byte, len(header.orderBy))
-		copy(message.header.orderBy, header.orderBy)
-	}
-	if header.password != nil {
-		message.header.password = make([]byte, len(header.password))
-		copy(message.header.password, header.password)
-	}
-	if header.queryID != nil {
-		message.header.queryID = make([]byte, len(header.queryID))
-		copy(message.header.queryID, header.queryID)
-	}
-	if header.reason != nil {
-		message.header.reason = make([]byte, len(header.reason))
-		copy(message.header.reason, header.reason)
-	}
+	copiedBytes, message.header.messageType = copyMessageBytes(copiedBytes, header.messageType)
+	copiedBytes, message.header.options = copyMessageBytes(copiedBytes, header.options)
+	copiedBytes, message.header.orderBy = copyMessageBytes(copiedBytes, header.orderBy)
+	copiedBytes, message.header.password = copyMessageBytes(copiedBytes, header.password)
+	copiedBytes, message.header.queryID = copyMessageBytes(copiedBytes, header.queryID)
+	copiedBytes, message.header.reason = copyMessageBytes(copiedBytes, header.reason)
 	if header.recordsDeleted != nil {
 		rD := *header.recordsDeleted
 		message.header.recordsDeleted = &rD
@@ -673,50 +692,23 @@ func (msg *Message) Copy() *Message {
 		sequenceID := *header.sequenceID
 		message.header.sequenceID = &sequenceID
 	}
-	if header.sowKey != nil {
-		message.header.sowKey = make([]byte, len(header.sowKey))
-		copy(message.header.sowKey, header.sowKey)
-	}
-	if header.sowKeys != nil {
-		message.header.sowKeys = make([]byte, len(header.sowKeys))
-		copy(message.header.sowKeys, header.sowKeys)
-	}
-	if header.status != nil {
-		message.header.status = make([]byte, len(header.status))
-		copy(message.header.status, header.status)
-	}
-	if header.subID != nil {
-		message.header.subID = make([]byte, len(header.subID))
-		copy(message.header.subID, header.subID)
-	}
-	if header.subIDs != nil {
-		message.header.subIDs = make([]byte, len(header.subIDs))
-		copy(message.header.subIDs, header.subIDs)
-	}
-	if header.timestamp != nil {
-		message.header.timestamp = make([]byte, len(header.timestamp))
-		copy(message.header.timestamp, header.timestamp)
-	}
+	copiedBytes, message.header.sowKey = copyMessageBytes(copiedBytes, header.sowKey)
+	copiedBytes, message.header.sowKeys = copyMessageBytes(copiedBytes, header.sowKeys)
+	copiedBytes, message.header.status = copyMessageBytes(copiedBytes, header.status)
+	copiedBytes, message.header.subID = copyMessageBytes(copiedBytes, header.subID)
+	copiedBytes, message.header.subIDs = copyMessageBytes(copiedBytes, header.subIDs)
+	copiedBytes, message.header.timestamp = copyMessageBytes(copiedBytes, header.timestamp)
 	if header.topN != nil {
 		topN := *header.topN
 		message.header.topN = &topN
 	}
-	if header.topic != nil {
-		message.header.topic = make([]byte, len(header.topic))
-		copy(message.header.topic, header.topic)
-	}
+	copiedBytes, message.header.topic = copyMessageBytes(copiedBytes, header.topic)
 	if header.topicMatches != nil {
 		tM := *header.topicMatches
 		message.header.topicMatches = &tM
 	}
-	if header.userID != nil {
-		message.header.userID = make([]byte, len(header.userID))
-		copy(message.header.userID, header.userID)
-	}
-	if header.version != nil {
-		message.header.version = make([]byte, len(header.version))
-		copy(message.header.version, header.version)
-	}
+	copiedBytes, message.header.userID = copyMessageBytes(copiedBytes, header.userID)
+	_, message.header.version = copyMessageBytes(copiedBytes, header.version)
 
 	return message
 }

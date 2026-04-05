@@ -450,6 +450,7 @@ type _MessageQueue struct {
 	last     uint64
 	ring     []*Message
 	closed   bool
+	waiters  uint64
 
 	lock       sync.Mutex
 	notEmptyCh chan struct{}
@@ -469,6 +470,9 @@ func newQueue(initialSize uint64) *_MessageQueue {
 }
 
 func (queue *_MessageQueue) notifyNotEmptyLocked() {
+	if queue.waiters == 0 {
+		return
+	}
 	select {
 	case queue.notEmptyCh <- struct{}{}:
 	default:
@@ -476,6 +480,9 @@ func (queue *_MessageQueue) notifyNotEmptyLocked() {
 }
 
 func (queue *_MessageQueue) clearNotEmptySignalLocked() {
+	if queue.waiters == 0 {
+		return
+	}
 	select {
 	case <-queue.notEmptyCh:
 	default:
@@ -574,6 +581,7 @@ func (queue *_MessageQueue) waitDequeue() (*Message, bool) {
 			queue.lock.Unlock()
 			return nil, false
 		}
+		queue.waiters++
 		waitCh := queue.notEmptyCh
 		closedCh := queue.closedCh
 		queue.lock.Unlock()
@@ -582,6 +590,10 @@ func (queue *_MessageQueue) waitDequeue() (*Message, bool) {
 		case <-waitCh:
 		case <-closedCh:
 		}
+
+		queue.lock.Lock()
+		queue.waiters--
+		queue.lock.Unlock()
 	}
 }
 
@@ -611,6 +623,7 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 			queue.lock.Unlock()
 			return nil, false
 		}
+		queue.waiters++
 		waitCh := queue.notEmptyCh
 		closedCh := queue.closedCh
 		queue.lock.Unlock()
@@ -618,10 +631,20 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 		select {
 		case <-waitCh:
 		case <-closedCh:
+			queue.lock.Lock()
+			queue.waiters--
+			queue.lock.Unlock()
 			return nil, false
 		case <-timer.C:
+			queue.lock.Lock()
+			queue.waiters--
+			queue.lock.Unlock()
 			return nil, false
 		}
+
+		queue.lock.Lock()
+		queue.waiters--
+		queue.lock.Unlock()
 	}
 }
 

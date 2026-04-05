@@ -49,6 +49,8 @@ For the current change set, the correct bump is a patch release.
 6. creates and pushes annotated tag `vX.Y.Z`
 7. publishes the GitHub Release with generated notes via `gh release create`
 
+The release perf gate is confirmatory rather than one-shot: `tools/perfgate` first runs the full benchmark set normally, then reruns only initially failing microbenchmarks with a longer benchtime before declaring a real regression. That keeps release validation strict while reducing false failures from shared-host benchmark noise.
+
 Run it from `main` on a machine that has the sibling C++ reference tree.
 
 ## GitHub Actions Release Workflow

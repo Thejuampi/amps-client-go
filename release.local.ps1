@@ -67,7 +67,7 @@ if ($branch -ne "main") {
 	Fail "Current branch is '$branch'. Switch to 'main' first."
 }
 
-$status = (& git status --porcelain).Trim()
+$status = (& git status --porcelain --untracked-files=no).Trim()
 if ($LASTEXITCODE -ne 0) {
 	Fail "Could not read git status."
 }
@@ -164,7 +164,7 @@ if (-not (Confirm-Yes "Commit, tag, and push release $tag now?")) {
 
 Step "Committing release changes"
 Run-External "git" @("add", "VERSION", "README.md", "amps/client.go")
-Run-External "git" @("-c", "commit.gpgSign=false", "commit", "-m", "release: $tag")
+Run-External "git" @("-c", "commit.gpgSign=false", "commit", "-m", "release: $tag", "-m", "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>")
 
 Step "Creating annotated tag (unsigned)"
 Run-External "git" @("-c", "tag.gpgSign=false", "tag", "-a", $tag, "-m", "Release $tag")

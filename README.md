@@ -54,6 +54,8 @@ This is the current committed side-by-side baseline for the in-scope hot-path pa
 
 Connect-and-logon timings are tracked separately and treated as out of scope for this steady-state hot-path gate.
 
+For the newer matched fixed-iteration concurrent publish contention row (`2400x` across 4 workers), the current live processed-ack result is **near parity** with the official C client rather than a large regression: Go is running about **13.0-15.6 us/op** versus C at about **12.3-14.4 us/op** on the same `fakeamps -benchmark-stability` setup, while the matched concurrent **no-ack** row remains a Go win.
+
 ### Full-Suite Tail Latency (Go Internal Benchmarks)
 
 Every hot path in the client is micro-benchmarked and tracked across commits. Here are the current numbers at p95 (20 samples each):

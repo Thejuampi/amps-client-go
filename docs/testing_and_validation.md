@@ -99,6 +99,7 @@ Performance gate policy:
 
 - Regression is measured against `tools/perf_baseline.json`
 - `tools/perfgate` collects repeated samples and compares the median result for each benchmark
+- if a benchmark initially fails, `tools/perfgate` reruns only that failing subset with a longer benchtime before declaring the gate red
 - Allowed regression threshold is `10%` for both `ns/op` and `allocs/op`, unless a benchmark is assigned to a baseline group with an explicit override
 
 Required output:

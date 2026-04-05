@@ -468,15 +468,103 @@ func TestMessageQueueCoverage(t *testing.T) {
 	}
 }
 
-func TestMessageQueueEnqueueSignalsNotEmptyWithoutWaiters(t *testing.T) {
+func TestMessageQueueEnqueueWakesWaitingDequeue(t *testing.T) {
 	queue := newQueue(2)
+
+	done := make(chan *Message, 1)
+	go func() {
+		message, ok := queue.waitDequeue()
+		if !ok {
+			done <- nil
+			return
+		}
+		done <- message
+	}()
+
+	select {
+	case <-time.After(10 * time.Millisecond):
+	}
 
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("signal")})
 
 	select {
+	case message := <-done:
+		if message == nil || string(message.Data()) != "signal" {
+			t.Fatalf("expected waiter to receive queued message, got %#v", message)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected enqueue to wake waiting dequeue")
+	}
+}
+
+func TestMessageQueueSignalHelpersHandleFullAndEmptySignals(t *testing.T) {
+	queue := newQueue(2)
+	queue.waiters = 1
+	queue.notEmptyCh <- struct{}{}
+
+	queue.notifyNotEmptyLocked()
+	queue.clearNotEmptySignalLocked()
+	queue.clearNotEmptySignalLocked()
+
+	select {
 	case <-queue.notEmptyCh:
+		t.Fatalf("expected not-empty signal channel to be empty")
 	default:
-		t.Fatalf("expected enqueue to publish a not-empty signal")
+	}
+}
+
+func TestMessageQueueWaitDequeueTimeoutReturnsFalseForClosedQueue(t *testing.T) {
+	queue := newQueue(2)
+	queue.close()
+
+	message, ok := queue.waitDequeueTimeout(50 * time.Millisecond)
+	if ok || message != nil {
+		t.Fatalf("expected closed queue timeout wait to return nil,false")
+	}
+}
+
+func TestMessageQueueWaitDequeueTimeoutDrainsExpiredTimerOnClosedReturn(t *testing.T) {
+	queue := newQueue(2)
+	queue.lock.Lock()
+
+	done := make(chan struct{})
+	go func() {
+		message, ok := queue.waitDequeueTimeout(10 * time.Millisecond)
+		if ok || message != nil {
+			t.Errorf("expected blocked closed queue timeout wait to return nil,false")
+		}
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	queue.closed = true
+	close(queue.closedCh)
+	queue.lock.Unlock()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected blocked timeout wait to return after close")
+	}
+}
+
+func TestMessageQueueClearReopensClosedSignal(t *testing.T) {
+	queue := newQueue(2)
+	queue.close()
+	closedCh := queue.closedCh
+
+	queue.clear()
+
+	if queue.closed {
+		t.Fatalf("expected clear to reopen closed queue")
+	}
+	if queue.closedCh == closedCh {
+		t.Fatalf("expected clear to replace closed signal channel")
+	}
+	select {
+	case <-queue.closedCh:
+		t.Fatalf("expected reopened closed signal channel to remain open")
+	default:
 	}
 }
 

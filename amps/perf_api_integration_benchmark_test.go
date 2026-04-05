@@ -189,18 +189,43 @@ func (waiter *perfAPIAckWaiter) handler(message *Message) error {
 		return nil
 	}
 
-	var status, hasStatus = message.Status()
-	if !hasStatus {
+	var header = messageHeader(message)
+	if header == nil || header.status == nil {
 		return nil
 	}
 
-	if status == "success" {
+	if bytesEqualString(header.status, "success") {
 		waiter.signal(1)
 		return nil
 	}
 
 	waiter.signal(-1)
 	return nil
+}
+
+func TestPerfAPIAckWaiterHandlerSignalsSuccess(t *testing.T) {
+	var waiter = newPerfAPIAckWaiter()
+	_ = waiter.handler(&Message{header: &_Header{status: []byte("success")}})
+
+	select {
+	case state := <-waiter.result:
+		if state != 1 {
+			t.Fatalf("expected success state, got %d", state)
+		}
+	default:
+		t.Fatalf("expected success signal")
+	}
+}
+
+func TestPerfAPIAckWaiterHandlerIgnoresMissingStatus(t *testing.T) {
+	var waiter = newPerfAPIAckWaiter()
+	_ = waiter.handler(&Message{header: new(_Header)})
+
+	select {
+	case state := <-waiter.result:
+		t.Fatalf("expected no signal, got %d", state)
+	default:
+	}
 }
 
 func perfAPIWaitForProcessedAck(b *testing.B, waiter *perfAPIAckWaiter, operation string) {
