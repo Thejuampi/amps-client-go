@@ -136,7 +136,7 @@ Step "Updating version files"
 
 $readmePath = Join-Path $repoRoot "README.md"
 $readmeText = [System.IO.File]::ReadAllText($readmePath)
-$readmePattern = '(?m)^Version:\s*`[^`]+`$'
+$readmePattern = '(?m)^Version:\s+.*$'
 $readmeMatches = [regex]::Matches($readmeText, $readmePattern).Count
 if ($readmeMatches -ne 1) {
 	Fail "Expected exactly one README version line. Found $readmeMatches."
