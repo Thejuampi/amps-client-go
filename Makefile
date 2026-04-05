@@ -101,7 +101,7 @@ perf-check:
 release: static-scan perf-check test test-race build integration-fakeamps parity-check coverage-check
 	@echo Release checks passed for $(VERSION).
 
-release-hosted: static-scan perf-check test test-race build integration-fakeamps parity-check-if-available coverage-check
+release-hosted: static-scan test test-race build integration-fakeamps parity-check-if-available coverage-check
 	@echo Hosted release checks passed for $(VERSION).
 
 release-local:

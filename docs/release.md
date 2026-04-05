@@ -70,7 +70,9 @@ make release-local RELEASE_VERSION=0.8.10 RELEASE_FLAGS="-Yes"
 
 The `Release` workflow now runs the same `release.local.ps1` path in hosted mode on `ubuntu-latest`.
 
-Hosted mode uses `make release-hosted`, so the workflow keeps the same scripted version/tag/publish logic while using the hosted gate target where parity is conditional.
+Hosted mode uses `make release-hosted`, so the workflow keeps the same scripted version/tag/publish logic while using the hosted gate target where parity is conditional and the microbenchmark perf gate is intentionally skipped.
+
+That split is deliberate: the perf baseline is calibrated for the strict local release environment, not for shared GitHub-hosted Linux runners. Hosted workflow releases stay deterministic by enforcing the functional and coverage gates there while keeping perf as a strict local pre-release requirement.
 
 ## One-time Setup
 
@@ -119,7 +121,7 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - The version matches `X.Y.Z`.
 - Tag `vX.Y.Z` does not already exist.
 - The hosted workflow runner has `git`, `go`, `make`, `gh`, and `pwsh`.
-- The same scripted release path as local release succeeds in hosted mode.
+- The same scripted release path as local release succeeds in hosted mode, with the hosted-safe gate set (`make release-hosted`).
 
 ## What Gets Published
 

@@ -139,6 +139,7 @@ jobs:
             echo "- Dry run: ${RELEASE_DRY_RUN}"
             echo "- Path: release.local.ps1 -Hosted"
             echo "- Runner: ubuntu-latest"
+            echo "- Perf gate: local strict only"
             echo "- Parity check: conditional via make release-hosted"
             if [[ "${RELEASE_DRY_RUN}" != "true" ]]; then
               echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
