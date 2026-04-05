@@ -3,6 +3,7 @@ param(
 	[string]$Version,
 	[switch]$Yes,
 	[switch]$DryRun,
+	[switch]$Hosted,
 	[int]$ModuleVerifyAttempts = 12,
 	[int]$ModuleVerifyDelaySeconds = 10
 )
@@ -107,6 +108,7 @@ $originalReadmeText = ""
 $originalClientText = ""
 $versionFilesUpdated = $false
 $releaseCommitted = $false
+$releaseTarget = if ($Hosted) { "release-hosted" } else { "release" }
 
 try {
 	Set-Location $repoRoot
@@ -223,7 +225,7 @@ try {
 	$versionFilesUpdated = $true
 
 	Step "Running release gates"
-	Run-External "make" @("release")
+	Run-External "make" @($releaseTarget)
 
 	Step "Showing release file diff"
 	Run-External "git" @("--no-pager", "diff", "--", "VERSION", "README.md", "amps/client.go")

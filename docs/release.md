@@ -68,21 +68,9 @@ make release-local RELEASE_VERSION=0.8.10 RELEASE_FLAGS="-Yes"
 
 ## GitHub Actions Release Workflow
 
-The `Release` workflow now runs the same `release.local.ps1` path as the local scripted release.
+The `Release` workflow now runs the same `release.local.ps1` path in hosted mode on `ubuntu-latest`.
 
-It is intentionally pinned to the dedicated Windows release runner:
-
-- `self-hosted`
-- `Windows`
-- `X64`
-- `amps-release`
-
-That runner must provide:
-
-- `../amps-c++-client-5.3.5.1-Windows`
-- `git`, `go`, `make`, `gh`, and `powershell`
-
-This keeps the hosted path aligned with the local strict release path instead of maintaining a second release implementation.
+Hosted mode uses `make release-hosted`, so the workflow keeps the same scripted version/tag/publish logic while using the hosted gate target where parity is conditional.
 
 ## One-time Setup
 
@@ -112,7 +100,7 @@ Prepared-runner GitHub Actions path:
 5. Leave `dry_run` unchecked for a real release.
 6. Click `Run workflow`.
 
-That is the full release path. The workflow uses `release.local.ps1`, so dry runs and real releases follow the same scripted logic as local release.
+That is the full release path. The workflow uses `release.local.ps1 -Hosted`, so dry runs and real releases follow the same scripted release logic as local release.
 
 ## Safe Test
 
@@ -130,8 +118,8 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - The workflow is running from the latest `origin/main` commit.
 - The version matches `X.Y.Z`.
 - Tag `vX.Y.Z` does not already exist.
-- The dedicated release runner has the strict local release prerequisites.
-- The same scripted release path as local release succeeds.
+- The hosted workflow runner has `git`, `go`, `make`, `gh`, and `pwsh`.
+- The same scripted release path as local release succeeds in hosted mode.
 
 ## What Gets Published
 
@@ -153,8 +141,8 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - Linux CI static analysis fails on files that were not checked locally on Windows:
   - Run `.\tools\static-scan-linux.ps1`.
   - Fix the reported `//go:build !windows` or other Linux-target issues before commit or release prep.
-- Workflow says the strict release runner is missing prerequisites:
-  - Fix the `amps-release` runner so it provides `../amps-c++-client-5.3.5.1-Windows` and the required tools.
+- Workflow says required tools are missing:
+  - Fix the runner image or workflow environment so `git`, `go`, `make`, `gh`, and `pwsh` are available.
 
 ## Verification
 

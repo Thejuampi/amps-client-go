@@ -22,11 +22,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on:
-      - self-hosted
-      - Windows
-      - X64
-      - amps-release
+    runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
       RELEASE_TAG: v${{ github.event.inputs.version }}
@@ -98,19 +94,14 @@ jobs:
             exit 1
           fi
 
-      - name: Validate strict release runner
+      - name: Validate workflow runner
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ ! -d ../amps-c++-client-5.3.5.1-Windows ]]; then
-            echo "Strict release runner is missing ../amps-c++-client-5.3.5.1-Windows."
-            exit 1
-          fi
-
-          for tool in git go make gh powershell; do
+          for tool in git go make gh pwsh; do
             if ! command -v "${tool}" >/dev/null 2>&1; then
-              echo "Required tool '${tool}' is not available on the release runner."
+              echo "Required tool '${tool}' is not available on the workflow runner."
               exit 1
             fi
           done
@@ -120,7 +111,7 @@ jobs:
         env:
           GH_TOKEN: ${{ env.GH_TOKEN }}
         run: |
-          $arguments = @('-Version', $env:RELEASE_VERSION, '-Yes')
+          $arguments = @('-Version', $env:RELEASE_VERSION, '-Yes', '-Hosted')
           if ($env:RELEASE_DRY_RUN -eq 'true') {
             $arguments += '-DryRun'
           }
@@ -145,9 +136,9 @@ jobs:
             echo "- Version: ${RELEASE_VERSION}"
             echo "- Tag: ${RELEASE_TAG}"
             echo "- Dry run: ${RELEASE_DRY_RUN}"
-            echo "- Path: release.local.ps1"
-            echo "- Runner: self-hosted Windows/X64 amps-release"
-            echo "- Parity check: required"
+            echo "- Path: release.local.ps1 -Hosted"
+            echo "- Runner: ubuntu-latest"
+            echo "- Parity check: conditional via make release-hosted"
             if [[ "${RELEASE_DRY_RUN}" != "true" ]]; then
               echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
             fi

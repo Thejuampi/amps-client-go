@@ -241,7 +241,7 @@ The remaining manual or environment-dependent release inputs are intentionally s
 
 `make release-dry-run` is the safest rehearsal path: it runs the same scripted validation, then restores the version files automatically instead of committing or publishing anything.
 
-The GitHub Actions `Release` workflow now runs the same `release.local.ps1` path on the dedicated `amps-release` Windows runner. Real workflow releases require `RELEASE_PUSH_TOKEN`; dry runs do not publish anything.
+The GitHub Actions `Release` workflow now runs the same `release.local.ps1` path in hosted mode on `ubuntu-latest`. Real workflow releases require `RELEASE_PUSH_TOKEN`; dry runs do not publish anything.
 
 <details>
 <summary>Equivalent direct commands</summary>

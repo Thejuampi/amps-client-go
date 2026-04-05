@@ -20,7 +20,7 @@ Use:
 - real release: `make release-local RELEASE_VERSION=X.Y.Z RELEASE_FLAGS="-Yes"`
 - dry run only: `make release-dry-run RELEASE_VERSION=X.Y.Z`
 - gates only: `make release`
-- hosted release: GitHub `Release` workflow on `amps-release`
+- hosted release: GitHub `Release` workflow
 
 Requirements:
 
