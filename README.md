@@ -225,6 +225,8 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 Static analysis is enforced in CI with `make static-scan`, which now includes `errcheck` on non-test packages in addition to vet, staticcheck correctness checks, and ineffassign.
 
+On Windows, `make static-scan` only covers the Windows build-tag view. Run `.\tools\static-scan-linux.ps1` before commit or release prep to catch `//go:build !windows` issues that the Ubuntu CI runner will analyze.
+
 Race coverage is enforced with `make test-race` in CI and release validation.
 
 `make vuln-scan` runs `govulncheck` as an advisory scan. Standard-library findings depend on the Go patch version in use, so the workflow records those results without making them a required merge blocker.

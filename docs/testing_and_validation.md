@@ -41,6 +41,12 @@ go run ./tools/perfgate -baseline tools/perf_baseline.json
 go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
+Windows pre-commit or pre-release parity with the CI static-analysis host:
+
+```powershell
+.\tools\static-scan-linux.ps1
+```
+
 ## Static Analysis Gate
 
 Blocking static-analysis policy:
@@ -51,6 +57,8 @@ Blocking static-analysis policy:
 - `errcheck` on non-test packages
 
 This gate is exposed locally via `make static-scan` and is required in CI and release validation.
+
+`make static-scan` follows the host OS build tags. On Windows, run `.\tools\static-scan-linux.ps1` before commit or release prep when you need parity with the Ubuntu CI job, especially after touching files guarded by `//go:build !windows` or other non-Windows paths.
 
 Race coverage is enforced separately with `make test-race` in CI and release validation.
 
@@ -110,7 +118,7 @@ Required output:
 ## Validation Checklist for Parity-Sensitive Changes
 
 1. Confirm no exported API signature regressions.
-2. Run `make static-scan`.
+2. Run `make static-scan`. On Windows, also run `.\tools\static-scan-linux.ps1` before commit when you need CI-equivalent Linux static analysis.
 3. Run `make test-race`.
 4. Run full unit suite.
 5. Run parity check and verify `OPEN_GAPS=0`.

@@ -42,11 +42,12 @@ For the current change set, the correct bump is a patch release.
 `release.local.ps1` is the strict local release path. It:
 
 1. validates branch and clean-tree state
-2. updates `VERSION`, `README.md`, and `amps/client.go`
-3. runs `make release`
-4. commits `release: vX.Y.Z`
-5. creates and pushes annotated tag `vX.Y.Z`
-6. publishes the GitHub Release with generated notes via `gh release create`
+2. runs `.\tools\static-scan-linux.ps1` before editing version files so Windows release prep also catches `//go:build !windows` static-analysis failures
+3. updates `VERSION`, `README.md`, and `amps/client.go`
+4. runs `make release`
+5. commits `release: vX.Y.Z`
+6. creates and pushes annotated tag `vX.Y.Z`
+7. publishes the GitHub Release with generated notes via `gh release create`
 
 Run it from `main` on a machine that has the sibling C++ reference tree.
 
@@ -76,8 +77,9 @@ Use local `make release` when you need the full strict parity-validated release 
 Local strict path:
 
 1. Ensure `../amps-c++-client-5.3.5.1-Windows` exists next to this repository.
-2. Run `make release` and confirm every gate passes.
-3. Run `release.local.ps1` and provide the chosen `X.Y.Z` version.
+2. On Windows, run `.\tools\static-scan-linux.ps1` before commit when touching files with non-Windows build tags, or let `.\release.local.ps1` run that preflight for you during release prep.
+3. Optionally run `make release` manually if you want a dry run before changing any release files.
+4. Run `.\release.local.ps1` and provide the chosen `X.Y.Z` version.
 
 Prepared-runner GitHub Actions path:
 
@@ -134,6 +136,9 @@ That runs the full validation path and version-file rewrite in the runner, but i
   - Or update branch protection so GitHub Actions and the workflow `GITHUB_TOKEN` can push release commits.
 - Validation fails:
   - Fix the failing code or tests, then rerun the workflow.
+- Linux CI static analysis fails on files that were not checked locally on Windows:
+  - Run `.\tools\static-scan-linux.ps1`.
+  - Fix the reported `//go:build !windows` or other Linux-target issues before commit or release prep.
 
 - Workflow ran without parity because the C++ reference tree is missing:
   - Use a runner that provides `../amps-c++-client-5.3.5.1-Windows` if you want parity in GitHub Actions.

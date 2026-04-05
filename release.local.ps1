@@ -45,6 +45,7 @@ function Confirm-Yes {
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
+$linuxStaticScanScript = Join-Path $repoRoot "tools\static-scan-linux.ps1"
 
 Step "Checking required tools"
 Require-Tool "git"
@@ -93,6 +94,18 @@ if ($behind -gt 0) {
 }
 if ($ahead -gt 0) {
 	Fail "Local main is ahead of origin/main by $ahead commit(s). Push or rebase before releasing."
+}
+
+if (-not (Test-Path $linuxStaticScanScript)) {
+	Fail "Required script '$linuxStaticScanScript' not found."
+}
+
+Step "Running Linux-target static-analysis preflight"
+try {
+	& $linuxStaticScanScript
+}
+catch {
+	Fail ("Linux-target static-analysis preflight failed. Fix the reported issues before preparing a release. " + $_.Exception.Message)
 }
 
 $currentVersion = (Get-Content VERSION -Raw).Trim()
