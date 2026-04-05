@@ -68,24 +68,30 @@ make release-local RELEASE_VERSION=0.8.10 RELEASE_FLAGS="-Yes"
 
 ## GitHub Actions Release Workflow
 
-The `Release` workflow runs `make release-hosted`.
+The `Release` workflow now runs the same `release.local.ps1` path as the local scripted release.
 
-That keeps the same release gates as local release, except parity is conditional:
+It is intentionally pinned to the dedicated Windows release runner:
 
-- if `../amps-c++-client-5.3.5.1-Windows` exists on the runner, parity runs
-- if it does not exist, parity is skipped and the rest of the hosted release gates still run
+- `self-hosted`
+- `Windows`
+- `X64`
+- `amps-release`
 
-Use local `make release` when you need the full strict parity-validated release path.
+That runner must provide:
+
+- `../amps-c++-client-5.3.5.1-Windows`
+- `git`, `go`, `make`, `gh`, and `powershell`
+
+This keeps the hosted path aligned with the local strict release path instead of maintaining a second release implementation.
 
 ## One-time Setup
 
 1. GitHub Actions must be enabled.
 2. Default branch must be `main`.
 3. For local strict release, install `git`, `go`, `make`, and `gh`.
-4. Prefer configuring a repository Actions secret named `RELEASE_PUSH_TOKEN`.
-  It should contain a token for a user or bot that can push to `main` and create tags.
+4. Configure a repository Actions secret named `RELEASE_PUSH_TOKEN`.
+  It must contain a token for a user or bot that can push to `main`, create tags, and create GitHub releases.
 5. If `main` is protected, that token must be allowed to bypass branch protection.
-  If you do not configure `RELEASE_PUSH_TOKEN`, the workflow falls back to `GITHUB_TOKEN`, which only works when GitHub Actions itself is allowed to push release commits to `main`.
 
 ## Every Release
 
@@ -106,7 +112,7 @@ Prepared-runner GitHub Actions path:
 5. Leave `dry_run` unchecked for a real release.
 6. Click `Run workflow`.
 
-That is the full release path.
+That is the full release path. The workflow uses `release.local.ps1`, so dry runs and real releases follow the same scripted logic as local release.
 
 ## Safe Test
 
@@ -124,15 +130,8 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - The workflow is running from the latest `origin/main` commit.
 - The version matches `X.Y.Z`.
 - Tag `vX.Y.Z` does not already exist.
-- Static analysis passes.
-- Unit tests pass.
-- Race tests pass.
-- Build passes.
-- fakeamps-backed `./amps` integration tests pass.
-- `tools/fakeamps` integration tests pass.
-- Coverage gate passes.
-- Parity check passes when the sibling C++ reference tree is present.
-- Perf gate passes.
+- The dedicated release runner has the strict local release prerequisites.
+- The same scripted release path as local release succeeds.
 
 ## What Gets Published
 
@@ -148,17 +147,14 @@ That runs the full validation path and version-file rewrite in the runner, but i
 - Workflow says tag already exists:
   - Use a new version.
 - Push to `main` fails from the workflow:
-  - Configure `RELEASE_PUSH_TOKEN` with a token that can bypass branch protection and push tags.
-  - Or update branch protection so GitHub Actions and the workflow `GITHUB_TOKEN` can push release commits.
+  - Configure `RELEASE_PUSH_TOKEN` with a token that can bypass branch protection, push tags, and create releases.
 - Validation fails:
   - Fix the failing code or tests, then rerun the workflow.
 - Linux CI static analysis fails on files that were not checked locally on Windows:
   - Run `.\tools\static-scan-linux.ps1`.
   - Fix the reported `//go:build !windows` or other Linux-target issues before commit or release prep.
-
-- Workflow ran without parity because the C++ reference tree is missing:
-  - Use a runner that provides `../amps-c++-client-5.3.5.1-Windows` if you want parity in GitHub Actions.
-  - Or perform the strict local release path with `release.local.ps1`.
+- Workflow says the strict release runner is missing prerequisites:
+  - Fix the `amps-release` runner so it provides `../amps-c++-client-5.3.5.1-Windows` and the required tools.
 
 ## Verification
 
