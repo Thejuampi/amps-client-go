@@ -498,11 +498,12 @@ func (client *Client) maybeAutoAck(message *Message) {
 
 	if timeout > 0 {
 		if state.ackTimer != nil {
-			_ = state.ackTimer.Stop()
+			state.ackTimer.Reset(timeout)
+		} else {
+			state.ackTimer = time.AfterFunc(timeout, func() {
+				_ = client.FlushAcks()
+			})
 		}
-		state.ackTimer = time.AfterFunc(timeout, func() {
-			_ = client.FlushAcks()
-		})
 	}
 	state.lock.Unlock()
 
