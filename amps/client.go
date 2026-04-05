@@ -449,6 +449,10 @@ func (client *Client) makeCommandID() string {
 	return commandID
 }
 
+func (client *Client) makeCommandIDBytes(buffer []byte) []byte {
+	return strconv.AppendUint(buffer[:0], client.nextID.Add(1)-1, 10)
+}
+
 func (client *Client) send(command *Command) (err error) {
 	if !client.connected.Load() {
 		return errors.New("client is not connected while trying to send data")
@@ -1790,17 +1794,21 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 	client.lock.Lock()
 	defer client.lock.Unlock()
 
+	var topicBuffer = client.command.header.topic[:0]
+	var commandIDBuffer = client.command.header.commandID[:0]
+
 	client.command.reset()
 	client.command.header.command = commandType
-	client.command.header.topic = []byte(topic)
+	client.command.header.topic = append(topicBuffer, topic...)
+	client.command.header.strictParityEscapeState = 0
 	client.command.data = data
 
 	if len(expiration) > 0 {
 		client.command.header.expiration = &(expiration[0])
 	}
-	commandID := client.makeCommandID()
-	client.command.header.commandID = []byte(commandID)
-	client.registerPendingPublishCommand(commandID, client.command)
+	client.command.header.commandID = client.makeCommandIDBytes(commandIDBuffer)
+	client.command.header.strictParityEscapeState = 0
+	client.registerPendingPublishCommandBytes(client.command.header.commandID, client.command)
 
 	sequence := uint64(0)
 	if storeErr := client.storePublishCommand(client.command); storeErr != nil {
@@ -2231,7 +2239,7 @@ func (client *Client) executeAsync(
 		if hasUserAcks {
 			routeID = commandID
 
-			err := client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false, false, nil)
+			err := client.addCommandRouteDirect(commandID, routeMessageHandler, userAcks)
 			if err != nil {
 				return commandID, err
 			}

@@ -194,6 +194,30 @@ func BenchmarkRouteHotSingle(b *testing.B) {
 	}
 }
 
+func BenchmarkRouteHotSingleParallel(b *testing.B) {
+	client := NewClient("bench-route-single-parallel")
+	client.routes.Store("sub-1", func(message *Message) error { return nil })
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		message := &Message{
+			header: &_Header{
+				command: CommandPublish,
+				subID:   []byte("sub-1"),
+				topic:   []byte("orders"),
+			},
+			data: []byte(`{"id":1}`),
+		}
+		for pb.Next() {
+			if err := client.onMessage(message); err != nil {
+				b.Fatalf("onMessage failed: %v", err)
+			}
+		}
+	})
+}
+
 func BenchmarkRouteHotMultiSIDs(b *testing.B) {
 	client := NewClient("bench-route-multi")
 	client.routes.Store("sub-1", func(message *Message) error { return nil })
@@ -467,6 +491,32 @@ func BenchmarkRouteHotManySubscriptions(b *testing.B) {
 			b.Fatalf("onMessage failed: %v", err)
 		}
 	}
+}
+
+func BenchmarkRouteHotManySubscriptionsParallel(b *testing.B) {
+	client := NewClient("bench-route-many-parallel")
+	for i := 0; i < 50; i++ {
+		client.routes.Store(fmt.Sprintf("sub-%d", i), func(message *Message) error { return nil })
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	b.RunParallel(func(pb *testing.PB) {
+		message := &Message{
+			header: &_Header{
+				command: CommandPublish,
+				subID:   []byte("sub-25"),
+				topic:   []byte("orders"),
+			},
+			data: []byte(`{"id":1}`),
+		}
+		for pb.Next() {
+			if err := client.onMessage(message); err != nil {
+				b.Fatalf("onMessage failed: %v", err)
+			}
+		}
+	})
 }
 
 func BenchmarkStreamConcurrentDequeue(b *testing.B) {

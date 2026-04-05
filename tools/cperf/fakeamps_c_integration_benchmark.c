@@ -25,81 +25,27 @@ typedef struct
   int port;
 } endpoint_t;
 
-#define PENDING_ROUTE_CAPACITY 2048
-
 typedef struct
 {
-	char command_id[96];
-	int in_use;
-} pending_route_t;
+	endpoint_t endpoint;
+	HANDLE start_event;
+	volatile LONG* ready_counter;
+	int worker_id;
+	long long iterations;
+	long long warmup;
+	const char* topic;
+	const char* payload;
+	int request_processed_ack;
+	LONG failed;
+} concurrent_publish_worker_t;
 
-static pending_route_t pending_routes[PENDING_ROUTE_CAPACITY];
-
-static unsigned int hash_command_id(const char* command_id)
-{
-	unsigned int hash = 2166136261u;
-	const unsigned char* cursor = (const unsigned char*)command_id;
-	while (*cursor != '\0')
-	{
-		hash ^= (unsigned int)(*cursor);
-		hash *= 16777619u;
-		cursor++;
-	}
-	return hash;
-}
-
-static void pending_route_register(const char* command_id)
-{
-	unsigned int index;
-	unsigned int probe;
-
-	if (command_id == NULL || command_id[0] == '\0')
-	{
-		return;
-	}
-
-	index = hash_command_id(command_id) % PENDING_ROUTE_CAPACITY;
-	for (probe = 0; probe < PENDING_ROUTE_CAPACITY; ++probe)
-	{
-		pending_route_t* slot = &pending_routes[(index + probe) % PENDING_ROUTE_CAPACITY];
-		if (!slot->in_use || strcmp(slot->command_id, command_id) == 0)
-		{
-			strncpy(slot->command_id, command_id, sizeof(slot->command_id) - 1);
-			slot->command_id[sizeof(slot->command_id) - 1] = '\0';
-			slot->in_use = 1;
-			return;
-		}
-	}
-}
-
-static int pending_route_consume(const char* command_id)
-{
-	unsigned int index;
-	unsigned int probe;
-
-	if (command_id == NULL || command_id[0] == '\0')
-	{
-		return 1;
-	}
-
-	index = hash_command_id(command_id) % PENDING_ROUTE_CAPACITY;
-	for (probe = 0; probe < PENDING_ROUTE_CAPACITY; ++probe)
-	{
-		pending_route_t* slot = &pending_routes[(index + probe) % PENDING_ROUTE_CAPACITY];
-		if (!slot->in_use)
-		{
-			return 0;
-		}
-		if (strcmp(slot->command_id, command_id) == 0)
-		{
-			slot->in_use = 0;
-			slot->command_id[0] = '\0';
-			return 1;
-		}
-	}
-
-	return 0;
-}
+static int establish_session(const endpoint_t* endpoint, SOCKET* session_socket, int session_id);
+static int run_publish_concurrent_named(
+	const endpoint_t* endpoint,
+	const char* topic,
+	const char* payload,
+	int request_processed_ack,
+	const char* benchmark_name);
 
 static double now_ns(void)
 {
@@ -300,7 +246,6 @@ static int send_command(
 	{
 		return -1;
 	}
-	pending_route_register(command_id);
   if (send_all(socket_value, header, (int)header_length) != 0)
   {
     return -1;
@@ -351,7 +296,7 @@ static int extract_json_string_field(const char* payload, const char* field_name
 	return 1;
 }
 
-static int read_ack(SOCKET socket_value)
+static int read_ack(SOCKET socket_value, const char* expected_command_id)
 {
   unsigned char ack_length_prefix[4];
   uint32_t ack_length;
@@ -390,9 +335,13 @@ static int read_ack(SOCKET socket_value)
 			return -1;
 		}
 	}
-	if (extract_json_string_field(ack_payload, "cid", command_id, sizeof(command_id)))
+	if (expected_command_id != NULL && expected_command_id[0] != '\0')
 	{
-		if (!pending_route_consume(command_id))
+		if (!extract_json_string_field(ack_payload, "cid", command_id, sizeof(command_id)))
+		{
+			return -1;
+		}
+		if (strcmp(command_id, expected_command_id) != 0)
 		{
 			return -1;
 		}
@@ -413,7 +362,21 @@ static int send_command_and_wait_ack(
   {
     return -1;
   }
-  return read_ack(socket_value);
+  return read_ack(socket_value, command_id);
+}
+
+static int send_publish_command(
+	SOCKET socket_value,
+	const char* command_id,
+	const char* topic,
+	const char* payload,
+	int request_processed_ack)
+{
+	if (request_processed_ack)
+	{
+		return send_command_and_wait_ack(socket_value, "publish", command_id, topic, payload, 1);
+	}
+	return send_command(socket_value, "publish", command_id, topic, payload, 0);
 }
 
 static int establish_session(const endpoint_t* endpoint, SOCKET* session_socket, int session_id)
@@ -533,6 +496,170 @@ static int run_publish(const endpoint_t* endpoint)
   ns_per_op = total_ns / (double)iterations;
   printf("OfficialCIntegrationPublish\t%lld\t%.2f ns/op\n", iterations, ns_per_op);
   return 0;
+}
+
+static DWORD WINAPI run_publish_concurrent_worker(LPVOID parameter)
+{
+	concurrent_publish_worker_t* worker = (concurrent_publish_worker_t*)parameter;
+	SOCKET session_socket;
+	char command_id[96];
+	long long index;
+
+	if (worker == NULL)
+	{
+		return 1;
+	}
+
+	if (establish_session(&worker->endpoint, &session_socket, worker->worker_id) != 0)
+	{
+		worker->failed = 1;
+		return 1;
+	}
+
+	for (index = 0; index < worker->warmup; ++index)
+	{
+		_snprintf(command_id, sizeof(command_id), "publish-concurrent-warmup-%d-%lld", worker->worker_id, index);
+		if (send_publish_command(session_socket, command_id, worker->topic, worker->payload, worker->request_processed_ack) != 0)
+		{
+			closesocket(session_socket);
+			worker->failed = 1;
+			return 1;
+		}
+	}
+
+	InterlockedIncrement(worker->ready_counter);
+	if (WaitForSingleObject(worker->start_event, INFINITE) != WAIT_OBJECT_0)
+	{
+		closesocket(session_socket);
+		worker->failed = 1;
+		return 1;
+	}
+
+	for (index = 0; index < worker->iterations; ++index)
+	{
+		_snprintf(command_id, sizeof(command_id), "publish-concurrent-%d-%lld", worker->worker_id, index);
+		if (send_publish_command(session_socket, command_id, worker->topic, worker->payload, worker->request_processed_ack) != 0)
+		{
+			closesocket(session_socket);
+			worker->failed = 1;
+			return 1;
+		}
+	}
+
+	closesocket(session_socket);
+	return 0;
+}
+
+static int run_publish_concurrent(const endpoint_t* endpoint)
+{
+	return run_publish_concurrent_named(
+		endpoint,
+		"amps.perf.integration.publish.concurrent",
+		"{\"integration\":true,\"concurrent\":true}",
+		1,
+		"OfficialCIntegrationPublishConcurrent");
+}
+
+static int run_publish_concurrent_no_ack(const endpoint_t* endpoint)
+{
+	return run_publish_concurrent_named(
+		endpoint,
+		"amps.perf.integration.publish.concurrent.noack",
+		"{\"integration\":true,\"concurrent\":true,\"ack\":false}",
+		0,
+		"OfficialCIntegrationPublishConcurrentNoAck");
+}
+
+static int run_publish_concurrent_named(
+	const endpoint_t* endpoint,
+	const char* topic,
+	const char* payload,
+	int request_processed_ack,
+	const char* benchmark_name)
+{
+	const int worker_count = 4;
+	const long long iterations = 2400;
+	const long long warmup = 48;
+	concurrent_publish_worker_t workers[4];
+	HANDLE threads[4];
+	HANDLE start_event = NULL;
+	volatile LONG ready_counter = 0;
+	double start_ns;
+	double end_ns;
+	double ns_per_op;
+	int index;
+	long long base_iterations;
+	long long remainder;
+
+	start_event = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (start_event == NULL)
+	{
+		return -1;
+	}
+
+	base_iterations = iterations / worker_count;
+	remainder = iterations % worker_count;
+	for (index = 0; index < worker_count; ++index)
+	{
+		workers[index].endpoint = *endpoint;
+		workers[index].start_event = start_event;
+		workers[index].ready_counter = &ready_counter;
+		workers[index].worker_id = index;
+		workers[index].iterations = base_iterations;
+		workers[index].warmup = warmup / worker_count;
+		workers[index].topic = topic;
+		workers[index].payload = payload;
+		workers[index].request_processed_ack = request_processed_ack;
+		workers[index].failed = 0;
+		if ((long long)index < remainder)
+		{
+			workers[index].iterations++;
+		}
+		threads[index] = CreateThread(NULL, 0, run_publish_concurrent_worker, &workers[index], 0, NULL);
+		if (threads[index] == NULL)
+		{
+			int cleanup;
+			for (cleanup = 0; cleanup < index; ++cleanup)
+			{
+				WaitForSingleObject(threads[cleanup], INFINITE);
+				CloseHandle(threads[cleanup]);
+			}
+			CloseHandle(start_event);
+			return -1;
+		}
+	}
+
+	while (InterlockedCompareExchange((volatile LONG*)&ready_counter, 0, 0) < worker_count)
+	{
+		Sleep(1);
+	}
+	start_ns = now_ns();
+	SetEvent(start_event);
+	if (WaitForMultipleObjects(worker_count, threads, TRUE, INFINITE) != WAIT_OBJECT_0)
+	{
+		for (index = 0; index < worker_count; ++index)
+		{
+			CloseHandle(threads[index]);
+		}
+		CloseHandle(start_event);
+		return -1;
+	}
+	end_ns = now_ns();
+
+	for (index = 0; index < worker_count; ++index)
+	{
+		CloseHandle(threads[index]);
+		if (workers[index].failed != 0)
+		{
+			CloseHandle(start_event);
+			return -1;
+		}
+	}
+	CloseHandle(start_event);
+
+	ns_per_op = (end_ns - start_ns) / (double)iterations;
+	printf("%s\t%lld\t%.2f ns/op\n", benchmark_name, iterations, ns_per_op);
+	return 0;
 }
 
 static int run_subscribe(const endpoint_t* endpoint)
@@ -731,6 +858,18 @@ int main(void)
     fprintf(stderr, "publish benchmark failed\n");
     WSACleanup();
     return 3;
+  }
+  if (run_publish_concurrent(&endpoint) != 0)
+  {
+    fprintf(stderr, "concurrent publish benchmark failed\n");
+    WSACleanup();
+    return 6;
+  }
+  if (run_publish_concurrent_no_ack(&endpoint) != 0)
+  {
+    fprintf(stderr, "concurrent publish no-ack benchmark failed\n");
+    WSACleanup();
+    return 7;
   }
   if (run_subscribe(&endpoint) != 0)
   {

@@ -4,11 +4,14 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 const perfAPIConnectIterationCooldown = 5 * time.Millisecond
+const perfAPIConcurrentPublishWorkers = 4
 
 func perfAPIIntegrationURI() string {
 	var uri = strings.TrimSpace(os.Getenv("PERF_FAKEAMPS_URI"))
@@ -158,6 +161,29 @@ func (waiter *perfAPIAckWaiter) await(timeout time.Duration) (int32, bool) {
 	}
 }
 
+func (waiter *perfAPIAckWaiter) awaitBlocking() (int32, bool) {
+	if waiter == nil {
+		return 0, false
+	}
+	var state = <-waiter.result
+	return state, true
+}
+
+func (waiter *perfAPIAckWaiter) awaitUntil(signal <-chan struct{}) (int32, bool) {
+	if waiter == nil {
+		return 0, false
+	}
+	if signal == nil {
+		return waiter.awaitBlocking()
+	}
+	select {
+	case state := <-waiter.result:
+		return state, true
+	case <-signal:
+		return 0, false
+	}
+}
+
 func (waiter *perfAPIAckWaiter) handler(message *Message) error {
 	if waiter == nil || message == nil {
 		return nil
@@ -289,6 +315,33 @@ func TestPerfAPIAckWaiterCoverage(t *testing.T) {
 			t.Fatalf("expected await timeout with no signal")
 		}
 	})
+
+	t.Run("await blocking success", func(t *testing.T) {
+		waiter.reset()
+		waiter.signal(1)
+		var state, ok = waiter.awaitBlocking()
+		if !ok || state != 1 {
+			t.Fatalf("expected blocking await success state, got (%d, %v)", state, ok)
+		}
+	})
+
+	t.Run("await blocking nil waiter", func(t *testing.T) {
+		var nilWaiter *perfAPIAckWaiter
+		var _, ok = nilWaiter.awaitBlocking()
+		if ok {
+			t.Fatalf("expected nil waiter blocking await to fail")
+		}
+	})
+
+	t.Run("await until closed signal", func(t *testing.T) {
+		waiter.reset()
+		var signal = make(chan struct{})
+		close(signal)
+		var _, ok = waiter.awaitUntil(signal)
+		if ok {
+			t.Fatalf("expected closed signal to abort await")
+		}
+	})
 }
 
 func BenchmarkAPIIntegrationClientConnectLogon(b *testing.B) {
@@ -354,6 +407,151 @@ func BenchmarkAPIIntegrationClientPublish(b *testing.B) {
 			b.Fatalf("publish execute failed: %v", executeErr)
 		}
 		perfAPIWaitForProcessedAck(b, waiter, "publish")
+	}
+}
+
+func BenchmarkAPIIntegrationClientPublishConcurrent(b *testing.B) {
+	var uri = perfAPIIntegrationURI()
+	perfAPIRequireIntegrationEndpoint(b, uri)
+
+	var topic = "amps.perf.integration.publish.concurrent"
+	var payload = []byte(`{"integration":true,"concurrent":true}`)
+
+	type workerState struct {
+		client  *Client
+		waiter  *perfAPIAckWaiter
+		command *Command
+	}
+
+	var workers = make([]workerState, perfAPIConcurrentPublishWorkers)
+	var workerIndex int
+	for workerIndex = 0; workerIndex < len(workers); workerIndex++ {
+		var client = perfAPIConnectAndLogon(b, "perf-api-publish-concurrent-"+string(rune('a'+workerIndex)), uri)
+		workers[workerIndex] = workerState{
+			client:  client,
+			waiter:  newPerfAPIAckWaiter(),
+			command: NewCommand("publish").SetTopic(topic).SetData(payload).AddAckType(AckTypeProcessed),
+		}
+	}
+	defer func() {
+		for _, worker := range workers {
+			_ = worker.client.Close()
+		}
+	}()
+
+	var next atomic.Int64
+	var firstErr atomic.Pointer[error]
+	var wg sync.WaitGroup
+
+	recordErr := func(err error) {
+		if err == nil {
+			return
+		}
+		firstErr.CompareAndSwap(nil, &err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for workerIndex = 0; workerIndex < len(workers); workerIndex++ {
+		var worker = workers[workerIndex]
+		wg.Add(1)
+		go func(state workerState) {
+			defer wg.Done()
+			for {
+				var current = int(next.Add(1) - 1)
+				if current >= b.N {
+					return
+				}
+
+				state.waiter.reset()
+				if _, err := state.client.ExecuteAsync(state.command, state.waiter.handler); err != nil {
+					recordErr(err)
+					return
+				}
+
+				var ackState, ok = state.waiter.awaitUntil(state.client.currentDisconnectSignal())
+				if !ok {
+					recordErr(errors.New("concurrent publish worker disconnected while waiting for processed ack"))
+					return
+				}
+				if ackState != 1 {
+					recordErr(errors.New("concurrent publish failed"))
+					return
+				}
+			}
+		}(worker)
+	}
+
+	wg.Wait()
+	b.StopTimer()
+
+	if errPtr := firstErr.Load(); errPtr != nil {
+		b.Fatal(*errPtr)
+	}
+}
+
+func BenchmarkAPIIntegrationClientPublishConcurrentNoAck(b *testing.B) {
+	var uri = perfAPIIntegrationURI()
+	perfAPIRequireIntegrationEndpoint(b, uri)
+
+	var topic = "amps.perf.integration.publish.concurrent.noack"
+	var payload = []byte(`{"integration":true,"concurrent":true,"ack":false}`)
+
+	type workerState struct {
+		client *Client
+	}
+
+	var workers = make([]workerState, perfAPIConcurrentPublishWorkers)
+	var workerIndex int
+	for workerIndex = 0; workerIndex < len(workers); workerIndex++ {
+		var client = perfAPIConnectAndLogon(b, "perf-api-publish-concurrent-noack-"+string(rune('a'+workerIndex)), uri)
+		workers[workerIndex] = workerState{client: client}
+	}
+	defer func() {
+		for _, worker := range workers {
+			_ = worker.client.Close()
+		}
+	}()
+
+	var next atomic.Int64
+	var firstErr atomic.Pointer[error]
+	var wg sync.WaitGroup
+
+	recordErr := func(err error) {
+		if err == nil {
+			return
+		}
+		firstErr.CompareAndSwap(nil, &err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for workerIndex = 0; workerIndex < len(workers); workerIndex++ {
+		var worker = workers[workerIndex]
+		wg.Add(1)
+		go func(state workerState) {
+			defer wg.Done()
+			for {
+				var current = int(next.Add(1) - 1)
+				if current >= b.N {
+					return
+				}
+
+				if err := state.client.PublishBytes(topic, payload); err != nil {
+					recordErr(err)
+					return
+				}
+			}
+		}(worker)
+	}
+
+	wg.Wait()
+	b.StopTimer()
+
+	if errPtr := firstErr.Load(); errPtr != nil {
+		b.Fatal(*errPtr)
 	}
 }
 

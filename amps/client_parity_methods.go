@@ -146,6 +146,21 @@ func (client *Client) registerPendingPublishCommand(commandID string, command *C
 	state.lock.Unlock()
 }
 
+func (client *Client) registerPendingPublishCommandBytes(commandID []byte, command *Command) {
+	state := ensureClientState(client)
+	if state == nil || command == nil || len(commandID) == 0 {
+		return
+	}
+
+	state.lock.Lock()
+	if state.failedWriteHandler == nil {
+		state.lock.Unlock()
+		return
+	}
+	state.pendingPublishByCmdID[string(commandID)] = cloneCommand(command)
+	state.lock.Unlock()
+}
+
 func (client *Client) storePublishCommand(command *Command) error {
 	if command == nil {
 		return nil
@@ -419,13 +434,11 @@ func (client *Client) maybeAutoAck(message *Message) {
 		return
 	}
 
-	topic, hasTopic := message.Topic()
-	bookmark, hasBookmark := message.Bookmark()
-	subID, _ := message.SubID()
-	if _, hasLeasePeriod := message.LeasePeriod(); !hasLeasePeriod {
+	header := messageHeader(message)
+	if header == nil || header.leasePeriod == nil {
 		return
 	}
-	if !hasTopic || !hasBookmark || topic == "" || bookmark == "" {
+	if len(header.topic) == 0 || len(header.bookmark) == 0 {
 		return
 	}
 
@@ -441,6 +454,9 @@ func (client *Client) maybeAutoAck(message *Message) {
 		return
 	}
 
+	topic := string(header.topic)
+	bookmark := string(header.bookmark)
+	subID := string(header.subID)
 	key := makeAckBatchKey(topic, subID)
 	batch := state.pendingAcks[key]
 	if batch == nil {
@@ -1033,6 +1049,7 @@ func (client *Client) SetExceptionListener(listener ExceptionListener) *Client {
 	}
 	state.lock.Lock()
 	state.exceptionListener = listener
+	state.refreshTransportSnapshotLocked()
 	state.lock.Unlock()
 	return client
 }
@@ -1194,6 +1211,7 @@ func (client *Client) SetTransportFilter(filter TransportFilter) *Client {
 	}
 	state.lock.Lock()
 	state.transportFilter = filter
+	state.refreshTransportSnapshotLocked()
 	state.lock.Unlock()
 	return client
 }

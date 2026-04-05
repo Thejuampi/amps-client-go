@@ -24,7 +24,7 @@ Version: `0.8.8`
 
 AMPS is one of the fastest message brokers on the planet. Building a client worthy of that speed — in Go, without CGO — was the goal. This project delivers:
 
-- 🏎️ **Faster than C on the hot path** — Go client outperforms the official C library on header parsing and SOW batch processing at p95/p99  
+- 🏎️ **Verified 5/5 hot-path lead over C** — the current committed same-host 20-sample side-by-side baseline has Go ahead on strict header parse, strict SOW batch parse, strict header serialize, publish integration, and subscribe integration at p95  
 - 🔬 **253 parity-mapped symbols** — full `Client` and `HAClient` API surface, tested against C++ 5.3.5.1 behavior  
 - 🛡️ **Production-grade quality gates** — 90%+ coverage, zero open parity gaps, enforced regression budgets on every PR  
 - ⚡ **Zero-allocation critical paths** — header parse, uint decode, timeout poll, and string conversion all run at 0 allocs/op  
@@ -36,7 +36,7 @@ If you're building on AMPS and you need a Go-native client that doesn't compromi
 
 ## Performance: Go vs Official C Client
 
-All benchmarks run on the same machine, same workload, same measurement methodology (nearest-rank percentiles, 20 samples). Lower is better.
+This section is the repository's **current committed side-by-side performance baseline**: same host, same workload, same fakeamps-backed methodology, nearest-rank percentiles, **20 samples**. Lower is better.
 
 ### Hot-Path Parity Results (Go vs Official C)
 
@@ -44,13 +44,13 @@ These are the strict parity workloads we currently gate for C-vs-Go comparisons.
 
 | Benchmark | Go p95 (ns/op) | C p95 (ns/op) | Delta | Winner |
 |:---|---:|---:|---:|:---|
-| **Header Parse** (strict parity) | **18.41** | 22.38 | **-17.7%** | Go |
-| **SOW Batch Parse** (strict parity) | **93.34** | 123.14 | **-24.2%** | Go |
-| **Header Serialize** (strict parity) | **68.88** | 69.60 | **-1.0%** | Go |
-| **Publish Integration** (processed ack) | **101380** | 245025.75 | **-58.6%** | Go |
-| **Subscribe Integration** (processed ack) | **105067** | 225831 | **-53.5%** | Go |
+| **Header Parse** (strict parity) | **21.67** | 23.74 | **-8.7%** | Go |
+| **SOW Batch Parse** (strict parity) | **110.90** | 137.39 | **-19.3%** | Go |
+| **Header Serialize** (strict parity) | **67.19** | 73.05 | **-8.0%** | Go |
+| **Publish Integration** (processed ack) | **259300** | 364372.75 | **-28.8%** | Go |
+| **Subscribe Integration** (processed ack) | **144100** | 283117.70 | **-49.1%** | Go |
 
-This is 5/5 wins on the in-scope hot-path parity suite (p95).
+This is the current committed side-by-side baseline for the in-scope hot-path parity suite: **5/5 Go wins at p95**.
 
 Connect-and-logon timings are tracked separately and treated as out of scope for this steady-state hot-path gate.
 
@@ -77,7 +77,8 @@ Every hot path in the client is micro-benchmarked and tracked across commits. He
 - **Methodology**: `go test -bench=. -benchtime=1s -count=20` with nearest-rank percentile extraction  
 - **C baselines**: compiled from the official AMPS C client library, run with the same fake server and payload profiles  
 - **Regression gates**: PRs fail on >7% ns/op regression or >5% allocs/op regression against committed baselines  
-- **Artifacts**: all raw data committed in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json), and [`tools/perf_side_by_side_baseline.json`](tools/perf_side_by_side_baseline.json)
+- **Current public baseline**: the README table above is sourced from the committed current side-by-side artifacts, not from historical baselines or ad hoc spot checks  
+- **Artifacts**: full Go-only tail metrics live in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), and [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json); current side-by-side C-vs-Go data lives in [`tools/perf_tail_go_api_current.json`](tools/perf_tail_go_api_current.json), [`tools/perf_tail_c_current.json`](tools/perf_tail_c_current.json), [`tools/perf_side_by_side_current.json`](tools/perf_side_by_side_current.json), and [`tools/perf_side_by_side_report.md`](tools/perf_side_by_side_report.md)
 
 ---
 

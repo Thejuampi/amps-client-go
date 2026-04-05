@@ -1,14 +1,14 @@
 {
-  "generated_at_utc": "2026-03-01T05:51:43Z",
+  "generated_at_utc": "2026-04-05T02:41:44Z",
   "percentile_method": "nearest-rank",
   "manifest_version": 2,
   "summary": {
     "rows": 27,
-    "comparable": 4,
-    "go_wins_p95": 4,
+    "comparable": 5,
+    "go_wins_p95": 5,
     "c_wins_p95": 0,
     "ties_p95": 0,
-    "unavailable": 23,
+    "unavailable": 22,
     "offline_rows": 23,
     "integration_rows": 4,
     "parity_mapped_rows": 27,
@@ -26,9 +26,25 @@
       "c_benchmark": "OfficialCParityHeaderHotParse",
       "enabled": true,
       "notes": "Strict parity parser workload using canonical header frame",
-      "go": {},
-      "c": {},
-      "winner_p95": "n/a"
+      "go": {
+        "p50_ns_op": 21.12,
+        "p95_ns_op": 21.67,
+        "p99_ns_op": 21.92
+      },
+      "c": {
+        "p50_ns_op": 23.06,
+        "p95_ns_op": 23.74,
+        "p99_ns_op": 24.21
+      },
+      "delta_go_vs_c": {
+        "p50_ns": -1.9399999999999977,
+        "p50_pct": -8.412836079791838,
+        "p95_ns": -2.0699999999999967,
+        "p95_pct": -8.71946082561077,
+        "p99_ns": -2.289999999999999,
+        "p99_pct": -9.458901280462614
+      },
+      "winner_p95": "go"
     },
     {
       "benchmark_id": "client.parse.sow_batch.strict",
@@ -41,9 +57,25 @@
       "c_benchmark": "OfficialCParitySOWBatchParse",
       "enabled": true,
       "notes": "Strict parity 5x parse loop workload",
-      "go": {},
-      "c": {},
-      "winner_p95": "n/a"
+      "go": {
+        "p50_ns_op": 106.5,
+        "p95_ns_op": 110.9,
+        "p99_ns_op": 113.9
+      },
+      "c": {
+        "p50_ns_op": 131.54,
+        "p95_ns_op": 137.39,
+        "p99_ns_op": 141.19
+      },
+      "delta_go_vs_c": {
+        "p50_ns": -25.039999999999992,
+        "p50_pct": -19.03603466626121,
+        "p95_ns": -26.48999999999998,
+        "p95_pct": -19.280879248853616,
+        "p99_ns": -27.289999999999992,
+        "p99_pct": -19.328564345916842
+      },
+      "winner_p95": "go"
     },
     {
       "benchmark_id": "client.serialize.header.strict",
@@ -56,9 +88,25 @@
       "c_benchmark": "OfficialCParityHeaderHotWrite",
       "enabled": true,
       "notes": "Header serialization comparable workload",
-      "go": {},
-      "c": {},
-      "winner_p95": "n/a"
+      "go": {
+        "p50_ns_op": 66.56,
+        "p95_ns_op": 67.19,
+        "p99_ns_op": 68.51
+      },
+      "c": {
+        "p50_ns_op": 70.4,
+        "p95_ns_op": 73.05,
+        "p99_ns_op": 73.29
+      },
+      "delta_go_vs_c": {
+        "p50_ns": -3.8400000000000034,
+        "p50_pct": -5.4545454545454595,
+        "p95_ns": -5.859999999999999,
+        "p95_pct": -8.021902806297057,
+        "p99_ns": -4.780000000000001,
+        "p99_pct": -6.52203574839678
+      },
+      "winner_p95": "go"
     },
     {
       "benchmark_id": "client.route.single",
@@ -368,28 +416,12 @@
       "go_target": "amps:method:Client.Connect",
       "parity_mapped": true,
       "go_benchmark": "BenchmarkAPIIntegrationClientConnectLogon",
-      "c_benchmark": "OfficialCIntegrationConnectLogon",
-      "enabled": true,
-      "notes": "Full API roundtrip: connect then logon processed ack",
-      "go": {
-        "p50_ns_op": 374640,
-        "p95_ns_op": 498040,
-        "p99_ns_op": 655580
-      },
-      "c": {
-        "p50_ns_op": 345888,
-        "p95_ns_op": 990982,
-        "p99_ns_op": 2124850.67
-      },
-      "delta_go_vs_c": {
-        "p50_ns": 28752,
-        "p50_pct": 8.312517346655564,
-        "p95_ns": -492942,
-        "p95_pct": -49.742780393589385,
-        "p99_ns": -1469270.67,
-        "p99_pct": -69.1470083401202
-      },
-      "winner_p95": "go"
+      "c_benchmark": "",
+      "enabled": false,
+      "notes": "Out of scope for parity performance gate: one-time connect and logon latency",
+      "go": {},
+      "c": {},
+      "winner_p95": "n/a"
     },
     {
       "benchmark_id": "client.publish.integration",
@@ -403,22 +435,22 @@
       "enabled": true,
       "notes": "Full API roundtrip publish with processed ack",
       "go": {
-        "p50_ns_op": 43384,
-        "p95_ns_op": 48151,
-        "p99_ns_op": 58008
+        "p50_ns_op": 167400,
+        "p95_ns_op": 259300,
+        "p99_ns_op": 305400
       },
       "c": {
-        "p50_ns_op": 44995.83,
-        "p95_ns_op": 121651.58,
-        "p99_ns_op": 126046.58
+        "p50_ns_op": 171827.92,
+        "p95_ns_op": 364372.75,
+        "p99_ns_op": 441580.25
       },
       "delta_go_vs_c": {
-        "p50_ns": -1611.8300000000017,
-        "p50_pct": -3.5821763927901804,
-        "p95_ns": -73500.58,
-        "p95_pct": -60.41892756345623,
-        "p99_ns": -68038.58,
-        "p99_pct": -53.97891795239506
+        "p50_ns": -4427.920000000013,
+        "p50_pct": -2.5769502418466175,
+        "p95_ns": -105072.75,
+        "p95_pct": -28.836610311830395,
+        "p99_ns": -136180.25,
+        "p99_pct": -30.8392981796627
       },
       "winner_p95": "go"
     },
@@ -434,22 +466,22 @@
       "enabled": true,
       "notes": "Full API roundtrip subscribe with processed ack",
       "go": {
-        "p50_ns_op": 34063,
-        "p95_ns_op": 40156,
-        "p99_ns_op": 40626
+        "p50_ns_op": 100600,
+        "p95_ns_op": 144100,
+        "p99_ns_op": 199100
       },
       "c": {
-        "p50_ns_op": 29324.4,
-        "p95_ns_op": 95934.8,
-        "p99_ns_op": 101912
+        "p50_ns_op": 153363.2,
+        "p95_ns_op": 283117.7,
+        "p99_ns_op": 328832.7
       },
       "delta_go_vs_c": {
-        "p50_ns": 4738.5999999999985,
-        "p50_pct": 16.1592394047278,
-        "p95_ns": -55778.8,
-        "p95_pct": -58.14240505009652,
-        "p99_ns": -61286,
-        "p99_pct": -60.13619593374676
+        "p50_ns": -52763.20000000001,
+        "p50_pct": -34.40408129199183,
+        "p95_ns": -139017.7,
+        "p95_pct": -49.10244043378425,
+        "p99_ns": -129732.70000000001,
+        "p99_pct": -39.45249362365726
       },
       "winner_p95": "go"
     },
@@ -461,28 +493,12 @@
       "go_target": "amps:method:HAClient.ConnectAndLogon",
       "parity_mapped": true,
       "go_benchmark": "BenchmarkAPIIntegrationHAConnectAndLogon",
-      "c_benchmark": "OfficialCIntegrationHAConnectAndLogon",
-      "enabled": true,
-      "notes": "Full API roundtrip HA connect/logon on selected endpoint",
-      "go": {
-        "p50_ns_op": 367540,
-        "p95_ns_op": 420560,
-        "p99_ns_op": 435480
-      },
-      "c": {
-        "p50_ns_op": 360891.25,
-        "p95_ns_op": 459820,
-        "p99_ns_op": 740551.25
-      },
-      "delta_go_vs_c": {
-        "p50_ns": 6648.75,
-        "p50_pct": 1.842313993481416,
-        "p95_ns": -39260,
-        "p95_pct": -8.538123613587926,
-        "p99_ns": -305071.25,
-        "p99_pct": -41.19515698609651
-      },
-      "winner_p95": "go"
+      "c_benchmark": "",
+      "enabled": false,
+      "notes": "Out of scope for parity performance gate: one-time HA connect and logon latency",
+      "go": {},
+      "c": {},
+      "winner_p95": "n/a"
     }
   ]
 }

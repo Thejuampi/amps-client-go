@@ -174,6 +174,11 @@ type trackedSubscription struct {
 	paused            bool
 }
 
+type transportFilterSnapshot struct {
+	filter            TransportFilter
+	exceptionListener ExceptionListener
+}
+
 type clientParityState struct {
 	uri                    string
 	retryOnDisconnect      bool
@@ -201,6 +206,7 @@ type clientParityState struct {
 	receiveRoutineStop     func()
 	publishBatchSizeBytes  uint64
 	publishBatchTimeout    time.Duration
+	transportSnapshot      atomic.Pointer[transportFilterSnapshot]
 	deferredExecutions     []deferredExecutionCall
 	pendingRetry           []retryCommand
 	pendingPublishByCmdID  map[string]*Command
@@ -230,6 +236,17 @@ func newClientParityState() *clientParityState {
 	}
 	state.autoAckValue.Store(false)
 	return state
+}
+
+func (state *clientParityState) refreshTransportSnapshotLocked() {
+	var snapshot *transportFilterSnapshot
+	if state.transportFilter != nil || state.exceptionListener != nil {
+		snapshot = &transportFilterSnapshot{
+			filter:            state.transportFilter,
+			exceptionListener: state.exceptionListener,
+		}
+	}
+	state.transportSnapshot.Store(snapshot)
 }
 
 func ensureClientState(client *Client) *clientParityState {
@@ -369,25 +386,21 @@ func (client *Client) applyTransportFilter(direction TransportFilterDirection, p
 		return result
 	}
 
-	state.lock.Lock()
-	filter := state.transportFilter
-	exceptionListener := state.exceptionListener
-	state.lock.Unlock()
-
-	if filter == nil {
+	snapshot := state.transportSnapshot.Load()
+	if snapshot == nil || snapshot.filter == nil {
 		return result
 	}
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result = payload
-			if exceptionListener != nil {
-				exceptionListener.ExceptionThrown(fmt.Errorf("transport filter panic: %v", recovered))
+			if snapshot.exceptionListener != nil {
+				snapshot.exceptionListener.ExceptionThrown(fmt.Errorf("transport filter panic: %v", recovered))
 			}
 		}
 	}()
 
-	filtered := filter(direction, payload)
+	filtered := snapshot.filter(direction, payload)
 	if filtered != nil {
 		result = filtered
 	}

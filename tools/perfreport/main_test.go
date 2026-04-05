@@ -38,6 +38,26 @@ func TestRequiredGoBenchmarksForAllComparableProfile(t *testing.T) {
 	}
 }
 
+func TestRequiredGoBenchmarksForContentionPublishProfile(t *testing.T) {
+	var required = requiredGoBenchmarksForProfile("contention-publish")
+	if len(required) != 1 {
+		t.Fatalf("expected one required Go benchmark for contention-publish profile, got %d", len(required))
+	}
+	if required[0] != "BenchmarkAPIIntegrationClientPublishConcurrent" {
+		t.Fatalf("unexpected required Go benchmark %q", required[0])
+	}
+}
+
+func TestRequiredGoBenchmarksForContentionPublishNoAckProfile(t *testing.T) {
+	var required = requiredGoBenchmarksForProfile("contention-publish-noack")
+	if len(required) != 1 {
+		t.Fatalf("expected one required Go benchmark for contention-publish-noack profile, got %d", len(required))
+	}
+	if required[0] != "BenchmarkAPIIntegrationClientPublishConcurrentNoAck" {
+		t.Fatalf("unexpected required Go benchmark %q", required[0])
+	}
+}
+
 func TestRequiredCBenchmarksForAllComparableProfile(t *testing.T) {
 	var required = requiredCBenchmarksForProfile("all-comparable")
 	if len(required) == 0 {
@@ -63,6 +83,26 @@ func TestRequiredCBenchmarksForAllComparableProfile(t *testing.T) {
 		if !found {
 			t.Fatalf("expected required benchmark %s", name)
 		}
+	}
+}
+
+func TestRequiredCBenchmarksForContentionPublishProfile(t *testing.T) {
+	var required = requiredCBenchmarksForProfile("contention-publish")
+	if len(required) != 1 {
+		t.Fatalf("expected one required C benchmark for contention-publish profile, got %d", len(required))
+	}
+	if required[0] != "OfficialCIntegrationPublishConcurrent" {
+		t.Fatalf("unexpected required C benchmark %q", required[0])
+	}
+}
+
+func TestRequiredCBenchmarksForContentionPublishNoAckProfile(t *testing.T) {
+	var required = requiredCBenchmarksForProfile("contention-publish-noack")
+	if len(required) != 1 {
+		t.Fatalf("expected one required C benchmark for contention-publish-noack profile, got %d", len(required))
+	}
+	if required[0] != "OfficialCIntegrationPublishConcurrentNoAck" {
+		t.Fatalf("unexpected required C benchmark %q", required[0])
 	}
 }
 

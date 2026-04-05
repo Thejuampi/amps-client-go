@@ -58,3 +58,59 @@ func TestAutoAckTimeoutFlush(t *testing.T) {
 		t.Fatalf("expected bookmark in timeout ack payload, got %q", payload)
 	}
 }
+
+func TestOnMessageRouteDispatchDoesNotAllocateWhenAutoAckDoesNotApply(t *testing.T) {
+	client := NewClient("route-hot-no-auto-ack")
+	client.routes.Store("sub-1", func(message *Message) error { return nil })
+
+	message := &Message{
+		header: &_Header{
+			command: CommandPublish,
+			subID:   []byte("sub-1"),
+			topic:   []byte("orders"),
+		},
+		data: []byte(`{"id":1}`),
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := client.onMessage(message); err != nil {
+			t.Fatalf("onMessage failed: %v", err)
+		}
+	})
+
+	if allocs != 0 {
+		t.Fatalf("allocs per route dispatch = %v, want 0", allocs)
+	}
+}
+
+func TestPublishBytesDoesNotAllocateOnSteadyStateDirectPath(t *testing.T) {
+	client := NewClient("publish-direct-no-alloc")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	payload := []byte(`{"id":1}`)
+	resetWrites := func() {
+		conn.lock.Lock()
+		conn.writeBuf.Reset()
+		conn.lock.Unlock()
+	}
+
+	for warmup := 0; warmup < 32; warmup++ {
+		if err := client.PublishBytes("orders", payload); err != nil {
+			t.Fatalf("publish warmup failed: %v", err)
+		}
+		resetWrites()
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		if err := client.PublishBytes("orders", payload); err != nil {
+			t.Fatalf("publish failed: %v", err)
+		}
+		resetWrites()
+	})
+
+	if allocs != 0 {
+		t.Fatalf("allocs per direct publish = %v, want 0", allocs)
+	}
+}

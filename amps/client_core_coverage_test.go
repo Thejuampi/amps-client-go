@@ -1507,6 +1507,42 @@ func TestExecuteAsyncSubscribeProcessedFailureRemovesRoute(t *testing.T) {
 	}
 }
 
+func TestExecuteAsyncPublishProcessedAckRemovesRoute(t *testing.T) {
+	var client = NewClient("execute-async-publish-processed-cleanup")
+	var conn = newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	handled := 0
+	_, err := client.ExecuteAsync(
+		NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)).SetAckType(AckTypeProcessed),
+		func(*Message) error {
+			handled++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("expected publish registration success: %v", err)
+	}
+
+	routeID, handler := waitForAnyRouteHandler(t, client)
+	var ack = AckTypeProcessed
+	err = handler(&Message{header: &_Header{
+		command: CommandAck,
+		ackType: &ack,
+		status:  []byte("success"),
+	}})
+	if err != nil {
+		t.Fatalf("expected publish processed ack handler success: %v", err)
+	}
+	if handled != 1 {
+		t.Fatalf("expected publish processed ack callback once, got %d", handled)
+	}
+	if _, exists := client.routes.Load(routeID); exists {
+		t.Fatalf("expected processed publish ack to remove route %q", routeID)
+	}
+}
+
 func TestClientSowDeleteAndHeartbeatCoverage(t *testing.T) {
 	sowClient := NewClient("sow-delete")
 	sowConn := newTestConn()

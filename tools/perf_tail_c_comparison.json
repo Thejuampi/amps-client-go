@@ -1,48 +1,78 @@
 {
   "baseline_generated_at_utc": "2026-03-01T04:37:21Z",
-  "current_generated_at_utc": "2026-03-01T05:51:32Z",
+  "current_generated_at_utc": "2026-04-05T02:41:44Z",
   "metric": "ns/op (lower is better)",
   "percentile_method": "nearest-rank",
   "benchmarks": {
     "OfficialCIntegrationConnectLogon": {
       "p95_before": 689634.67,
-      "p95_after": 990982,
-      "p95_delta": 301347.32999999996,
-      "p95_delta_pct": 43.69666188621287,
+      "p95_after": 1704563.33,
+      "p95_delta": 1014928.66,
+      "p95_delta_pct": 147.16903081453256,
       "p99_before": 881306.67,
-      "p99_after": 2124850.67,
-      "p99_delta": 1243544,
-      "p99_delta_pct": 141.1023021078463
+      "p99_after": 1886225.33,
+      "p99_delta": 1004918.66,
+      "p99_delta_pct": 114.02599052155136
     },
     "OfficialCIntegrationHAConnectAndLogon": {
       "p95_before": 639606.25,
-      "p95_after": 459820,
-      "p95_delta": -179786.25,
-      "p95_delta_pct": -28.10889512102172,
+      "p95_after": 1821601.25,
+      "p95_delta": 1181995,
+      "p95_delta_pct": 184.8004143174023,
       "p99_before": 640266.25,
-      "p99_after": 740551.25,
-      "p99_delta": 100285,
-      "p99_delta_pct": 15.663015190945954
+      "p99_after": 2446836.25,
+      "p99_delta": 1806570,
+      "p99_delta_pct": 282.15917987243586
     },
     "OfficialCIntegrationPublish": {
       "p95_before": 46921.5,
-      "p95_after": 121651.58,
-      "p95_delta": 74730.08,
-      "p95_delta_pct": 159.26617861747815,
+      "p95_after": 364372.75,
+      "p95_delta": 317451.25,
+      "p95_delta_pct": 676.558187611223,
       "p99_before": 48558.75,
-      "p99_after": 126046.58,
-      "p99_delta": 77487.83,
-      "p99_delta_pct": 159.57542152547174
+      "p99_after": 441580.25,
+      "p99_delta": 393021.5,
+      "p99_delta_pct": 809.3731819702937
     },
     "OfficialCIntegrationSubscribe": {
       "p95_before": 33311.2,
-      "p95_after": 95934.8,
-      "p95_delta": 62623.600000000006,
-      "p95_delta_pct": 187.99562909772092,
+      "p95_after": 283117.7,
+      "p95_delta": 249806.5,
+      "p95_delta_pct": 749.917445183602,
       "p99_before": 45110.4,
-      "p99_after": 101912,
-      "p99_delta": 56801.6,
-      "p99_delta_pct": 125.91686174363339
+      "p99_after": 328832.7,
+      "p99_delta": 283722.3,
+      "p99_delta_pct": 628.9509736114067
+    },
+    "OfficialCParityHeaderHotParse": {
+      "p95_before": 22.43,
+      "p95_after": 23.74,
+      "p95_delta": 1.3099999999999987,
+      "p95_delta_pct": 5.840392331698612,
+      "p99_before": 22.95,
+      "p99_after": 24.21,
+      "p99_delta": 1.2600000000000016,
+      "p99_delta_pct": 5.49019607843138
+    },
+    "OfficialCParityHeaderHotWrite": {
+      "p95_before": 69.2,
+      "p95_after": 73.05,
+      "p95_delta": 3.8499999999999943,
+      "p95_delta_pct": 5.563583815028894,
+      "p99_before": 69.63,
+      "p99_after": 73.29,
+      "p99_delta": 3.660000000000011,
+      "p99_delta_pct": 5.25635501938821
+    },
+    "OfficialCParitySOWBatchParse": {
+      "p95_before": 123.45,
+      "p95_after": 137.39,
+      "p95_delta": 13.939999999999984,
+      "p95_delta_pct": 11.29202106115835,
+      "p99_before": 128.17,
+      "p99_after": 141.19,
+      "p99_delta": 13.02000000000001,
+      "p99_delta_pct": 10.1583833970508
     }
   }
 }

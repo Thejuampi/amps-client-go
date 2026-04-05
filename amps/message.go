@@ -534,14 +534,30 @@ func isJSONWhitespace(character byte) bool {
 	return jsonWhitespaceLookup[character]
 }
 
+type ownedMessage struct {
+	Message
+	header _Header
+}
+
+func newOwnedMessage() *Message {
+	holder := &ownedMessage{}
+	holder.Message.header = &holder.header
+	return &holder.Message
+}
+
 // Copy executes the exported copy operation.
 func (msg *Message) Copy() *Message {
 	if msg == nil {
 		return nil
 	}
 
-	var message = &Message{header: newHeader()}
 	var header = messageHeader(msg)
+	var message *Message
+	if header == nil {
+		message = &Message{}
+	} else {
+		message = newOwnedMessage()
+	}
 	message.client = msg.client
 	message.valid = msg.valid
 	message.ignoreAutoAck = msg.ignoreAutoAck

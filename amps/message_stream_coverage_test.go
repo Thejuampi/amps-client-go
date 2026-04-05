@@ -468,14 +468,15 @@ func TestMessageQueueCoverage(t *testing.T) {
 	}
 }
 
-func TestMessageQueueEnqueueWithoutWaitersKeepsSignalChannel(t *testing.T) {
+func TestMessageQueueEnqueueSignalsNotEmptyWithoutWaiters(t *testing.T) {
 	queue := newQueue(2)
-	var waitCh = queue.notEmptyCh
 
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("signal")})
 
-	if queue.notEmptyCh != waitCh {
-		t.Fatalf("expected enqueue without waiters to keep wait channel stable")
+	select {
+	case <-queue.notEmptyCh:
+	default:
+		t.Fatalf("expected enqueue to publish a not-empty signal")
 	}
 }
 
@@ -715,7 +716,7 @@ func TestMessageStreamAdditionalBranchCoverage(t *testing.T) {
 	}
 }
 
-func TestMessageQueueTimeoutNotifiesRemainingWaiter(t *testing.T) {
+func TestMessageQueueTimeoutDoesNotBlockLaterDelivery(t *testing.T) {
 	queue := newQueue(4)
 
 	secondDone := make(chan *Message, 1)
@@ -737,41 +738,20 @@ func TestMessageQueueTimeoutNotifiesRemainingWaiter(t *testing.T) {
 		close(firstDone)
 	}()
 
-	deadline := time.Now().Add(200 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		queue.lock.Lock()
-		waiters := queue.waiters
-		queue.lock.Unlock()
-		if waiters == 2 {
-			break
-		}
-		time.Sleep(1 * time.Millisecond)
-	}
-
-	queue.lock.Lock()
-	if queue.waiters != 2 {
-		queue.lock.Unlock()
-		t.Fatalf("expected two waiters before forcing timeout handoff, got %d", queue.waiters)
-	}
-	queue.ring[0] = &Message{header: &_Header{command: CommandPublish}, data: []byte("handoff")}
-	queue._length = 1
-	queue.first = 0
-	queue.last = 0
-	time.Sleep(15 * time.Millisecond)
-	queue.lock.Unlock()
-
 	select {
 	case <-firstDone:
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("expected first waiter to time out")
 	}
 
+	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("handoff")})
+
 	select {
 	case message := <-secondDone:
 		if message == nil || string(message.Data()) != "handoff" {
-			t.Fatalf("expected second waiter to receive handed-off message, got %#v", message)
+			t.Fatalf("expected second waiter to receive queued message after timeout, got %#v", message)
 		}
 	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("expected remaining waiter to be notified")
+		t.Fatalf("expected remaining waiter to receive queued message")
 	}
 }

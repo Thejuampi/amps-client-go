@@ -153,30 +153,48 @@ type mergedFile struct {
 }
 
 func requiredGoBenchmarksForProfile(profile string) []string {
-	if strings.TrimSpace(profile) != "all-comparable" {
+	switch strings.TrimSpace(profile) {
+	case "all-comparable":
+		return []string{
+			"BenchmarkHeaderHotWrite",
+			"BenchmarkStrictParityHeaderHotParse",
+			"BenchmarkStrictParitySOWBatchParse",
+			"BenchmarkAPIIntegrationClientPublish",
+			"BenchmarkAPIIntegrationClientSubscribe",
+		}
+	case "contention-publish":
+		return []string{
+			"BenchmarkAPIIntegrationClientPublishConcurrent",
+		}
+	case "contention-publish-noack":
+		return []string{
+			"BenchmarkAPIIntegrationClientPublishConcurrentNoAck",
+		}
+	default:
 		return nil
-	}
-
-	return []string{
-		"BenchmarkHeaderHotWrite",
-		"BenchmarkStrictParityHeaderHotParse",
-		"BenchmarkStrictParitySOWBatchParse",
-		"BenchmarkAPIIntegrationClientPublish",
-		"BenchmarkAPIIntegrationClientSubscribe",
 	}
 }
 
 func requiredCBenchmarksForProfile(profile string) []string {
-	if strings.TrimSpace(profile) != "all-comparable" {
+	switch strings.TrimSpace(profile) {
+	case "all-comparable":
+		return []string{
+			"OfficialCParityHeaderHotWrite",
+			"OfficialCParityHeaderHotParse",
+			"OfficialCParitySOWBatchParse",
+			"OfficialCIntegrationPublish",
+			"OfficialCIntegrationSubscribe",
+		}
+	case "contention-publish":
+		return []string{
+			"OfficialCIntegrationPublishConcurrent",
+		}
+	case "contention-publish-noack":
+		return []string{
+			"OfficialCIntegrationPublishConcurrentNoAck",
+		}
+	default:
 		return nil
-	}
-
-	return []string{
-		"OfficialCParityHeaderHotWrite",
-		"OfficialCParityHeaderHotParse",
-		"OfficialCParitySOWBatchParse",
-		"OfficialCIntegrationPublish",
-		"OfficialCIntegrationSubscribe",
 	}
 }
 

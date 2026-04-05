@@ -242,41 +242,53 @@ func TestParityTypesHelpersCoverage(t *testing.T) {
 	}
 
 	payload := []byte("payload")
-	state.lock.Lock()
-	state.transportFilter = nil
-	state.lock.Unlock()
+	client.SetTransportFilter(nil)
+	client.SetExceptionListener(nil)
 	if filtered := client.applyTransportFilter(TransportFilterOutbound, payload); string(filtered) != "payload" {
 		t.Fatalf("unexpected passthrough payload: %q", string(filtered))
 	}
-	state.lock.Lock()
-	state.transportFilter = func(direction TransportFilterDirection, current []byte) []byte {
+	client.SetTransportFilter(func(direction TransportFilterDirection, current []byte) []byte {
 		_ = direction
 		return append([]byte(nil), []byte("filtered:"+string(current))...)
-	}
-	state.lock.Unlock()
+	})
 	if filtered := client.applyTransportFilter(TransportFilterInbound, payload); string(filtered) != "filtered:payload" {
 		t.Fatalf("unexpected filtered payload: %q", string(filtered))
 	}
-	state.lock.Lock()
-	state.transportFilter = func(_ TransportFilterDirection, _ []byte) []byte {
+	client.SetTransportFilter(func(_ TransportFilterDirection, _ []byte) []byte {
 		return nil
-	}
-	state.lock.Unlock()
+	})
 	if filtered := client.applyTransportFilter(TransportFilterInbound, payload); string(filtered) != "payload" {
 		t.Fatalf("nil transport filter result should preserve payload, got %q", string(filtered))
 	}
-	state.lock.Lock()
-	state.transportFilter = func(direction TransportFilterDirection, current []byte) []byte {
+	client.SetTransportFilter(func(direction TransportFilterDirection, current []byte) []byte {
 		panic("transport filter panic")
-	}
-	state.exceptionListener = ExceptionListenerFunc(func(err error) { reported = append(reported, err) })
-	state.lock.Unlock()
+	})
+	client.SetExceptionListener(ExceptionListenerFunc(func(err error) { reported = append(reported, err) }))
 	if filtered := client.applyTransportFilter(TransportFilterInbound, payload); string(filtered) != "payload" {
 		t.Fatalf("expected panic fallback payload, got %q", string(filtered))
 	}
 	var nilClientForFilter *Client
 	if filtered := nilClientForFilter.applyTransportFilter(TransportFilterInbound, payload); string(filtered) != "payload" {
 		t.Fatalf("nil client should return original payload, got %q", string(filtered))
+	}
+
+	client.SetTransportFilter(nil)
+	client.SetExceptionListener(nil)
+	state.lock.Lock()
+	done := make(chan []byte, 1)
+	go func() {
+		done <- client.applyTransportFilter(TransportFilterOutbound, payload)
+	}()
+
+	select {
+	case filtered := <-done:
+		state.lock.Unlock()
+		if string(filtered) != "payload" {
+			t.Fatalf("unexpected passthrough payload while state lock held: %q", string(filtered))
+		}
+	case <-time.After(50 * time.Millisecond):
+		state.lock.Unlock()
+		t.Fatalf("expected passthrough transport filter to avoid state lock when unset")
 	}
 
 	started := 0
