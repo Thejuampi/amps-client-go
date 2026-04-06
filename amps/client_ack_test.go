@@ -83,6 +83,49 @@ func TestOnMessageRouteDispatchDoesNotAllocateWhenAutoAckDoesNotApply(t *testing
 	}
 }
 
+func TestAutoAckTimerReusedAcrossMessages(t *testing.T) {
+	client := NewClient("auto-ack-timer-reuse")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+	client.SetAutoAck(true).SetAckBatchSize(100).SetAckTimeout(5 * time.Second)
+
+	client.maybeAutoAck(makeAutoAckMessage("3|1|"))
+	state := ensureClientState(client)
+	state.lock.Lock()
+	firstTimer := state.ackTimer
+	state.lock.Unlock()
+	if firstTimer == nil {
+		t.Fatalf("expected timer to be created after first message")
+	}
+
+	client.maybeAutoAck(makeAutoAckMessage("3|2|"))
+	state.lock.Lock()
+	secondTimer := state.ackTimer
+	state.lock.Unlock()
+	if secondTimer != firstTimer {
+		t.Fatalf("expected same timer pointer to be reused, got first=%p second=%p", firstTimer, secondTimer)
+	}
+}
+
+func TestAutoAckTimerResetAllocationCount(t *testing.T) {
+	client := NewClient("auto-ack-timer-alloc")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+	client.SetAutoAck(true).SetAckBatchSize(1000).SetAckTimeout(5 * time.Second)
+
+	client.maybeAutoAck(makeAutoAckMessage("4|1|"))
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		client.maybeAutoAck(makeAutoAckMessage("4|2|"))
+	})
+
+	if allocs > 4 {
+		t.Fatalf("allocs per maybeAutoAck after timer exists = %v, want <= 4 (timer should be reset not recreated)", allocs)
+	}
+}
+
 func TestPublishBytesDoesNotAllocateOnSteadyStateDirectPath(t *testing.T) {
 	client := NewClient("publish-direct-no-alloc")
 	conn := newTestConn()

@@ -192,6 +192,7 @@ type clientParityState struct {
 	ackTimer               *time.Timer
 	bookmarkStore          BookmarkStore
 	publishStore           PublishStore
+	hasPublishStore        atomic.Bool
 	subscriptionManager    SubscriptionManager
 	duplicateHandler       func(*Message) error
 	exceptionListener      ExceptionListener

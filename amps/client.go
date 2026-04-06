@@ -39,6 +39,8 @@ const (
 
 var clientVersionBytes = []byte(ClientVersion)
 
+var heartbeatBeatOptions = []byte("beat")
+
 var clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
 	var dialer net.Dialer
 	return dialer.DialContext(ctx, network, address)
@@ -74,9 +76,9 @@ type Client struct {
 	messageType         []byte
 	errorHandler        func(err error)
 	disconnectHandler   func(client *Client, err error)
-	heartbeatInterval   uint
-	heartbeatTimeout    uint
-	heartbeatTimestamp  uint
+	heartbeatInterval   atomic.Uint32
+	heartbeatTimeout    atomic.Uint32
+	heartbeatTimestamp  atomic.Uint32
 	heartbeatTimeoutID  *time.Timer
 	heartbeatLock       sync.Mutex
 	disconnectCh        chan struct{}
@@ -690,24 +692,22 @@ func (client *Client) onMessage(message *Message) (err error) {
 	message.client = client
 	message.valid = true
 	message.rawTransmissionTime = ""
-	message.rawTransmissionUnixNano = time.Now().UTC().UnixNano()
+	message.rawTransmissionUnixNano = time.Now().UnixNano()
 
 	command := message.header.command
 	queryIDBytes := message.header.queryID
 	subIDsBytes := message.header.subIDs
 	subIDBytes := message.header.subID
 	commandIDBytes := message.header.commandID
-	client.heartbeatLock.Lock()
-	heartbeatInterval := client.heartbeatInterval
-	heartbeatTimestamp := client.heartbeatTimestamp
-	client.heartbeatLock.Unlock()
+	heartbeatInterval := client.heartbeatInterval.Load()
+	heartbeatTimestamp := client.heartbeatTimestamp.Load()
 	hasHeartbeat := heartbeatInterval > 0
 	client.applyAckBookkeeping(message)
 
 	if command == commandHeartbeat {
 		if hasHeartbeat {
 			nowUnix := time.Now().Unix()
-			timedelta := uint(nowUnix) - heartbeatTimestamp // #nosec G115 -- Unix timestamps are non-negative here
+			timedelta := uint32(nowUnix) - heartbeatTimestamp // #nosec G115 -- Unix timestamps are non-negative here
 			if timedelta > heartbeatInterval {
 				client.checkAndSendHeartbeat(true)
 			}
@@ -1282,19 +1282,20 @@ func (client *Client) onConnectionError(err error) {
 
 func (client *Client) onHeartbeatAbsence() {
 	nowUnix := time.Now().Unix()
-	now := uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
 	heartbeatMissing := false
 
-	client.heartbeatLock.Lock()
-	if client.heartbeatTimeout != 0 && client.heartbeatTimestamp != 0 && (now-client.heartbeatTimestamp) > client.heartbeatTimeout {
+	hbTimeout := client.heartbeatTimeout.Load()
+	hbTimestamp := client.heartbeatTimestamp.Load()
+	if hbTimeout != 0 && hbTimestamp != 0 && (uint32(nowUnix)-hbTimestamp) > hbTimeout {
+		client.heartbeatLock.Lock()
 		if client.heartbeatTimeoutID != nil {
 			_ = client.heartbeatTimeoutID.Stop()
 			client.heartbeatTimeoutID = nil
 		}
-		client.heartbeatTimestamp = 0
+		client.heartbeatTimestamp.Store(0)
 		heartbeatMissing = true
+		client.heartbeatLock.Unlock()
 	}
-	client.heartbeatLock.Unlock()
 
 	if heartbeatMissing {
 		client.onError(errors.New("heartbeat absence error"))
@@ -1312,10 +1313,10 @@ func (client *Client) establishHeartbeat() (hbError error) {
 
 	client.heartbeatLock.Lock()
 	nowUnix := time.Now().Unix()
-	client.heartbeatTimestamp = uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
-	heartbeatInterval := client.heartbeatInterval
-	heartbeatTimeout := client.heartbeatTimeout
+	client.heartbeatTimestamp.Store(uint32(nowUnix)) // #nosec G115 -- Unix timestamps are non-negative here
 	client.heartbeatLock.Unlock()
+	heartbeatInterval := client.heartbeatInterval.Load()
+	heartbeatTimeout := client.heartbeatTimeout.Load()
 
 	heartbeat := NewCommand("heartbeat").AddAckType(AckTypeProcessed).SetOptions("start," + strconv.FormatUint(uint64(heartbeatInterval), 10))
 	_, hbError = client.ExecuteAsync(heartbeat, func(message *Message) (err error) {
@@ -1327,8 +1328,9 @@ func (client *Client) establishHeartbeat() (hbError error) {
 			if client.heartbeatTimeoutID != nil {
 				_ = client.heartbeatTimeoutID.Stop()
 			}
-			if client.heartbeatTimeout > 0 {
-				client.heartbeatTimeoutID = time.AfterFunc(time.Second*time.Duration(client.heartbeatTimeout), client.onHeartbeatAbsence) // #nosec G115 -- timeout is a bounded configuration value
+			hbTimeout := client.heartbeatTimeout.Load()
+			if hbTimeout > 0 {
+				client.heartbeatTimeoutID = time.AfterFunc(time.Second*time.Duration(hbTimeout), client.onHeartbeatAbsence) // #nosec G115 -- timeout is a bounded configuration value
 			} else {
 				client.heartbeatTimeoutID = nil
 			}
@@ -1367,24 +1369,25 @@ func (client *Client) establishHeartbeat() (hbError error) {
 
 func (client *Client) checkAndSendHeartbeat(force bool) {
 	nowUnix := time.Now().Unix()
-	now := uint(nowUnix) // #nosec G115 -- Unix timestamps are non-negative here
 	shouldSend := false
 
-	client.heartbeatLock.Lock()
-	if client.heartbeatTimeout != 0 && client.heartbeatTimestamp != 0 {
-		if force || (now-client.heartbeatTimestamp) > client.heartbeatInterval {
-			client.heartbeatTimestamp = now
+	hbTimeout := client.heartbeatTimeout.Load()
+	hbTimestamp := client.heartbeatTimestamp.Load()
+	if hbTimeout != 0 && hbTimestamp != 0 {
+		if force || (uint32(nowUnix)-hbTimestamp) > client.heartbeatInterval.Load() {
+			client.heartbeatTimestamp.Store(uint32(nowUnix))
+			client.heartbeatLock.Lock()
 			if client.heartbeatTimeoutID != nil {
 				_ = client.heartbeatTimeoutID.Stop()
 			}
 			client.heartbeatTimeoutID = time.AfterFunc(
-				time.Second*time.Duration(client.heartbeatTimeout), // #nosec G115 -- timeout is a bounded configuration value
+				time.Second*time.Duration(hbTimeout), // #nosec G115 -- timeout is a bounded configuration value
 				client.onHeartbeatAbsence,
 			)
 			shouldSend = true
+			client.heartbeatLock.Unlock()
 		}
 	}
-	client.heartbeatLock.Unlock()
 
 	if shouldSend {
 		err := client.sendHeartbeat()
@@ -1460,8 +1463,8 @@ func (client *Client) SetHeartbeat(interval uint, providedTimeout ...uint) *Clie
 	}
 
 	client.heartbeatLock.Lock()
-	client.heartbeatTimeout = timeout
-	client.heartbeatInterval = interval
+	client.heartbeatTimeout.Store(uint32(timeout))
+	client.heartbeatInterval.Store(uint32(interval))
 	client.heartbeatLock.Unlock()
 	return client
 }
@@ -1731,14 +1734,12 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 				client.reportException(err)
 			}
 		}
-		client.heartbeatLock.Lock()
-		hasHeartbeatTimeout := client.heartbeatTimeout != 0
-		client.heartbeatLock.Unlock()
+		hasHeartbeatTimeout := client.heartbeatTimeout.Load() != 0
 		if hasHeartbeatTimeout {
 
 			client.hbCommand.reset()
 			client.hbCommand.header.command = commandHeartbeat
-			client.hbCommand.header.options = []byte("beat")
+			client.hbCommand.header.options = heartbeatBeatOptions
 
 			err = client.establishHeartbeat()
 			if err != nil {
@@ -1800,14 +1801,12 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 	client.command.reset()
 	client.command.header.command = commandType
 	client.command.header.topic = append(topicBuffer, topic...)
-	client.command.header.strictParityEscapeState = 0
 	client.command.data = data
 
 	if len(expiration) > 0 {
 		client.command.header.expiration = &(expiration[0])
 	}
 	client.command.header.commandID = client.makeCommandIDBytes(commandIDBuffer)
-	client.command.header.strictParityEscapeState = 0
 	client.registerPendingPublishCommandBytes(client.command.header.commandID, client.command)
 
 	sequence := uint64(0)
@@ -2543,7 +2542,7 @@ func (client *Client) Disconnect() (err error) {
 		_ = client.heartbeatTimeoutID.Stop()
 		client.heartbeatTimeoutID = nil
 	}
-	client.heartbeatTimestamp = 0
+	client.heartbeatTimestamp.Store(0)
 	client.heartbeatLock.Unlock()
 	client.lock.Unlock()
 
@@ -2565,10 +2564,10 @@ func (client *Client) Disconnect() (err error) {
 	}
 
 	client.heartbeatLock.Lock()
-	if client.heartbeatTimeout != 0 {
-		client.heartbeatTimeout = 0
-		client.heartbeatInterval = 0
-		client.heartbeatTimestamp = 0
+	if client.heartbeatTimeout.Load() != 0 {
+		client.heartbeatTimeout.Store(0)
+		client.heartbeatInterval.Store(0)
+		client.heartbeatTimestamp.Store(0)
 		client.heartbeatTimeoutID = nil
 	}
 	client.heartbeatLock.Unlock()
@@ -2605,7 +2604,7 @@ func NewClient(clientName ...string) *Client {
 	client := &Client{
 		clientName:        clientNameInternal,
 		nameHash:          fmt.Sprintf("%x", unsafeStringHash(clientNameInternal)),
-		sendBuffer:        bytes.NewBuffer(nil),
+		sendBuffer:        bytes.NewBuffer(make([]byte, 0, 512)),
 		command:           &Command{header: newHeader()},
 		hbCommand:         &Command{header: newHeader()},
 		message:           &Message{header: newHeader()},

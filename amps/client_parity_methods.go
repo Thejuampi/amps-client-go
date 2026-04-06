@@ -125,7 +125,7 @@ func (client *Client) queueRetryCommand(command *Command, messageHandler func(*M
 
 	state.lock.Lock()
 	state.pendingRetry = append(state.pendingRetry, retryCommand{
-		command:        cloneCommand(command),
+		command:        command.Clone(),
 		messageHandler: messageHandler,
 	})
 	state.lock.Unlock()
@@ -142,7 +142,7 @@ func (client *Client) registerPendingPublishCommand(commandID string, command *C
 		state.lock.Unlock()
 		return
 	}
-	state.pendingPublishByCmdID[commandID] = cloneCommand(command)
+	state.pendingPublishByCmdID[commandID] = command.Clone()
 	state.lock.Unlock()
 }
 
@@ -157,7 +157,7 @@ func (client *Client) registerPendingPublishCommandBytes(commandID []byte, comma
 		state.lock.Unlock()
 		return
 	}
-	state.pendingPublishByCmdID[string(commandID)] = cloneCommand(command)
+	state.pendingPublishByCmdID[string(commandID)] = command.Clone()
 	state.lock.Unlock()
 }
 
@@ -168,6 +168,10 @@ func (client *Client) storePublishCommand(command *Command) error {
 
 	state := ensureClientState(client)
 	if state == nil {
+		return nil
+	}
+
+	if !state.hasPublishStore.Load() {
 		return nil
 	}
 
@@ -190,12 +194,13 @@ func (client *Client) storePublishCommand(command *Command) error {
 }
 
 func commandToMessage(command *Command) *Message {
-	message := &Message{header: newHeader()}
 	if command == nil || command.header == nil {
-		return message
+		return &Message{header: newHeader()}
 	}
 
+	message := newOwnedMessage()
 	message.header.command = command.header.command
+
 	if command.header.ackType != nil {
 		ackType := *command.header.ackType
 		message.header.ackType = &ackType
@@ -204,45 +209,37 @@ func commandToMessage(command *Command) *Message {
 		batchSize := *command.header.batchSize
 		message.header.batchSize = &batchSize
 	}
-	if command.header.commandID != nil {
-		message.header.commandID = append([]byte(nil), command.header.commandID...)
-	}
-	if command.header.topic != nil {
-		message.header.topic = append([]byte(nil), command.header.topic...)
-	}
-	if command.header.bookmark != nil {
-		message.header.bookmark = append([]byte(nil), command.header.bookmark...)
-	}
-	if command.header.correlationID != nil {
-		message.header.correlationID = append([]byte(nil), command.header.correlationID...)
-	}
 	if command.header.expiration != nil {
-		var expiration = *command.header.expiration
+		expiration := *command.header.expiration
 		message.header.expiration = &expiration
 	}
-	if command.header.filter != nil {
-		message.header.filter = append([]byte(nil), command.header.filter...)
+	if command.header.groupSequenceNumber != nil {
+		gseq := *command.header.groupSequenceNumber
+		message.header.groupSequenceNumber = &gseq
 	}
-	if command.header.options != nil {
-		message.header.options = append([]byte(nil), command.header.options...)
+	if command.header.matches != nil {
+		matches := *command.header.matches
+		message.header.matches = &matches
 	}
-	if command.header.orderBy != nil {
-		message.header.orderBy = append([]byte(nil), command.header.orderBy...)
+	if command.header.messageLength != nil {
+		msgLen := *command.header.messageLength
+		message.header.messageLength = &msgLen
 	}
-	if command.header.queryID != nil {
-		message.header.queryID = append([]byte(nil), command.header.queryID...)
+	if command.header.recordsDeleted != nil {
+		rD := *command.header.recordsDeleted
+		message.header.recordsDeleted = &rD
 	}
-	if command.header.sowKey != nil {
-		message.header.sowKey = append([]byte(nil), command.header.sowKey...)
+	if command.header.recordsInserted != nil {
+		rI := *command.header.recordsInserted
+		message.header.recordsInserted = &rI
 	}
-	if command.header.sowKeys != nil {
-		message.header.sowKeys = append([]byte(nil), command.header.sowKeys...)
+	if command.header.recordsReturned != nil {
+		rR := *command.header.recordsReturned
+		message.header.recordsReturned = &rR
 	}
-	if command.header.subID != nil {
-		message.header.subID = append([]byte(nil), command.header.subID...)
-	}
-	if command.header.subIDs != nil {
-		message.header.subIDs = append([]byte(nil), command.header.subIDs...)
+	if command.header.recordsUpdated != nil {
+		rU := *command.header.recordsUpdated
+		message.header.recordsUpdated = &rU
 	}
 	if command.header.sequenceID != nil {
 		sequence := *command.header.sequenceID
@@ -252,9 +249,43 @@ func commandToMessage(command *Command) *Message {
 		topN := *command.header.topN
 		message.header.topN = &topN
 	}
-	if command.data != nil {
-		message.data = append([]byte(nil), command.data...)
+	if command.header.topicMatches != nil {
+		tM := *command.header.topicMatches
+		message.header.topicMatches = &tM
 	}
+
+	var totalBytes = len(command.data) +
+		len(command.header.commandID) +
+		len(command.header.topic) +
+		len(command.header.bookmark) +
+		len(command.header.correlationID) +
+		len(command.header.filter) +
+		len(command.header.options) +
+		len(command.header.orderBy) +
+		len(command.header.queryID) +
+		len(command.header.sowKey) +
+		len(command.header.sowKeys) +
+		len(command.header.subID) +
+		len(command.header.subIDs)
+
+	var buf []byte
+	if totalBytes > 0 {
+		buf = make([]byte, totalBytes)
+	}
+	buf, message.data = copyMessageBytes(buf, command.data)
+	buf, message.header.commandID = copyMessageBytes(buf, command.header.commandID)
+	buf, message.header.topic = copyMessageBytes(buf, command.header.topic)
+	buf, message.header.bookmark = copyMessageBytes(buf, command.header.bookmark)
+	buf, message.header.correlationID = copyMessageBytes(buf, command.header.correlationID)
+	buf, message.header.filter = copyMessageBytes(buf, command.header.filter)
+	buf, message.header.options = copyMessageBytes(buf, command.header.options)
+	buf, message.header.orderBy = copyMessageBytes(buf, command.header.orderBy)
+	buf, message.header.queryID = copyMessageBytes(buf, command.header.queryID)
+	buf, message.header.sowKey = copyMessageBytes(buf, command.header.sowKey)
+	buf, message.header.sowKeys = copyMessageBytes(buf, command.header.sowKeys)
+	buf, message.header.subID = copyMessageBytes(buf, command.header.subID)
+	_, message.header.subIDs = copyMessageBytes(buf, command.header.subIDs)
+
 	return message
 }
 
@@ -454,15 +485,16 @@ func (client *Client) maybeAutoAck(message *Message) {
 		return
 	}
 
-	topic := string(header.topic)
-	bookmark := string(header.bookmark)
-	subID := string(header.subID)
+	topic := unsafeStringFromBytes(header.topic)
+	subID := unsafeStringFromBytes(header.subID)
 	key := makeAckBatchKey(topic, subID)
 	batch := state.pendingAcks[key]
 	if batch == nil {
-		batch = &pendingAckBatch{topic: topic, subID: subID}
+		sep := strings.Index(key, "\x1f")
+		batch = &pendingAckBatch{topic: key[:sep], subID: key[sep+1:]}
 		state.pendingAcks[key] = batch
 	}
+	bookmark := string(header.bookmark)
 	batch.bookmarks = append(batch.bookmarks, bookmark)
 	state.pendingAckCount++
 	batchSize := state.ackBatchSize
@@ -471,11 +503,12 @@ func (client *Client) maybeAutoAck(message *Message) {
 
 	if timeout > 0 {
 		if state.ackTimer != nil {
-			_ = state.ackTimer.Stop()
+			state.ackTimer.Reset(timeout)
+		} else {
+			state.ackTimer = time.AfterFunc(timeout, func() {
+				_ = client.FlushAcks()
+			})
 		}
-		state.ackTimer = time.AfterFunc(timeout, func() {
-			_ = client.FlushAcks()
-		})
 	}
 	state.lock.Unlock()
 
@@ -589,7 +622,7 @@ func (client *Client) postLogonRecovery() {
 			if pending.command == nil {
 				continue
 			}
-			if _, retryErr := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); retryErr != nil {
+			if _, retryErr := client.ExecuteAsync(pending.command.Clone(), pending.messageHandler); retryErr != nil {
 				client.reportException(retryErr)
 			}
 		}
@@ -954,6 +987,7 @@ func (client *Client) SetPublishStore(store PublishStore) *Client {
 	}
 	state.lock.Lock()
 	state.publishStore = store
+	state.hasPublishStore.Store(store != nil)
 	state.lock.Unlock()
 	return client
 }

@@ -6,95 +6,95 @@
   },
   "benchmarks": {
     "BenchmarkHeaderHotWrite": {
-      "ns_op": 73.17,
+      "ns_op": 66.6,
       "allocs_op": 0.0
     },
     "BenchmarkHeaderHotParse": {
-      "ns_op": 20.78,
+      "ns_op": 18.9,
       "allocs_op": 0.0
     },
     "BenchmarkRouteHotSingle": {
-      "ns_op": 68.85,
-      "allocs_op": 2.0
+      "ns_op": 27.2,
+      "allocs_op": 0.0
     },
     "BenchmarkRouteHotMultiSIDs": {
-      "ns_op": 106.3,
-      "allocs_op": 1.0
+      "ns_op": 64.8,
+      "allocs_op": 0.0
     },
     "BenchmarkReadHotFrameDecodeDispatch": {
-      "ns_op": 93.79,
-      "allocs_op": 2.0
+      "ns_op": 47.1,
+      "allocs_op": 0.0
     },
     "BenchmarkStreamHotDequeue": {
-      "ns_op": 37.34,
+      "ns_op": 31.9,
       "allocs_op": 0.0
     },
     "BenchmarkStreamHotTimeout": {
-      "ns_op": 11.91,
+      "ns_op": 10.8,
       "allocs_op": 0.0
     },
     "BenchmarkMessageCopy": {
-      "ns_op": 471.5,
-      "allocs_op": 9.0
+      "ns_op": 225.8,
+      "allocs_op": 2.0
     },
     "BenchmarkHeaderReset": {
-      "ns_op": 0.1335,
+      "ns_op": 0.108,
       "allocs_op": 0.0
     },
     "BenchmarkMessageReset": {
-      "ns_op": 12.73,
+      "ns_op": 12.6,
       "allocs_op": 0.0,
       "group": "volatile-micro"
     },
     "BenchmarkUnsafeStringFromBytes": {
-      "ns_op": 0.273,
+      "ns_op": 0.220,
       "allocs_op": 0.0,
       "group": "volatile-micro"
     },
     "BenchmarkTrimASCIISpaces": {
-      "ns_op": 4.475,
+      "ns_op": 2.95,
       "allocs_op": 0.0
     },
     "BenchmarkSyncMapLoad": {
-      "ns_op": 10.35,
+      "ns_op": 8.91,
       "allocs_op": 0.0,
       "group": "volatile-micro"
     },
     "BenchmarkSyncMapStore": {
-      "ns_op": 331.3,
+      "ns_op": 211.3,
       "allocs_op": 5.0,
       "group": "volatile-micro"
     },
     "BenchmarkPublishSendFull": {
-      "ns_op": 56.52,
+      "ns_op": 24.1,
       "allocs_op": 0.0
     },
     "BenchmarkSOWBatchParse": {
-      "ns_op": 84.51,
+      "ns_op": 73.9,
       "allocs_op": 0.0
     },
     "BenchmarkRouteHotManySubscriptions": {
-      "ns_op": 67.4,
-      "allocs_op": 2.0,
+      "ns_op": 28.7,
+      "allocs_op": 0.0,
       "group": "volatile-micro"
     },
     "BenchmarkStreamConcurrentDequeue": {
-      "ns_op": 51.59,
+      "ns_op": 42.1,
       "allocs_op": 0.0,
       "group": "volatile-micro"
     },
     "BenchmarkParseUintBytes": {
-      "ns_op": 10.27,
+      "ns_op": 5.88,
       "allocs_op": 0.0,
       "group": "volatile-micro"
     },
     "BenchmarkParseUint32Value": {
-      "ns_op": 6.977,
+      "ns_op": 5.69,
       "allocs_op": 0.0,
       "group": "volatile-micro"
     },
     "BenchmarkAckToString": {
-      "ns_op": 0.1676,
+      "ns_op": 0.109,
       "allocs_op": 0.0,
       "group": "volatile-micro"
     }

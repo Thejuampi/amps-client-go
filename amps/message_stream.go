@@ -27,10 +27,11 @@ type MessageStream struct {
 	current       *Message
 	sowKeyMap     map[string]*Message
 
-	state    int32
-	depth    uint64
-	timeout  uint64
-	timedOut atomic.Bool
+	state            int32
+	depth            uint64
+	timeout          uint64
+	timedOut         atomic.Bool
+	isConflatingFlag atomic.Bool
 
 	queue *_MessageQueue
 
@@ -92,6 +93,7 @@ func (ms *MessageStream) resetForConfiguration() {
 	}
 	ms.lock.Lock()
 	ms.sowKeyMap = nil
+	ms.isConflatingFlag.Store(false)
 	ms.lock.Unlock()
 }
 
@@ -303,13 +305,12 @@ func (ms *MessageStream) Conflate() {
 
 	if ms.sowKeyMap == nil {
 		ms.sowKeyMap = make(map[string]*Message)
+		ms.isConflatingFlag.Store(true)
 	}
 }
 
 func (ms *MessageStream) isConflating() bool {
-	ms.lock.Lock()
-	defer ms.lock.Unlock()
-	return ms.sowKeyMap != nil && atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed
+	return ms.isConflatingFlag.Load() && atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed
 }
 
 // Close is an alias for Disconnect.
@@ -661,7 +662,9 @@ func (queue *_MessageQueue) clear() {
 	queue.closed = false
 	queue.clearNotEmptySignalLocked()
 
-	queue.ring = make([]*Message, queue.capacity)
+	for i := range queue.ring {
+		queue.ring[i] = nil
+	}
 	queue.notFull.Broadcast()
 }
 

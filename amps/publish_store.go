@@ -119,7 +119,7 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 		sequence = store.nextSequence
 	}
 
-	cloned := cloneCommand(command)
+	cloned := command.Clone()
 	cloned.SetSequenceID(sequence)
 	store.entries[sequence] = cloned
 	if wasEmpty {
