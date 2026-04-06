@@ -912,7 +912,7 @@ func (cmd *Command) Clone() *Command {
 	buf, cloned.header.messageType = copyMessageBytes(buf, cmd.header.messageType)
 	buf, cloned.header.timestamp = copyMessageBytes(buf, cmd.header.timestamp)
 	buf, cloned.header.reason = copyMessageBytes(buf, cmd.header.reason)
-	_, cloned.header.status = copyMessageBytes(buf, cmd.header.status)
+	buf, cloned.header.status = copyMessageBytes(buf, cmd.header.status)
 	_, cloned.header.version = copyMessageBytes(buf, cmd.header.version)
 
 	cloned.timeout = cmd.timeout
