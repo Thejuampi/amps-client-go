@@ -1801,14 +1801,12 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 	client.command.reset()
 	client.command.header.command = commandType
 	client.command.header.topic = append(topicBuffer, topic...)
-	client.command.header.strictParityEscapeState = 0
 	client.command.data = data
 
 	if len(expiration) > 0 {
 		client.command.header.expiration = &(expiration[0])
 	}
 	client.command.header.commandID = client.makeCommandIDBytes(commandIDBuffer)
-	client.command.header.strictParityEscapeState = 0
 	client.registerPendingPublishCommandBytes(client.command.header.commandID, client.command)
 
 	sequence := uint64(0)

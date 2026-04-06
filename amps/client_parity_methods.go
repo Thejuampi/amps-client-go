@@ -171,6 +171,10 @@ func (client *Client) storePublishCommand(command *Command) error {
 		return nil
 	}
 
+	if !state.hasPublishStore.Load() {
+		return nil
+	}
+
 	state.lock.Lock()
 	store := state.publishStore
 	state.lock.Unlock()
@@ -983,6 +987,7 @@ func (client *Client) SetPublishStore(store PublishStore) *Client {
 	}
 	state.lock.Lock()
 	state.publishStore = store
+	state.hasPublishStore.Store(store != nil)
 	state.lock.Unlock()
 	return client
 }

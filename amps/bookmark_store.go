@@ -205,9 +205,22 @@ func (store *MemoryBookmarkStore) GetMostRecent(subID string) string {
 	if store == nil {
 		return ""
 	}
+	store.lock.RLock()
+	if !store.dirty[subID] {
+		var result = store.mostRecent[subID]
+		store.lock.RUnlock()
+		return result
+	}
+	store.lock.RUnlock()
+
 	store.lock.Lock()
-	defer store.lock.Unlock()
-	return store.getMostRecent(subID)
+	if store.dirty[subID] {
+		store.mostRecent[subID] = store.computeMostRecentLocked(subID)
+		delete(store.dirty, subID)
+	}
+	var result = store.mostRecent[subID]
+	store.lock.Unlock()
+	return result
 }
 
 // IsDiscarded reports whether discarded is true for the receiver.
@@ -221,27 +234,20 @@ func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 		return false
 	}
 
-	store.lock.Lock()
-	defer store.lock.Unlock()
-
+	store.lock.RLock()
 	records := store.records[subID]
 	if records == nil {
+		store.lock.RUnlock()
 		return false
 	}
-
 	record := records[bookmark]
-	store.getMostRecent(subID)
 	if record == nil {
+		store.lock.RUnlock()
 		return false
 	}
-
-	if record.Discarded {
-		return true
-	}
-	if record.SeqNo <= store.discardedUpTo[subID] {
-		return true
-	}
-	return record.Count > 1
+	var discarded = record.Discarded || record.SeqNo <= store.discardedUpTo[subID] || record.Count > 1
+	store.lock.RUnlock()
+	return discarded
 }
 
 // Purge executes the exported purge operation.
@@ -273,8 +279,8 @@ func (store *MemoryBookmarkStore) GetOldestBookmarkSeq(subID string) uint64 {
 	if store == nil || subID == "" {
 		return 0
 	}
-	store.lock.Lock()
-	defer store.lock.Unlock()
+	store.lock.RLock()
+	defer store.lock.RUnlock()
 
 	records := store.records[subID]
 	if records == nil {
