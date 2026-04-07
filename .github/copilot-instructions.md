@@ -42,6 +42,16 @@ make release          # static-scan + unit + race + build + fakeamps integration
 - `./amps/...` thresholds are strict: aggregate `>=90%`, pure files `100%`, IO/stateful files `>=80%`.
 - Test design target for changed areas is `>=80%`, but gate values above are mandatory.
 
+## Mutation Policy
+
+- Mutation testing is mandatory throughout the full development lifecycle, not just at the end.
+- During planning, identify the branches, guards, invariants, failure paths, and boundaries that a mutation could break.
+- During RED, write tests that would fail if conditions are inverted, branches are deleted, counters are off by one, or error paths are skipped.
+- During implementation, keep code small enough that each critical branch has a clear killing test.
+- During review, explicitly ask which test fails if a branch is removed or a condition is inverted.
+- Before completion, do manual mutation thinking and, for non-trivial changes, spot-check a few realistic mutations.
+- Do not confuse high line coverage with strong tests; mutation resistance is required evidence of test quality.
+
 ## Release Gate Policy
 
 - Release verification is `make release`.
@@ -91,6 +101,7 @@ Getter/setter naming mirrors C++: `SetFoo(v)` / `Foo()`.
 - `test_helpers_test.go` provides `testConn` (fake `net.Conn` with `enqueueRead`) for unit tests without a real server.
 - `internal/testutil.Counter` provides deterministic ID sequences.
 - Integration tests require a live AMPS server and are tagged with `Integration` in their test name — run with `make integration-test`.
+- For changed logic, tests should be strong enough to fail for deleted guards, inverted booleans, missing side effects, missing error propagation, and off-by-one behavior.
 
 ## HAClient Reconnect Flow
 

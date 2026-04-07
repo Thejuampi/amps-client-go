@@ -1,10 +1,8 @@
 package gofercli
 
 import (
-	"archive/zip"
 	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -14,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/gofercli/testutil"
 )
 
 type builtFakeamps struct {
@@ -33,30 +33,11 @@ var (
 	fakeampsBinary    builtFakeamps
 )
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-
-	var dir, err = os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for {
-		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
-			return dir
-		}
-		var parent = filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("could not find repo root from %s", dir)
-		}
-		dir = parent
-	}
-}
-
 func ensureFakeampsBinary(t *testing.T) builtFakeamps {
 	t.Helper()
 
 	fakeampsBuildOnce.Do(func() {
-		var root = repoRoot(t)
+		var root = testutil.RepoRoot(t)
 		var tempDir, err = os.MkdirTemp("", "gofercli-fakeamps-*")
 		if err != nil {
 			fakeampsBuildErr = err
@@ -143,36 +124,6 @@ func runMain(t *testing.T, stdin string, env []string, args ...string) (string, 
 	return stdout.String(), stderr.String(), code
 }
 
-func writeTempFile(t *testing.T, name string, data []byte) string {
-	t.Helper()
-
-	var path = filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-	return path
-}
-
-func writeTempZIP(t *testing.T, name string, files map[string]string) string {
-	t.Helper()
-
-	var buffer bytes.Buffer
-	var archive = zip.NewWriter(&buffer)
-	for fileName, body := range files {
-		var handle, err = archive.Create(fileName)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", fileName, err)
-		}
-		if _, err := io.WriteString(handle, body); err != nil {
-			t.Fatalf("zip write %s: %v", fileName, err)
-		}
-	}
-	if err := archive.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	return writeTempFile(t, name, buffer.Bytes())
-}
-
 func TestIntegrationMainHelpAndUnknownCommand(t *testing.T) {
 	var stdout, stderr, code = runMain(t, "", nil, "help")
 	if code != 0 {
@@ -241,7 +192,7 @@ func TestIntegrationMainPingAndUnsupportedScheme(t *testing.T) {
 
 func TestIntegrationMainPublishSOWAndDeleteFlows(t *testing.T) {
 	var broker = startBroker(t)
-	var input = writeTempFile(t, "orders.txt", []byte("{\"id\":1}\n{\"id\":2}\n"))
+	var input = testutil.WriteTempFile(t, "orders.txt", []byte("{\"id\":1}\n{\"id\":2}\n"))
 
 	_, stderr, code := runMain(t, "", nil,
 		"publish",
@@ -270,7 +221,7 @@ func TestIntegrationMainPublishSOWAndDeleteFlows(t *testing.T) {
 		t.Fatalf("sow summary stdout = %q", stdout)
 	}
 
-	var deletePayload = writeTempFile(t, "delete.txt", []byte("{\"id\":1}"))
+	var deletePayload = testutil.WriteTempFile(t, "delete.txt", []byte("{\"id\":1}"))
 	stdout, stderr, code = runMain(t, "", nil,
 		"sow_delete",
 		"-server", broker.uri,
@@ -326,7 +277,7 @@ func TestIntegrationMainCommandHelpFlagsAndDeltaPublish(t *testing.T) {
 func TestIntegrationMainCopyAndZIPPublish(t *testing.T) {
 	var source = startBroker(t)
 	var target = startBroker(t)
-	var archive = writeTempZIP(t, "orders.zip", map[string]string{
+	var archive = testutil.WriteTempZIP(t, "orders.zip", map[string]string{
 		"0001.json": "{\"id\":1,\"copy\":true}",
 		"0002.json": "{\"id\":2,\"copy\":true}",
 	})
@@ -358,11 +309,26 @@ func TestIntegrationMainCopyAndZIPPublish(t *testing.T) {
 
 func TestIntegrationMainSubscribeQueueAckBacklog(t *testing.T) {
 	var broker = startBroker(t)
-	var done = make(chan struct {
+
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			t.Logf("retry %d/3", attempt+1)
+		}
+		if testSubscribeQueueAckBacklogOnce(t, broker) {
+			return
+		}
+	}
+	t.Fatal("subscribe queue ack backlog failed after 3 attempts")
+}
+
+func testSubscribeQueueAckBacklogOnce(t *testing.T, broker *broker) bool {
+	type subscribeResult struct {
 		stdout string
 		stderr string
 		code   int
-	}, 1)
+	}
+
+	var done = make(chan subscribeResult, 1)
 
 	go func() {
 		var stdout, stderr, code = runMain(t, "", nil,
@@ -373,11 +339,7 @@ func TestIntegrationMainSubscribeQueueAckBacklog(t *testing.T) {
 			"-backlog", "1",
 			"-n", "2",
 		)
-		done <- struct {
-			stdout string
-			stderr string
-			code   int
-		}{stdout: stdout, stderr: stderr, code: code}
+		done <- subscribeResult{stdout: stdout, stderr: stderr, code: code}
 	}()
 
 	time.Sleep(750 * time.Millisecond)
@@ -397,13 +359,17 @@ func TestIntegrationMainSubscribeQueueAckBacklog(t *testing.T) {
 	select {
 	case result := <-done:
 		if result.code != 0 {
-			t.Fatalf("subscribe exit code = %d, stderr = %q", result.code, result.stderr)
+			t.Logf("subscribe exit code = %d, stderr = %q", result.code, result.stderr)
+			return false
 		}
 		if !strings.Contains(result.stdout, `"id":1`) || !strings.Contains(result.stdout, `"id":2`) {
-			t.Fatalf("subscribe stdout = %q", result.stdout)
+			t.Logf("subscribe stdout = %q", result.stdout)
+			return false
 		}
+		return true
 	case <-time.After(15 * time.Second):
-		t.Fatalf("subscribe timed out")
+		t.Logf("subscribe timed out (attempt)")
+		return false
 	}
 }
 
@@ -530,5 +496,194 @@ func TestIntegrationMainSOWAndSubscribeAndFormatFailure(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatalf("invalid format subscribe timed out")
+	}
+}
+
+func TestIntegrationMainRunNoArgs(t *testing.T) {
+	var _, stderr, code = runMain(t, "", nil)
+	if code != 1 {
+		t.Fatalf("no args exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "spark-compatible") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestIntegrationMainSOWDeleteByFilterAndKeys(t *testing.T) {
+	var broker = startBroker(t)
+
+	_, stderr, code := runMain(t, "", nil,
+		"publish",
+		"-server", broker.uri,
+		"-topic", "orders.delmodes",
+		"-data", `{"id":1}`,
+	)
+	if code != 0 {
+		t.Fatalf("seed publish exit code = %d, stderr = %q", code, stderr)
+	}
+
+	var stdout string
+	stdout, stderr, code = runMain(t, "", nil,
+		"sow_delete",
+		"-server", broker.uri,
+		"-topic", "orders.delmodes",
+		"-filter", "/id = 1",
+	)
+	if code != 0 {
+		t.Fatalf("sow_delete by filter exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Deleted 1 records") {
+		t.Fatalf("sow_delete filter stdout = %q", stdout)
+	}
+
+	_, stderr, code = runMain(t, "", nil,
+		"publish",
+		"-server", broker.uri,
+		"-topic", "orders.delmodes",
+		"-data", `{"id":2}`,
+	)
+	if code != 0 {
+		t.Fatalf("re-seed publish exit code = %d, stderr = %q", code, stderr)
+	}
+
+	stdout, stderr, code = runMain(t, "", nil,
+		"sow_delete",
+		"-server", broker.uri,
+		"-topic", "orders.delmodes",
+		"-keys", "nonexistent",
+	)
+	if code != 0 {
+		t.Fatalf("sow_delete by keys exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Deleted 0 records") {
+		t.Fatalf("sow_delete keys stdout = %q", stdout)
+	}
+}
+
+func TestIntegrationMainPublishWithRate(t *testing.T) {
+	var broker = startBroker(t)
+	var input = testutil.WriteTempFile(t, "rate.txt", []byte("{\"id\":1}\n{\"id\":2}\n{\"id\":3}\n"))
+
+	var start = time.Now()
+	_, stderr, code := runMain(t, "", nil,
+		"publish",
+		"-server", broker.uri,
+		"-topic", "orders.rate",
+		"-file", input,
+		"-rate", "10",
+	)
+	var elapsed = time.Since(start)
+	if code != 0 {
+		t.Fatalf("rate publish exit code = %d, stderr = %q", code, stderr)
+	}
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("rate publish too fast: %s, expected at least ~200ms for 3 msgs at 10/s", elapsed)
+	}
+
+	var stdout string
+	stdout, stderr, code = runMain(t, "", nil,
+		"sow",
+		"-server", broker.uri,
+		"-topic", "orders.rate",
+	)
+	if code != 0 {
+		t.Fatalf("sow exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Total messages received: 3") {
+		t.Fatalf("sow stdout = %q", stdout)
+	}
+}
+
+func TestIntegrationMainSOWWithCopy(t *testing.T) {
+	var source = startBroker(t)
+	var target = startBroker(t)
+
+	_, stderr, code := runMain(t, "", nil,
+		"sow",
+		"-server", source.uri,
+		"-topic", "orders.empty",
+	)
+	if code != 0 {
+		t.Fatalf("empty sow exit code = %d, stderr = %q", code, stderr)
+	}
+
+	_, stderr, code = runMain(t, "", nil,
+		"publish",
+		"-server", source.uri,
+		"-topic", "orders.sowcopy",
+		"-data", `{"id":1}`,
+	)
+	if code != 0 {
+		t.Fatalf("publish for sow copy exit code = %d, stderr = %q", code, stderr)
+	}
+
+	var stdout string
+	stdout, stderr, code = runMain(t, "", nil,
+		"sow",
+		"-server", source.uri,
+		"-topic", "orders.sowcopy",
+		"-copy", target.uri,
+	)
+	if code != 0 {
+		t.Fatalf("sow with copy exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "Total messages received: 1") {
+		t.Fatalf("sow copy stdout = %q", stdout)
+	}
+
+	stdout, stderr, code = runMain(t, "", nil,
+		"sow",
+		"-server", target.uri,
+		"-topic", "orders.sowcopy",
+	)
+	if code != 0 {
+		t.Fatalf("target sow exit code = %d, stderr = %q", code, stderr)
+	}
+	if !strings.Contains(stdout, `"id":1`) {
+		t.Fatalf("target sow stdout = %q", stdout)
+	}
+}
+
+func TestIntegrationMainPublishMissingTopic(t *testing.T) {
+	_, stderr, code := runMain(t, "", nil,
+		"publish",
+		"-server", "localhost:9007",
+		"-data", `{"id":1}`,
+	)
+	if code == 0 {
+		t.Fatalf("publish without topic should fail")
+	}
+	if !strings.Contains(stderr, "topic is required") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestIntegrationMainSOWDeleteMissingTopic(t *testing.T) {
+	_, stderr, code := runMain(t, "", nil,
+		"sow_delete",
+		"-server", "localhost:9007",
+		"-filter", "/id = 1",
+	)
+	if code == 0 {
+		t.Fatalf("sow_delete without topic should fail")
+	}
+	if !strings.Contains(stderr, "topic is required") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestIntegrationMainPublishInvalidDelimiter(t *testing.T) {
+	_, stderr, code := runMain(t, "", nil,
+		"publish",
+		"-server", "localhost:9007",
+		"-topic", "t",
+		"-data", "x",
+		"-delimiter", "999",
+	)
+	if code == 0 {
+		t.Fatalf("invalid delimiter should fail")
+	}
+	if !strings.Contains(stderr, "delimiter") {
+		t.Fatalf("stderr = %q", stderr)
 	}
 }

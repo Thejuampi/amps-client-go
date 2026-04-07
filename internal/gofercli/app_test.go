@@ -3,6 +3,7 @@ package gofercli
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -247,5 +248,222 @@ func TestHelpTextMatchesGolden(t *testing.T) {
 	}
 	if got := normalizeGoldenText(commandHelpText("publish")); got != normalizeGoldenText(string(publishHelp)) {
 		t.Fatalf("publish help mismatch\n--- got ---\n%s\n--- want ---\n%s", got, string(publishHelp))
+	}
+}
+
+func TestRunWithEmptyArgsWritesHelpToStderr(t *testing.T) {
+	var stderr bytes.Buffer
+	var app = &App{
+		Stdout: io.Discard,
+		Stderr: &stderr,
+		Now:    time.Now,
+		Sleep:  time.Sleep,
+	}
+	var code = app.Run(nil)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "spark-compatible") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestFormatRateNormalCalculation(t *testing.T) {
+	if got := formatRate(5, 0); got != "Infinity" {
+		t.Fatalf("formatRate(5,0) = %q, want Infinity", got)
+	}
+	if got := formatRate(5, time.Second); got != "5.000" {
+		t.Fatalf("formatRate(5,1s) = %q, want 5.000", got)
+	}
+}
+
+func TestHandleStreamingControlMessageNilAndNonAck(t *testing.T) {
+	var failures = make(chan error, 1)
+	var done = make(chan struct{}, 1)
+
+	if handleStreamingControlMessage(nil, failures, done) {
+		t.Fatalf("nil message should return false")
+	}
+
+	var publishMsg = amps.NewCommand("publish").SetData([]byte("{}")).GetMessage()
+	if handleStreamingControlMessage(publishMsg, failures, done) {
+		t.Fatalf("non-ack message should return false")
+	}
+}
+
+func TestHandleStreamingControlMessageCleanAck(t *testing.T) {
+	var failures = make(chan error, 1)
+	var done = make(chan struct{}, 1)
+
+	var ackMsg = amps.NewCommand("ack").GetMessage()
+
+	if !handleStreamingControlMessage(ackMsg, failures, done) {
+		t.Fatalf("ack message should return true")
+	}
+	select {
+	case <-failures:
+		t.Fatalf("clean ack should not signal failure")
+	case <-done:
+		t.Fatalf("clean ack should not signal done")
+	default:
+	}
+}
+
+func TestEmitMessageWithCopierSuccess(t *testing.T) {
+	var stdout bytes.Buffer
+	var app = &App{
+		Stdout: &stdout,
+		Now:    time.Now,
+		Sleep:  time.Sleep,
+	}
+
+	var broker = startBroker(t)
+	var copyClient, _, connectErr = connectClient(connectionOptions{Server: broker.uri, Timeout: defaultTimeout}, nil, time.Now)
+	if connectErr != nil {
+		t.Fatalf("connectClient: %v", connectErr)
+	}
+	var copier = &copyPublisher{client: copyClient}
+
+	var message = amps.NewCommand("publish").SetTopic("orders.emit").SetData([]byte(`{"id":1}`)).GetMessage()
+	if err := app.emitMessage(message, "", copier); err != nil {
+		t.Fatalf("emitMessage returned error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `{"id":1}`) {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestSelectDeleteModeNoMode(t *testing.T) {
+	if _, err := selectDeleteMode(deleteModeOptions{}); err == nil {
+		t.Fatalf("expected no-mode error")
+	}
+}
+
+func TestParseStreamArgsParserError(t *testing.T) {
+	if _, err := parseStreamArgs("subscribe", []string{"-topic", "x", "unexpected_positional"}); err == nil {
+		t.Fatalf("expected parser error for positional arg")
+	}
+}
+
+func TestParseStreamArgsMissingTopic(t *testing.T) {
+	if _, err := parseStreamArgs("subscribe", []string{"-server", "localhost:9007"}); err == nil {
+		t.Fatalf("expected missing topic error")
+	}
+}
+
+func TestBuildStreamCommandDeltaSubscribe(t *testing.T) {
+	var command = buildStreamCommand("subscribe", streamConfig{Topic: "t", Delta: true})
+	var name, _ = command.Command()
+	if name != "delta_subscribe" {
+		t.Fatalf("command = %q, want delta_subscribe", name)
+	}
+}
+
+func TestConnectClientInvalidAuthenticator(t *testing.T) {
+	_, _, err := connectClient(connectionOptions{
+		Server:        "localhost:9007",
+		Authenticator: "com.example.InvalidFactory",
+		Timeout:       defaultTimeout,
+	}, nil, time.Now)
+	if err == nil {
+		t.Fatalf("expected invalid authenticator error")
+	}
+}
+
+func TestConnectClientTLSError(t *testing.T) {
+	_, _, err := connectClient(connectionOptions{
+		Server:  "localhost:9007",
+		Timeout: defaultTimeout,
+	}, []string{"AMPS_SPARK_OPTS=-Djavax.net.ssl.trustStore=nonexistent.pem"}, time.Now)
+	if err == nil {
+		t.Fatalf("expected TLS config error for missing trust store")
+	}
+}
+
+func TestConnectClientZeroTimeout(t *testing.T) {
+	_, _, err := connectClient(connectionOptions{
+		Server:  "localhost:9007",
+		Timeout: 0,
+	}, nil, time.Now)
+	if err == nil {
+		t.Fatalf("expected connection refused error")
+	}
+}
+
+func TestConnectClientUnsupportedScheme(t *testing.T) {
+	_, _, err := connectClient(connectionOptions{
+		Server:    "ws://localhost:9007/amps/json",
+		Timeout:   defaultTimeout,
+		URIScheme: "ws",
+	}, nil, time.Now)
+	if err == nil {
+		t.Fatalf("expected unsupported scheme error")
+	}
+}
+
+func TestEmitMessageStdoutWriteError(t *testing.T) {
+	var app = &App{
+		Stdout: &failingWriter{},
+		Now:    time.Now,
+		Sleep:  time.Sleep,
+	}
+	var message = amps.NewCommand("publish").SetTopic("t").SetData([]byte("{}")).GetMessage()
+	if err := app.emitMessage(message, "", nil); err == nil {
+		t.Fatalf("expected stdout write error")
+	}
+}
+
+func TestEmitMessageCopyPublishError(t *testing.T) {
+	var app = &App{
+		Stdout: io.Discard,
+		Now:    time.Now,
+		Sleep:  time.Sleep,
+	}
+	var copier = &copyPublisher{client: amps.NewClient("emit-copy-fail")}
+	var message = amps.NewCommand("publish").SetTopic("t").SetData([]byte("{}")).GetMessage()
+	if err := app.emitMessage(message, "", copier); err == nil {
+		t.Fatalf("expected copy publish error from disconnected client")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestVersionFlag(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	var app = &App{
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Now:   time.Now,
+		Sleep: time.Sleep,
+	}
+	var code = app.Run([]string{"--version"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), version) {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestVersionFlagShort(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	var app = &App{
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Now:   time.Now,
+		Sleep: time.Sleep,
+	}
+	var code = app.Run([]string{"-version"})
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), version) {
+		t.Fatalf("stdout = %q", stdout.String())
 	}
 }

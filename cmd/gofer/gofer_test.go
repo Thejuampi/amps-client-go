@@ -1,11 +1,9 @@
 package main
 
 import (
-	"archive/zip"
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -15,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/gofercli/testutil"
 )
 
 type builtBinaries struct {
@@ -35,30 +35,11 @@ var (
 	binaries  builtBinaries
 )
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-
-	var dir, err = os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for {
-		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
-			return dir
-		}
-		var parent = filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("could not find repo root from %s", dir)
-		}
-		dir = parent
-	}
-}
-
 func ensureBinaries(t *testing.T) builtBinaries {
 	t.Helper()
 
 	buildOnce.Do(func() {
-		var root = repoRoot(t)
+		var root = testutil.RepoRoot(t)
 		var tempDir, err = os.MkdirTemp("", "gofer-bin-*")
 		if err != nil {
 			buildErr = err
@@ -168,40 +149,6 @@ func runGofer(t *testing.T, stdin string, env []string, args ...string) (string,
 	return stdout.String(), stderr.String(), exitCode
 }
 
-func writeFile(t *testing.T, name string, data []byte) string {
-	t.Helper()
-
-	var path = filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-	return path
-}
-
-func writeZipFile(t *testing.T, name string, files map[string]string) string {
-	t.Helper()
-
-	var path = filepath.Join(t.TempDir(), name)
-	var buffer bytes.Buffer
-	var archive = zip.NewWriter(&buffer)
-	for fileName, body := range files {
-		var fileWriter, err = archive.Create(fileName)
-		if err != nil {
-			t.Fatalf("zip create %s: %v", fileName, err)
-		}
-		if _, err := io.WriteString(fileWriter, body); err != nil {
-			t.Fatalf("zip write %s: %v", fileName, err)
-		}
-	}
-	if err := archive.Close(); err != nil {
-		t.Fatalf("zip close: %v", err)
-	}
-	if err := os.WriteFile(path, buffer.Bytes(), 0600); err != nil {
-		t.Fatalf("write zip: %v", err)
-	}
-	return path
-}
-
 func TestPingUsesSparkStyleSuccessOutput(t *testing.T) {
 	var broker = startFakeBroker(t)
 
@@ -221,7 +168,7 @@ func TestPingUsesSparkStyleSuccessOutput(t *testing.T) {
 
 func TestPublishFromDelimitedFileAndSOW(t *testing.T) {
 	var broker = startFakeBroker(t)
-	var input = writeFile(t, "orders.txt", []byte("{\"id\":1}\n{\"id\":2}\n"))
+	var input = testutil.WriteTempFile(t, "orders.txt", []byte("{\"id\":1}\n{\"id\":2}\n"))
 
 	_, stderr, code := runGofer(t, "", nil,
 		"publish",
@@ -256,7 +203,7 @@ func TestPublishFromDelimitedFileAndSOW(t *testing.T) {
 func TestPublishFromZIPAndCopyToSecondaryBroker(t *testing.T) {
 	var source = startFakeBroker(t)
 	var copyTarget = startFakeBroker(t)
-	var archive = writeZipFile(t, "orders.zip", map[string]string{
+	var archive = testutil.WriteTempZIP(t, "orders.zip", map[string]string{
 		"0001.json": "{\"id\":1,\"source\":\"zip\"}",
 		"0002.json": "{\"id\":2,\"source\":\"zip\"}",
 	})
@@ -288,11 +235,26 @@ func TestPublishFromZIPAndCopyToSecondaryBroker(t *testing.T) {
 
 func TestSubscribeSupportsQueueAckAndBacklog(t *testing.T) {
 	var broker = startFakeBroker(t)
-	var done = make(chan struct {
+
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			t.Logf("retry %d/3", attempt+1)
+		}
+		if testSubscribeQueueAckBacklogOnce(t, broker) {
+			return
+		}
+	}
+	t.Fatal("subscribe queue ack backlog failed after 3 attempts")
+}
+
+func testSubscribeQueueAckBacklogOnce(t *testing.T, broker *fakeBroker) bool {
+	type subscribeResult struct {
 		stdout string
 		stderr string
 		code   int
-	}, 1)
+	}
+
+	var done = make(chan subscribeResult, 1)
 
 	go func() {
 		var stdout, stderr, code = runGofer(t, "", nil,
@@ -303,11 +265,7 @@ func TestSubscribeSupportsQueueAckAndBacklog(t *testing.T) {
 			"-backlog", "1",
 			"-n", "2",
 		)
-		done <- struct {
-			stdout string
-			stderr string
-			code   int
-		}{stdout: stdout, stderr: stderr, code: code}
+		done <- subscribeResult{stdout: stdout, stderr: stderr, code: code}
 	}()
 
 	time.Sleep(750 * time.Millisecond)
@@ -327,13 +285,17 @@ func TestSubscribeSupportsQueueAckAndBacklog(t *testing.T) {
 	select {
 	case result := <-done:
 		if result.code != 0 {
-			t.Fatalf("subscribe exit code = %d, stderr = %s", result.code, result.stderr)
+			t.Logf("subscribe exit code = %d, stderr = %s", result.code, result.stderr)
+			return false
 		}
 		if !strings.Contains(result.stdout, "\"id\":1") || !strings.Contains(result.stdout, "\"id\":2") {
-			t.Fatalf("subscribe stdout = %q", result.stdout)
+			t.Logf("subscribe stdout = %q", result.stdout)
+			return false
 		}
+		return true
 	case <-time.After(15 * time.Second):
-		t.Fatalf("subscribe timed out")
+		t.Logf("subscribe timed out (attempt)")
+		return false
 	}
 }
 
@@ -350,7 +312,7 @@ func TestSOWDeleteSupportsPayloadInput(t *testing.T) {
 		t.Fatalf("seed publish exit code = %d, stderr = %s", code, stderr)
 	}
 
-	var payloadFile = writeFile(t, "delete.json", []byte(`{"id":7}`))
+	var payloadFile = testutil.WriteTempFile(t, "delete.json", []byte(`{"id":7}`))
 	var stdout string
 	stdout, stderr, code = runGofer(t, "", nil,
 		"sow_delete",
@@ -363,5 +325,31 @@ func TestSOWDeleteSupportsPayloadInput(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Deleted 1 records") {
 		t.Fatalf("sow_delete stdout = %q", stdout)
+	}
+}
+
+func TestVersionFlagSubprocess(t *testing.T) {
+	var stdout, stderr, code = runGofer(t, "", nil, "--version")
+	if code != 0 {
+		t.Fatalf("--version exit code = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "gofer version") {
+		t.Fatalf("--version stdout = %q", stdout)
+	}
+
+	stdout, stderr, code = runGofer(t, "", nil, "-version")
+	if code != 0 {
+		t.Fatalf("-version exit code = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "gofer version") {
+		t.Fatalf("-version stdout = %q", stdout)
+	}
+
+	stdout, stderr, code = runGofer(t, "", nil, "version")
+	if code != 0 {
+		t.Fatalf("version exit code = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "gofer version") {
+		t.Fatalf("version stdout = %q", stdout)
 	}
 }

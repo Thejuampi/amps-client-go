@@ -9,6 +9,7 @@ GOVULNCHECK_VERSION ?= v1.1.4
 COVERPROFILE ?= $(abspath coverage.out)
 RELEASE_VERSION ?=
 RELEASE_FLAGS ?=
+GOFER_LDFLAGS ?= -ldflags "-X github.com/Thejuampi/amps-client-go/internal/gofercli.version=$(VERSION)"
 
 ifeq ($(OS),Windows_NT)
 POWERSHELL ?= powershell
@@ -22,11 +23,12 @@ else \
 fi
 endif
 
-.PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted release-local release-dry-run
+.PHONY: help build gofer test test-race integration-test integration-fakeamps install fmt vet static-scan vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted release-local release-dry-run
 
 help:
 	@echo Available targets:
 	@echo   make build            Build all packages
+	@echo   make gofer            Build gofer binary with version ldflags
 	@echo   make test             Run unit tests
 	@echo   make test-race        Run tests with race detector
 	@echo   make integration-test Run integration tests only (-run Integration)
@@ -47,6 +49,9 @@ help:
 
 build:
 	$(GO) build $(GOFLAGS) $(PKG)
+
+gofer:
+	$(GO) build $(GOFLAGS) $(GOFER_LDFLAGS) ./cmd/gofer
 
 test:
 	$(GO) test $(GOFLAGS) $(PKG) -skip Integration

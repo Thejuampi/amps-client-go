@@ -30,9 +30,30 @@ Copilot-specific rules:
 ## Non-Negotiable Engineering Principles
 - TDD is mandatory for every request.
 - Always do `RED -> GREEN -> REFACTOR`.
+- Mutation thinking is mandatory from the start of every task.
 - Always follow `KISS`, `DRY`, `SOLID`, and `YAGNI`.
 - Every behavior change requires tests, even tiny ones.
 - Example: timeout `1 -> 2` must have tests for both `1` and `2`.
+
+## Mutation-First Development Policy
+- Mutation testing is not a final optional check. It is part of ideation, planning, implementation, testing, review, and refinement.
+- During idea/planning:
+  - list the critical branches, invariants, boundaries, and failure paths that could be inverted, removed, or bypassed.
+  - identify what assertions would fail if each branch were mutated.
+- During RED:
+  - write tests that would fail if conditions are flipped, guard clauses are removed, counters are off by one, or error paths are skipped.
+  - prefer assertions on exact observable behavior, not just “no error”.
+- During GREEN:
+  - implement the smallest code that satisfies both the functional requirement and the mutation-resistant tests.
+- During REFACTOR:
+  - preserve mutation resistance; if a refactor weakens branch sensitivity, strengthen tests immediately.
+- During review:
+  - explicitly ask: “If I delete this branch or invert this condition, which test fails?”
+  - if the answer is unclear, tests are incomplete.
+- Before completion:
+  - perform manual mutation thinking on changed code.
+  - spot-check by mentally or actually applying a few realistic mutations to confirm tests kill them.
+- Never treat line coverage as sufficient evidence of test quality.
 
 ## Build, Lint, and Test Commands
 Preferred Make targets:
@@ -109,13 +130,16 @@ Mutation requirements:
 - Mutation testing is mandatory in practice.
 - If tests still pass after random logic changes, tests are not strong enough.
 - For every critical branch, add assertions that fail when logic is inverted/removed.
+- For every changed branch, reviewers and agents must be able to name the test that kills its most likely mutation.
+- Target mindset: tests should fail for deleted guards, inverted booleans, wrong comparison operators, missing side effects, missing error propagation, and off-by-one logic.
 
 ## Required TDD Workflow
 1. RED: write/adjust failing tests first.
 2. GREEN: implement minimal code to pass.
 3. REFACTOR: improve design while keeping tests green.
-4. Re-run focused tests, then package tests, then `go test ./...`.
-5. Re-check coverage for changed packages.
+4. Mutation review: identify likely mutations in the changed code and ensure tests kill them.
+5. Re-run focused tests, then package tests, then `go test ./...`.
+6. Re-check coverage for changed packages.
 Never skip RED.
 
 ## Code Style and Conventions
@@ -165,6 +189,8 @@ Never skip RED.
 ## Agent Completion Checklist
 - RED test added and verified failing.
 - GREEN implementation added and tests passing.
+- Mutation resistance reviewed for all changed logic.
+- At least a few likely mutations spot-checked on non-trivial changes.
 - `make static-scan` run.
 - Focused tests run.
 - `go test ./...` run.

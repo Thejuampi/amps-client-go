@@ -12,5 +12,6 @@ Commands:
   sow               Query the State of the World for a topic
   sow_and_subscribe Query SOW, then continue streaming live updates
   sow_delete        Delete matching SOW records
+  version           Print version information
 
 Use "gofer help <command>" for command details.
