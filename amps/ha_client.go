@@ -69,21 +69,24 @@ func (ha *HAClient) handleDisconnect(err error) {
 		return
 	}
 
+	// CAS must happen BEFORE creating the context and storing reconnectCancel.
+	// Otherwise a failing CAS would overwrite the existing goroutine's cancel
+	// function, making it impossible to cancel the active reconnect loop.
+	if !ha.reconnecting.CompareAndSwap(false, true) {
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	ha.lock.Lock()
 	ha.reconnectCancel = cancel
 	ha.lock.Unlock()
 
-	if !ha.reconnecting.CompareAndSwap(false, true) {
-		cancel()
-		return
-	}
-
 	go func() {
 		defer func() {
 			ha.reconnecting.Store(false)
 			ha.lock.Lock()
+			cancel() // always cancel to avoid context/goroutine leak
 			ha.reconnectCancel = nil
 			ha.lock.Unlock()
 		}()
@@ -343,14 +346,9 @@ func (ha *HAClient) SetTimeout(timeout time.Duration) *HAClient {
 		timeout = 0
 	}
 	ha.lock.Lock()
-	if ha.timeout == timeout {
-		ha.lock.Unlock()
-		ha.timeoutNanos.Store(int64(timeout))
-		return ha
-	}
 	ha.timeout = timeout
-	ha.lock.Unlock()
 	ha.timeoutNanos.Store(int64(timeout))
+	ha.lock.Unlock()
 	return ha
 }
 
@@ -373,13 +371,13 @@ func (ha *HAClient) SetReconnectDelay(delay time.Duration) *HAClient {
 	ha.lock.Lock()
 	ha.reconnectDelay = delay
 	if fixed, ok := ha.reconnectDelayStrategy.(*FixedDelayStrategy); ok && fixed != nil && fixed.Delay == delay {
-		ha.lock.Unlock()
 		ha.reconnectDelayNanos.Store(int64(delay))
+		ha.lock.Unlock()
 		return ha
 	}
 	ha.reconnectDelayStrategy = NewFixedDelayStrategy(delay)
-	ha.lock.Unlock()
 	ha.reconnectDelayNanos.Store(int64(delay))
+	ha.lock.Unlock()
 	return ha
 }
 

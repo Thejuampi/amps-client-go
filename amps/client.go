@@ -243,6 +243,11 @@ const defaultStatsAckTimeout = 30 * time.Second
 var syncAckWarningInitialDelay = 250 * time.Millisecond
 var syncAckWarningMaxDelay = 5 * time.Second
 
+// unsafeStringFromBytes returns a string backed by the same memory as value.
+// SAFETY: the returned string must NOT be retained beyond the current call
+// scope. It is only safe for short-lived use such as sync.Map lookups in
+// onMessage. If the receive buffer is reused, the string's content becomes
+// invalid. This is a deliberate zero-allocation optimization for the hot path.
 func unsafeStringFromBytes(value []byte) string {
 	if len(value) == 0 {
 		return ""
@@ -521,6 +526,11 @@ func (client *Client) send(command *Command) (err error) {
 	return
 }
 
+// readRoutine runs in its own goroutine and exclusively owns:
+// - client.receiveBuffer, client.readPosition, client.receivePosition
+// - client.lengthBytes, client.message
+// No other goroutine reads or writes these fields while readRoutine is active.
+// The 'stopped' flag (atomic) and connection.Close() are the signals to exit.
 func (client *Client) readRoutine() {
 	if !client.connected.Load() {
 		return
@@ -1270,6 +1280,16 @@ func (client *Client) onConnectionError(err error) {
 
 	client.closeSyncAckProcessing()
 
+	// Stop heartbeat timer to prevent stale fires after disconnect.
+	// Disconnect() does the same cleanup; onConnectionError must too.
+	client.heartbeatLock.Lock()
+	if client.heartbeatTimeoutID != nil {
+		_ = client.heartbeatTimeoutID.Stop()
+		client.heartbeatTimeoutID = nil
+	}
+	client.heartbeatTimestamp.Store(0)
+	client.heartbeatLock.Unlock()
+
 	_ = client.clearRoutes()
 
 	client.onError(err)
@@ -1302,6 +1322,9 @@ func (client *Client) onHeartbeatAbsence() {
 	}
 }
 
+// establishHeartbeat sets up the heartbeat beat/ack route. If the route setup
+// fails, the route is left in place; clearRoutes() during disconnect will
+// remove it, so explicit per-failure cleanup is not needed.
 func (client *Client) establishHeartbeat() (hbError error) {
 	done := make(chan error, 1)
 	signalResult := func(err error) {
@@ -1408,6 +1431,7 @@ type LogonParams struct {
 func (client *Client) ClientName() string { return client.clientName }
 
 // SetClientName sets client name on the receiver.
+// Must be called before Connect; concurrent use with Logon is not safe.
 func (client *Client) SetClientName(clientName string) *Client {
 	if client == nil {
 		return nil
@@ -1421,6 +1445,7 @@ func (client *Client) SetClientName(clientName string) *Client {
 func (client *Client) ErrorHandler() func(error) { return client.errorHandler }
 
 // SetErrorHandler sets error handler on the receiver.
+// Must be called before Connect; not safe for concurrent use with readRoutine.
 func (client *Client) SetErrorHandler(errorHandler func(error)) *Client {
 	client.errorHandler = errorHandler
 	return client
@@ -1430,12 +1455,14 @@ func (client *Client) SetErrorHandler(errorHandler func(error)) *Client {
 func (client *Client) DisconnectHandler() func(*Client, error) { return client.disconnectHandler }
 
 // SetDisconnectHandler sets disconnect handler on the receiver.
+// Must be called before Connect; not safe for concurrent use with readRoutine.
 func (client *Client) SetDisconnectHandler(disconnectHandler func(*Client, error)) *Client {
 	client.disconnectHandler = disconnectHandler
 	return client
 }
 
 // SetTLSConfig sets tlsconfig on the receiver.
+// Must be called before Connect; not safe for concurrent use.
 func (client *Client) SetTLSConfig(config *tls.Config) *Client {
 	client.tlsConfig = config
 	return client
@@ -1470,6 +1497,9 @@ func (client *Client) SetHeartbeat(interval uint, providedTimeout ...uint) *Clie
 }
 
 // ServerVersion executes the exported serverversion operation.
+// The value is set during Logon (on the readRoutine goroutine) and is safe to
+// read after Logon returns, because the doneLoggingIn channel provides
+// the happens-before guarantee.
 func (client *Client) ServerVersion() string { return client.serverVersion }
 
 // Connect opens a transport connection to the provided AMPS URI.
@@ -2001,6 +2031,13 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	return client.executeAsync(command, messageHandler, true, nil)
 }
 
+// executeAsync sends a command to the AMPS server and optionally sets up a route
+// for processing responses.
+//
+// Lock ordering: client.lock is held during the sync-ack wait. The readRoutine
+// signals the sync-ack channel via ackProcessingLock (not client.lock), so there
+// is no deadlock between reader and sender. However, this serializes concurrent
+// senders; this matches the C++ client's single-connection-single-send design.
 func (client *Client) executeAsync(
 	command *Command,
 	messageHandler func(message *Message) error,
@@ -2514,6 +2551,8 @@ func (client *Client) Unsubscribe(subID ...string) error {
 }
 
 // Disconnect stops receive processing and closes the active connection.
+// Returns a DisconnectedError if the client is not currently connected.
+// This differs from HAClient.Disconnect which returns nil in the same case.
 func (client *Client) Disconnect() (err error) {
 	client.closeSyncAckProcessing()
 	client.lock.Lock()
@@ -2572,8 +2611,8 @@ func (client *Client) Disconnect() (err error) {
 	}
 	client.heartbeatLock.Unlock()
 
-	client.closeSyncAckProcessing()
 
+	// closeSyncAckProcessing already called at the top of Disconnect().
 	client.notifyConnectionState(ConnectionStateDisconnected)
 	forgetClientState(client)
 	return NewError(DisconnectedError, "Client is not Connected")

@@ -141,7 +141,7 @@ func (store *MemoryPublishStore) DiscardUpTo(sequence uint64) error {
 	defer store.lock.Unlock()
 
 	if store.errorOnPublishGap && sequence < store.lastPersisted {
-		return errors.New("publish store gap detected")
+		return NewError(CommandError, "publish store gap detected")
 	}
 
 	for key := range store.entries {
@@ -258,6 +258,8 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 }
 
 // GetLowestUnpersisted returns the current lowest unpersisted value.
+// Returns 0 when no entries are pending, which is unambiguous because valid
+// sequences start at 1 (nextSequence is initialized to 1).
 func (store *MemoryPublishStore) GetLowestUnpersisted() uint64 {
 	if store == nil {
 		return 0

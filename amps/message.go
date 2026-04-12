@@ -1176,6 +1176,10 @@ func (msg *Message) IsValid() bool {
 }
 
 // Replace replaces message contents with another message.
+// CONFLATION SAFETY: During conflation, Replace is called under the message
+// stream lock (ms.lock). Consumers call consumeConflateState which removes the
+// entry from sowKeyMap under the same lock before Read returns the message,
+// preventing concurrent Replace calls on a message already returned to the caller.
 func (msg *Message) Replace(other *Message) *Message {
 	if msg == nil || other == nil {
 		return msg

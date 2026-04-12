@@ -21,6 +21,10 @@ type DefaultSubscriptionManager struct {
 	resubscriptionTimeout    int
 }
 
+// trackedResumeGroup tracks a set of subscription IDs that share a resume command.
+// SAFETY: group.command is set once in subscribeResume under manager.lock and is
+// never mutated after creation. Concurrent reads from Resubscribe (after copying
+// the group pointer under RLock) are safe because the field is immutable.
 type trackedResumeGroup struct {
 	lock              sync.RWMutex
 	command           *Command
@@ -342,6 +346,7 @@ func (manager *DefaultSubscriptionManager) subscribePause(messageHandler func(*M
 		existing, exists := manager.subscriptions[id]
 		if exists && !replace {
 			var existingOptions, _ = existing.command.Options()
+			existing.command = cloneCommand(existing.command)
 			existing.command.SetOptions(prependCommandOption(existingOptions, "pause"))
 			existing.paused = true
 			manager.subscriptions[id] = existing
