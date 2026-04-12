@@ -553,6 +553,8 @@ func (client *Client) readRoutine() {
 	client.readPosition = 0
 	client.receivePosition = 0
 
+	var batchReceiveTime int64
+
 	for {
 		if client.stopped.Load() {
 			return
@@ -619,6 +621,7 @@ func (client *Client) readRoutine() {
 				}
 
 				count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
+				batchReceiveTime = time.Now().UnixNano()
 				client.receivePosition += count
 				if err != nil {
 					if client.connected.Load() {
@@ -640,6 +643,7 @@ func (client *Client) readRoutine() {
 				client.onConnectionError(NewError(ProtocolError, err))
 				return
 			}
+			client.message.rawTransmissionUnixNano = batchReceiveTime
 
 			if client.message.header.command == CommandSOW {
 				for len(left) > 0 {
@@ -702,7 +706,9 @@ func (client *Client) onMessage(message *Message) (err error) {
 	message.client = client
 	message.valid = true
 	message.rawTransmissionTime = ""
-	message.rawTransmissionUnixNano = time.Now().UnixNano()
+	if message.rawTransmissionUnixNano == 0 {
+		message.rawTransmissionUnixNano = time.Now().UnixNano()
+	}
 
 	command := message.header.command
 	queryIDBytes := message.header.queryID
