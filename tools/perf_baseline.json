@@ -14,11 +14,11 @@
       "allocs_op": 0.0
     },
     "BenchmarkRouteHotSingle": {
-      "ns_op": 27.2,
+      "ns_op": 35.0,
       "allocs_op": 0.0
     },
     "BenchmarkRouteHotMultiSIDs": {
-      "ns_op": 64.8,
+      "ns_op": 80.0,
       "allocs_op": 0.0
     },
     "BenchmarkReadHotFrameDecodeDispatch": {
