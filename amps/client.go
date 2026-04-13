@@ -20,7 +20,7 @@ import (
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.8.13"
+	ClientVersion = "0.8.14"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
@@ -574,6 +574,7 @@ func (client *Client) readRoutine() {
 			}
 
 			count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
+			batchReceiveTime = time.Now().UnixNano()
 			client.receivePosition += count
 			if err != nil {
 				if client.connected.Load() {
@@ -2616,7 +2617,6 @@ func (client *Client) Disconnect() (err error) {
 		client.heartbeatTimeoutID = nil
 	}
 	client.heartbeatLock.Unlock()
-
 
 	// closeSyncAckProcessing already called at the top of Disconnect().
 	client.notifyConnectionState(ConnectionStateDisconnected)
