@@ -127,14 +127,6 @@ func (store *MemoryBookmarkStore) computeMostRecentLocked(subID string) string {
 	return strings.Join(parts, ",")
 }
 
-func (store *MemoryBookmarkStore) getMostRecent(subID string) string {
-	if store.dirty[subID] {
-		store.mostRecent[subID] = store.computeMostRecentLocked(subID)
-		delete(store.dirty, subID)
-	}
-	return store.mostRecent[subID]
-}
-
 // Log executes the exported log operation.
 func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 	if store == nil {

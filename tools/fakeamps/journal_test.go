@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/binary"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -122,4 +124,163 @@ func TestDiskJournalPersistence(t *testing.T) {
 		t.Fatalf("expected entries to be loaded from disk at %s", filepath.Join(dir, "journal.dat"))
 	}
 	loaded.Close()
+}
+
+func TestDiskJournalPartialInitDoesNotPanicOnWrite(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create the journal file so initDisk opens it, then make the sequence
+	// file path a directory so the second OpenFile fails.
+	seqPath := filepath.Join(dir, "sequence.dat")
+	if err := os.MkdirAll(seqPath, 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	j := newDiskJournal(10, dir)
+
+	// diskSeqFile must be nil after partial init failure.
+	if j.diskSeqFile != nil {
+		t.Fatal("expected diskSeqFile to be nil after partial init failure")
+	}
+
+	// diskWriter must be nil so writeToDisk no-ops instead of panicking.
+	if j.diskWriter != nil {
+		t.Fatal("expected diskWriter to be nil after partial init failure")
+	}
+
+	// Append must not panic even though disk persistence partially failed.
+	j.append("orders", "k1", []byte(`{"id":1}`))
+
+	entries := j.replayFrom("orders", 0)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 in-memory entry, got %d", len(entries))
+	}
+	j.Close()
+}
+
+func TestDiskJournalLoadCorruptedRecordDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+
+	journalFile := filepath.Join(dir, "journal.dat")
+
+	// Write a valid record first, then a corrupted one.
+	f, err := os.Create(journalFile)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// --- Valid record ---
+	topic := "orders"
+	sowKey := "k1"
+	timestamp := "2024-01-01T00:00:00Z"
+	payload := []byte(`{"id":1}`)
+	validRecSize := 2 + len(topic) + 2 + len(sowKey) + 2 + len(timestamp) + 8 + 4 + len(payload)
+
+	var buf []byte
+	// Record length prefix.
+	lenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lenBuf, uint32(validRecSize))
+	buf = append(buf, lenBuf...)
+
+	// Topic.
+	fieldBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(fieldBuf, uint16(len(topic)))
+	buf = append(buf, fieldBuf...)
+	buf = append(buf, topic...)
+
+	// SowKey.
+	binary.BigEndian.PutUint16(fieldBuf, uint16(len(sowKey)))
+	buf = append(buf, fieldBuf...)
+	buf = append(buf, sowKey...)
+
+	// Timestamp.
+	binary.BigEndian.PutUint16(fieldBuf, uint16(len(timestamp)))
+	buf = append(buf, fieldBuf...)
+	buf = append(buf, timestamp...)
+
+	// SeqNum.
+	seqBuf := make([]byte, 8)
+	binary.BigEndian.PutUint64(seqBuf, 1)
+	buf = append(buf, seqBuf...)
+
+	// Payload.
+	payloadLenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(payloadLenBuf, uint32(len(payload)))
+	buf = append(buf, payloadLenBuf...)
+	buf = append(buf, payload...)
+
+	// --- Corrupted record: recLen says 100 bytes but only 5 bytes follow ---
+	binary.BigEndian.PutUint32(lenBuf, 100)
+	buf = append(buf, lenBuf...)
+	buf = append(buf, []byte{0x00, 0xFF, 0x00, 0xFF, 0x00}...)
+
+	if _, err := f.Write(buf); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f.Close()
+
+	// Create sequence file so init succeeds fully.
+	seqFile := filepath.Join(dir, "sequence.dat")
+	sf, err := os.Create(seqFile)
+	if err != nil {
+		t.Fatalf("create seq: %v", err)
+	}
+	sf.Close()
+
+	// Loading must not panic — the valid record should be loaded, the
+	// corrupted one skipped.
+	j := newDiskJournal(10, dir)
+	entries := j.replayFrom("orders", 0)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 valid entry loaded, got %d", len(entries))
+	}
+	j.Close()
+}
+
+func TestDiskJournalLoadTruncatedFieldDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+
+	journalFile := filepath.Join(dir, "journal.dat")
+	f, err := os.Create(journalFile)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Write a record whose recLen matches the buffer size, but the
+	// encoded field lengths inside exceed the buffer. This exercises
+	// the bounds-check path within the record parsing loop.
+	// Record: topicLen=2 "ab" + sowKeyLen=9999 (exceeds buffer)
+	recBuf := make([]byte, 10)
+	binary.BigEndian.PutUint16(recBuf[0:2], 2) // topicLen = 2
+	recBuf[2] = 'a'
+	recBuf[3] = 'b'
+	binary.BigEndian.PutUint16(recBuf[4:6], 9999) // sowKeyLen = 9999 (overflow)
+	// remaining bytes are garbage
+
+	lenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lenBuf, uint32(len(recBuf)))
+
+	if _, err := f.Write(lenBuf); err != nil {
+		t.Fatalf("write len: %v", err)
+	}
+	if _, err := f.Write(recBuf); err != nil {
+		t.Fatalf("write rec: %v", err)
+	}
+	f.Close()
+
+	// Create sequence file.
+	seqFile := filepath.Join(dir, "sequence.dat")
+	sf, err := os.Create(seqFile)
+	if err != nil {
+		t.Fatalf("create seq: %v", err)
+	}
+	sf.Close()
+
+	// Must not panic. Zero entries should be loaded.
+	j := newDiskJournal(10, dir)
+	entries := j.replayFrom("orders", 0)
+	if len(entries) != 0 {
+		t.Fatalf("expected 0 entries from corrupted journal, got %d", len(entries))
+	}
+	j.Close()
 }
