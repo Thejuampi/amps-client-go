@@ -101,6 +101,9 @@ func (j *messageJournal) initDisk() {
 	sf, err := os.OpenFile(seqFile, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		log.Printf("fakeamps: journal disk init: seq file failed: %v", err)
+		_ = f.Close()
+		j.diskFile = nil
+		j.diskWriter = nil
 		return
 	}
 	j.diskSeqFile = sf
@@ -155,34 +158,71 @@ func (j *messageJournal) loadFromDisk() {
 
 		// Parse: topicLen(2) + topic + sowKeyLen(2) + sowKey + timestampLen(2) + timestamp + seqNum(8) + payloadLen(4) + payload
 		pos := 0
+		n := len(recBuf)
 
 		// Topic.
-		topicLen := binary.BigEndian.Uint16(recBuf[pos : pos+2])
+		if pos+2 > n {
+			log.Printf("fakeamps: journal load: record truncated at topic length")
+			break
+		}
+		topicLen := int(binary.BigEndian.Uint16(recBuf[pos : pos+2]))
 		pos += 2
-		topic := string(recBuf[pos : pos+int(topicLen)])
-		pos += int(topicLen)
+		if pos+topicLen > n {
+			log.Printf("fakeamps: journal load: record truncated at topic data")
+			break
+		}
+		topic := string(recBuf[pos : pos+topicLen])
+		pos += topicLen
 
 		// SowKey.
-		sowKeyLen := binary.BigEndian.Uint16(recBuf[pos : pos+2])
+		if pos+2 > n {
+			log.Printf("fakeamps: journal load: record truncated at sowKey length")
+			break
+		}
+		sowKeyLen := int(binary.BigEndian.Uint16(recBuf[pos : pos+2]))
 		pos += 2
-		sowKey := string(recBuf[pos : pos+int(sowKeyLen)])
-		pos += int(sowKeyLen)
+		if pos+sowKeyLen > n {
+			log.Printf("fakeamps: journal load: record truncated at sowKey data")
+			break
+		}
+		sowKey := string(recBuf[pos : pos+sowKeyLen])
+		pos += sowKeyLen
 
 		// Timestamp.
-		tsLen := binary.BigEndian.Uint16(recBuf[pos : pos+2])
+		if pos+2 > n {
+			log.Printf("fakeamps: journal load: record truncated at timestamp length")
+			break
+		}
+		tsLen := int(binary.BigEndian.Uint16(recBuf[pos : pos+2]))
 		pos += 2
-		timestamp := string(recBuf[pos : pos+int(tsLen)])
-		pos += int(tsLen)
+		if pos+tsLen > n {
+			log.Printf("fakeamps: journal load: record truncated at timestamp data")
+			break
+		}
+		timestamp := string(recBuf[pos : pos+tsLen])
+		pos += tsLen
 
 		// SeqNum.
+		if pos+8 > n {
+			log.Printf("fakeamps: journal load: record truncated at seqNum")
+			break
+		}
 		seqNum := binary.BigEndian.Uint64(recBuf[pos : pos+8])
 		pos += 8
 
 		// Payload.
-		payloadLen := binary.BigEndian.Uint32(recBuf[pos : pos+4])
+		if pos+4 > n {
+			log.Printf("fakeamps: journal load: record truncated at payload length")
+			break
+		}
+		payloadLen := int(binary.BigEndian.Uint32(recBuf[pos : pos+4]))
 		pos += 4
+		if pos+payloadLen > n {
+			log.Printf("fakeamps: journal load: record truncated at payload data")
+			break
+		}
 		payload := make([]byte, payloadLen)
-		copy(payload, recBuf[pos:pos+int(payloadLen)])
+		copy(payload, recBuf[pos:pos+payloadLen])
 
 		// Add to in-memory ring buffer.
 		bookmark := makeBookmark(seqNum)
