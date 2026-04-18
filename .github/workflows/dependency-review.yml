@@ -16,7 +16,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Check dependency review support
+        id: support
+        continue-on-error: true
+        uses: actions/github-script@v8
+        with:
+          script: |
+            try {
+              const repo = await github.rest.repos.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              const status = repo.data.security_and_analysis?.dependency_graph?.status;
+              const supported = status === 'enabled';
+              core.setOutput('supported', supported ? 'true' : 'false');
+              if (!supported) {
+                core.warning(`Skipping dependency review because dependency graph is ${status || 'unavailable'}.`);
+              }
+            } catch (error) {
+              core.warning(`Skipping dependency review because repository security settings are unavailable: ${error.message}`);
+              core.setOutput('supported', 'false');
+            }
+
       - name: Dependency review
+        if: steps.support.outputs.supported == 'true'
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: moderate

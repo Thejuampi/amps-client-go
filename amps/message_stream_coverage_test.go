@@ -46,12 +46,6 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	if stream.Timeout() != 123 || stream.MaxDepth() != 9 {
 		t.Fatalf("unexpected timeout/max depth")
 	}
-	if got := clampMessageStreamTimeoutMillis(maxMessageStreamTimeoutMillis); got != maxMessageStreamTimeoutMillis {
-		t.Fatalf("expected timeout clamp helper to preserve boundary, got %d", got)
-	}
-	if got := clampMessageStreamTimeoutMillis(maxMessageStreamTimeoutMillis + 1); got != maxMessageStreamTimeoutMillis {
-		t.Fatalf("expected timeout clamp helper to cap oversized timeout, got %d", got)
-	}
 	resultStream := newMessageStream(nil)
 	message := &Message{header: &_Header{command: CommandPublish}, data: []byte("helper")}
 	if !resultStream.handleWaitDequeueTimeoutResult(message, true) {
@@ -59,6 +53,55 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	}
 	if resultStream.current != message {
 		t.Fatalf("expected wait-dequeue helper to set current message")
+	}
+	waitingStream := newMessageStream(nil)
+	waitingStream.SetTimeout(1)
+	waitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("waiting")}
+	waitingStream.queue.enqueue(waitingMessage)
+	if !waitingStream.waitForNextWithTimeout() {
+		t.Fatalf("expected timeout wait helper to dequeue preloaded message")
+	}
+	if waitingStream.current != waitingMessage {
+		t.Fatalf("expected timeout wait helper to set current message")
+	}
+	saturatingWaitingStream := newMessageStream(nil)
+	saturatingWaitingStream.SetTimeout(maxMessageStreamTimeoutMillis + 1)
+	saturatingWaitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("saturating-wait")}
+	saturatingWaitingStream.queue.enqueue(saturatingWaitingMessage)
+	if !saturatingWaitingStream.waitForNextWithTimeout() {
+		t.Fatalf("expected oversized timeout wait helper to dequeue preloaded message")
+	}
+	if saturatingWaitingStream.current != saturatingWaitingMessage {
+		t.Fatalf("expected oversized timeout wait helper to set current message")
+	}
+	readingStream := newMessageStream(nil)
+	readingStream.setState(messageStreamStateReading)
+	readingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("reading")}
+	readingStream.queue.enqueue(readingMessage)
+	if !readingStream.HasNext() {
+		t.Fatalf("expected HasNext to dequeue message with zero timeout")
+	}
+	if readingStream.current != readingMessage {
+		t.Fatalf("expected HasNext to set current message for zero-timeout reading")
+	}
+	timedReadingStream := newMessageStream(nil)
+	timedReadingStream.SetTimeout(1)
+	timedReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("timed-reading")}
+	timedReadingStream.queue.enqueue(timedReadingMessage)
+	if !timedReadingStream.waitForNextWithTimeout() {
+		t.Fatalf("expected timeout wait helper to dequeue message with timeout configured")
+	}
+	if timedReadingStream.current != timedReadingMessage {
+		t.Fatalf("expected timeout wait helper to set current message")
+	}
+	closedReadingStream := newMessageStream(nil)
+	closedReadingStream.setState(messageStreamStateReading)
+	closedReadingStream.queue.close()
+	if closedReadingStream.HasNext() {
+		t.Fatalf("expected HasNext to return false for a closed empty reading stream")
+	}
+	if closedReadingStream.timedOut.Load() {
+		t.Fatalf("expected closed zero-timeout read to avoid timedOut state")
 	}
 	stream.setState(messageStreamStateDisconnected)
 	if stream.state == messageStreamStateDisconnected {
@@ -393,6 +436,7 @@ func TestMessageStreamHasNextDrainsQueuedMessagesAfterComplete(t *testing.T) {
 }
 
 func TestMessageQueueCoverage(t *testing.T) {
+	resizeQueueFn := (*_MessageQueue).resize
 	queue := newQueue(1)
 	if queue.length() != 0 {
 		t.Fatalf("expected empty queue")
@@ -400,6 +444,19 @@ func TestMessageQueueCoverage(t *testing.T) {
 
 	message1 := &Message{header: &_Header{command: CommandPublish}, data: []byte("1")}
 	message2 := &Message{header: &_Header{command: CommandPublish}, data: []byte("2")}
+	resizeQueue := newQueue(2)
+	resizeQueue.enqueue(message1)
+	resizeQueue.enqueue(message2)
+	resizeQueueFn(resizeQueue)
+	if resizeQueue.capacity != 4 || resizeQueue.length() != 2 {
+		t.Fatalf("expected direct resize to preserve entries and double capacity, got capacity=%d length=%d", resizeQueue.capacity, resizeQueue.length())
+	}
+	if message, err := resizeQueue.dequeue(); err != nil || string(message.Data()) != "1" {
+		t.Fatalf("unexpected first direct-resize dequeue result: msg=%v err=%v", message, err)
+	}
+	if message, err := resizeQueue.dequeue(); err != nil || string(message.Data()) != "2" {
+		t.Fatalf("unexpected second direct-resize dequeue result: msg=%v err=%v", message, err)
+	}
 	queue.enqueue(message1)
 	queue.enqueue(message2)
 	if queue.capacity < 2 {

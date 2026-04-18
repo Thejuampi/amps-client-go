@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // Constants in this block define protocol and client behavior values.
@@ -209,22 +211,24 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.current != nil
 	}
 
-	if ms.timeout == 0 {
-		if message, ok := ms.queue.waitDequeue(); ok {
-			ms.setCurrentFromQueue(message)
-		}
-		return ms.current != nil
+	if ms.timeout != 0 {
+		return ms.waitForNextWithTimeout()
 	}
-
-	return ms.handleWaitDequeueTimeoutResult(
-		ms.queue.waitDequeueTimeout(
-			time.Millisecond * time.Duration(clampMessageStreamTimeoutMillis(ms.timeout)),
-		),
-	)
+	message, ok := ms.queue.waitDequeue()
+	if ok {
+		ms.setCurrentFromQueue(message)
+	}
+	return ms.current != nil
 }
 
-func clampMessageStreamTimeoutMillis(timeout uint64) uint64 {
-	return min(timeout, maxMessageStreamTimeoutMillis)
+func (ms *MessageStream) waitForNextWithTimeout() bool {
+	var timeoutMillis = min(ms.timeout, maxMessageStreamTimeoutMillis)
+	var timeoutDuration = time.Millisecond * time.Duration(safecast.Int64FromUint64Saturating(timeoutMillis))
+	return ms.handleWaitDequeueTimeoutResult(
+		ms.queue.waitDequeueTimeout(
+			timeoutDuration,
+		),
+	)
 }
 
 func (ms *MessageStream) handleWaitDequeueTimeoutResult(message *Message, ok bool) bool {

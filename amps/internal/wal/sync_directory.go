@@ -1,8 +1,14 @@
 package wal
 
+import "path/filepath"
+
 type syncDirectoryFile interface {
 	Close() error
 	Sync() error
+}
+
+func normalizeSyncDirectoryPath(path string) string {
+	return filepath.Clean(path)
 }
 
 func syncOpenedDirectory(file syncDirectoryFile) (err error) {
