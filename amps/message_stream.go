@@ -216,9 +216,19 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.current != nil
 	}
 
-	if message, ok := ms.queue.waitDequeueTimeout(
-		time.Millisecond * time.Duration(clampMessageStreamTimeoutMillis(ms.timeout)),
-	); ok {
+	return ms.handleWaitDequeueTimeoutResult(
+		ms.queue.waitDequeueTimeout(
+			time.Millisecond * time.Duration(clampMessageStreamTimeoutMillis(ms.timeout)),
+		),
+	)
+}
+
+func clampMessageStreamTimeoutMillis(timeout uint64) uint64 {
+	return min(timeout, maxMessageStreamTimeoutMillis)
+}
+
+func (ms *MessageStream) handleWaitDequeueTimeoutResult(message *Message, ok bool) bool {
+	if ok {
 		ms.setCurrentFromQueue(message)
 		return true
 	}
@@ -228,10 +238,6 @@ func (ms *MessageStream) HasNext() bool {
 
 	ms.timedOut.Store(true)
 	return true
-}
-
-func clampMessageStreamTimeoutMillis(timeout uint64) uint64 {
-	return min(timeout, maxMessageStreamTimeoutMillis)
 }
 
 func (ms *MessageStream) consumeConflateState() {
