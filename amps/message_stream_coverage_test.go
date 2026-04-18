@@ -52,6 +52,14 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	if got := clampMessageStreamTimeoutMillis(maxMessageStreamTimeoutMillis + 1); got != maxMessageStreamTimeoutMillis {
 		t.Fatalf("expected timeout clamp helper to cap oversized timeout, got %d", got)
 	}
+	resultStream := newMessageStream(nil)
+	message := &Message{header: &_Header{command: CommandPublish}, data: []byte("helper")}
+	if !resultStream.handleWaitDequeueTimeoutResult(message, true) {
+		t.Fatalf("expected successful wait-dequeue result to report true")
+	}
+	if resultStream.current != message {
+		t.Fatalf("expected wait-dequeue helper to set current message")
+	}
 	stream.setState(messageStreamStateDisconnected)
 	if stream.state == messageStreamStateDisconnected {
 		t.Fatalf("setState should ignore disconnected sentinel")
