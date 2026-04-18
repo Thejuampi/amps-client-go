@@ -4,39 +4,39 @@
 
 | Type | Purpose |
 |---|---|
-| `ConnectionInfo` | String map describing current connection metadata.
-| `ConnectionState` | Connection lifecycle state enum.
-| `LogonParams` | Optional logon parameters (`Timeout`, `Authenticator`, `CorrelationID`).
+| `ConnectionInfo` | String map describing current connection metadata. |
+| `ConnectionState` | Connection lifecycle state enum. |
+| `LogonParams` | Optional logon parameters (`Timeout`, `Authenticator`, `CorrelationID`). |
 
 ## ConnectionState Values
 
 | Value | Meaning |
 |---|---|
-| `ConnectionStateDisconnected` | Transport disconnected.
-| `ConnectionStateShutdown` | Explicit shutdown initiated.
-| `ConnectionStateConnected` | Transport connected.
-| `ConnectionStateLoggedOn` | Logon completed.
-| `ConnectionStatePublishReplayed` | Publish replay completed.
-| `ConnectionStateHeartbeatInitiated` | Heartbeat command acknowledged.
-| `ConnectionStateResubscribed` | Resubscribe pass completed.
-| `ConnectionStateUnknown` | Unclassified state.
+| `ConnectionStateDisconnected` | Transport disconnected. |
+| `ConnectionStateShutdown` | Explicit shutdown initiated. |
+| `ConnectionStateConnected` | Transport connected. |
+| `ConnectionStateLoggedOn` | Logon completed. |
+| `ConnectionStatePublishReplayed` | Publish replay completed. |
+| `ConnectionStateHeartbeatInitiated` | Heartbeat command acknowledged. |
+| `ConnectionStateResubscribed` | Resubscribe pass completed. |
+| `ConnectionStateUnknown` | Unclassified state. |
 
 ## Handler and Listener Interfaces
 
 | Interface / Func Adapter | Purpose |
 |---|---|
-| `ConnectionStateListener` / `ConnectionStateListenerFunc` | Observe connection-state transitions.
-| `ExceptionListener` / `ExceptionListenerFunc` | Receive internal exception signals.
-| `FailedWriteHandler` / `FailedWriteHandlerFunc` | Receive failed publish write events.
-| `FailedResubscribeHandler` / `FailedResubscribeHandlerFunc` | Control behavior on resubscribe failures.
+| `ConnectionStateListener` / `ConnectionStateListenerFunc` | Observe connection-state transitions. |
+| `ExceptionListener` / `ExceptionListenerFunc` | Receive internal exception signals. |
+| `FailedWriteHandler` / `FailedWriteHandlerFunc` | Receive failed publish write events. |
+| `FailedResubscribeHandler` / `FailedResubscribeHandlerFunc` | Control behavior on resubscribe failures. |
 
 ## Strategy and Selection Interfaces
 
 | Interface | Purpose |
 |---|---|
-| `ServerChooser` | URI selection and failure/success reporting.
-| `ReconnectDelayStrategy` | Reconnect delay policy abstraction.
-| `SubscriptionManager` | Subscription tracking and resubscribe behavior.
+| `ServerChooser` | URI selection and failure/success reporting. |
+| `ReconnectDelayStrategy` | Reconnect delay policy abstraction. |
+| `SubscriptionManager` | Subscription tracking and resubscribe behavior. |
 
 Concrete strategy/chooser types:
 
@@ -67,8 +67,8 @@ Version helper:
 
 | Type | Purpose |
 |---|---|
-| `TransportFilterDirection` | Indicates inbound or outbound frame flow.
-| `TransportFilter` | Frame transformation hook signature.
+| `TransportFilterDirection` | Indicates inbound or outbound frame flow. |
+| `TransportFilter` | Frame transformation hook signature. |
 
 ## Related
 

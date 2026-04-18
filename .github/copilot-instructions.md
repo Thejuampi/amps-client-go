@@ -59,12 +59,12 @@ make release          # static-scan + unit + race + build + fakeamps integration
 - Release may not skip or relax parity validation.
 - Strict release environments must provide the sibling C++ reference tree at `../amps-c++-client-5.3.5.1-Windows`.
 - Strict release must run both:
-	- `go test -count=1 ./amps -run Integration` against ephemeral fakeamps endpoints
-	- `go test -count=1 ./tools/fakeamps -run Integration`
+  - `go test -count=1 ./amps -run Integration` against ephemeral fakeamps endpoints
+  - `go test -count=1 ./tools/fakeamps -run Integration`
 - SemVer selection for release:
-	- patch for fixes, hardening, tests, and release-process-only changes
-	- minor for backwards-compatible feature additions
-	- major for breaking API or behavior changes
+  - patch for fixes, hardening, tests, and release-process-only changes
+  - minor for backwards-compatible feature additions
+  - major for breaking API or behavior changes
 
 ## Coding Conventions
 
@@ -89,6 +89,7 @@ Available error kinds: `CommandError`, `ConnectionError` (and others in `errors.
 ## Parity Pattern
 
 When adding a C++ API equivalent:
+
 1. Add the Go type/interface to `parity_types.go` if it's a new concept.
 2. Add the implementation method to `client_parity_methods.go`.
 3. Add function-adapter types for interfaces (e.g., `ConnectionStateListenerFunc`).

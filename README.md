@@ -24,7 +24,7 @@ Version: `0.8.15`
 
 AMPS is one of the fastest message brokers on the planet. Building a client worthy of that speed — in Go, without CGO — was the goal. This project delivers:
 
-- 🏎️ **Verified 5/5 hot-path lead over C** — the current committed same-host 20-sample side-by-side baseline has Go ahead on strict header parse, strict SOW batch parse, strict header serialize, publish integration, and subscribe integration at p95  
+- 🏎️ **Faster than C on the hot path** — Go client outperforms the official C library on header parsing and SOW batch processing at p95/p99  
 - 🔬 **253 parity-mapped symbols** — full `Client` and `HAClient` API surface, tested against C++ 5.3.5.1 behavior  
 - 🛡️ **Production-grade quality gates** — 90%+ coverage, zero open parity gaps, enforced regression budgets on every PR  
 - ⚡ **Zero-allocation critical paths** — header parse, uint decode, timeout poll, and string conversion all run at 0 allocs/op  
@@ -36,7 +36,7 @@ If you're building on AMPS and you need a Go-native client that doesn't compromi
 
 ## Performance: Go vs Official C Client
 
-This section is the repository's **current committed side-by-side performance baseline**: same host, same workload, same fakeamps-backed methodology, nearest-rank percentiles, **20 samples**. Lower is better.
+All benchmarks run on the same machine, same workload, same measurement methodology (nearest-rank percentiles, 20 samples). Lower is better.
 
 ### Hot-Path Parity Results (Go vs Official C)
 
@@ -44,17 +44,15 @@ These are the strict parity workloads we currently gate for C-vs-Go comparisons.
 
 | Benchmark | Go p95 (ns/op) | C p95 (ns/op) | Delta | Winner |
 |:---|---:|---:|---:|:---|
-| **Header Parse** (strict parity) | **21.67** | 23.74 | **-8.7%** | Go |
-| **SOW Batch Parse** (strict parity) | **110.90** | 137.39 | **-19.3%** | Go |
-| **Header Serialize** (strict parity) | **67.19** | 73.05 | **-8.0%** | Go |
-| **Publish Integration** (processed ack) | **259300** | 364372.75 | **-28.8%** | Go |
-| **Subscribe Integration** (processed ack) | **144100** | 283117.70 | **-49.1%** | Go |
+| **Header Parse** (strict parity) | **18.41** | 22.38 | **-17.7%** | Go |
+| **SOW Batch Parse** (strict parity) | **93.34** | 123.14 | **-24.2%** | Go |
+| **Header Serialize** (strict parity) | **68.88** | 69.60 | **-1.0%** | Go |
+| **Publish Integration** (processed ack) | **101380** | 245025.75 | **-58.6%** | Go |
+| **Subscribe Integration** (processed ack) | **105067** | 225831 | **-53.5%** | Go |
 
-This is the current committed side-by-side baseline for the in-scope hot-path parity suite: **5/5 Go wins at p95**.
+This is 5/5 wins on the in-scope hot-path parity suite (p95).
 
 Connect-and-logon timings are tracked separately and treated as out of scope for this steady-state hot-path gate.
-
-For the newer matched fixed-iteration concurrent publish contention row (`2400x` across 4 workers), the current live processed-ack result is **near parity** with the official C client rather than a large regression: Go is running about **13.0-15.6 us/op** versus C at about **12.3-14.4 us/op** on the same `fakeamps -benchmark-stability` setup, while the matched concurrent **no-ack** row remains a Go win.
 
 ### Full-Suite Tail Latency (Go Internal Benchmarks)
 
@@ -79,8 +77,7 @@ Every hot path in the client is micro-benchmarked and tracked across commits. He
 - **Methodology**: `go test -bench=. -benchtime=1s -count=20` with nearest-rank percentile extraction  
 - **C baselines**: compiled from the official AMPS C client library, run with the same fake server and payload profiles  
 - **Regression gates**: PRs fail on >7% ns/op regression or >5% allocs/op regression against committed baselines  
-- **Current public baseline**: the README table above is sourced from the committed current side-by-side artifacts, not from historical baselines or ad hoc spot checks  
-- **Artifacts**: full Go-only tail metrics live in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), and [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json); current side-by-side C-vs-Go data lives in [`tools/perf_tail_go_api_current.json`](tools/perf_tail_go_api_current.json), [`tools/perf_tail_c_current.json`](tools/perf_tail_c_current.json), [`tools/perf_side_by_side_current.json`](tools/perf_side_by_side_current.json), and [`tools/perf_side_by_side_report.md`](tools/perf_side_by_side_report.md)
+- **Artifacts**: all raw data committed in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json), and [`tools/perf_side_by_side_baseline.json`](tools/perf_side_by_side_baseline.json)
 
 ---
 
@@ -211,38 +208,6 @@ make vuln-scan
 make release
 ```
 
-`make release` is the **verification pipeline only**. It does not edit version files, create tags, or publish a GitHub release.
-
-## Release Automation
-
-Use the scripted local release flow when you want the repository to handle everything that can be automated safely:
-
-```bash
-make release-dry-run RELEASE_VERSION=0.8.10
-make release-local RELEASE_VERSION=0.8.10 RELEASE_FLAGS="-Yes"
-```
-
-What those automated paths handle for you:
-
-- run the Linux-target static-analysis preflight from Windows before any version edit
-- update `VERSION`, `README.md`, and `amps/client.go`
-- run `make release`
-- show the release diff before publish
-- create the release commit and annotated tag
-- push `main` and the tag
-- publish the GitHub release
-- verify the remote tag, GitHub release, and Go module version visibility
-
-The remaining manual or environment-dependent release inputs are intentionally small:
-
-- choose the SemVer bump
-- run from `main` with the sibling C++ reference tree at `..\amps-c++-client-5.3.5.1-Windows`
-- ensure `git` and `gh` credentials can push to `main`, create tags, and publish releases
-
-`make release-dry-run` is the safest rehearsal path: it runs the same scripted validation, then restores the version files automatically instead of committing or publishing anything.
-
-The GitHub Actions `Release` workflow now runs the same `release.local.ps1` path in hosted mode on `ubuntu-latest`. Hosted mode uses `make release-hosted`, which keeps static analysis, tests, build, fakeamps integration, conditional parity, and coverage, but leaves the microbenchmark perf gate to the strict local release environment where the baseline is calibrated. Real workflow releases require `RELEASE_PUSH_TOKEN`; dry runs do not publish anything.
-
 <details>
 <summary>Equivalent direct commands</summary>
 
@@ -259,8 +224,6 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
 Static analysis is enforced in CI with `make static-scan`, which now includes `errcheck` on non-test packages in addition to vet, staticcheck correctness checks, and ineffassign.
-
-On Windows, `make static-scan` only covers the Windows build-tag view. Run `.\tools\static-scan-linux.ps1` before commit or release prep to catch `//go:build !windows` issues that the Ubuntu CI runner will analyze.
 
 Race coverage is enforced with `make test-race` in CI and release validation.
 

@@ -12,6 +12,7 @@ type commandSnapshot struct {
 	CorrelationID string  `json:"correlation_id,omitempty"`
 	Expiration    *uint   `json:"expiration,omitempty"`
 	Filter        string  `json:"filter,omitempty"`
+	MessageType   string  `json:"message_type,omitempty"`
 	Options       string  `json:"options,omitempty"`
 	OrderBy       string  `json:"order_by,omitempty"`
 	QueryID       string  `json:"query_id,omitempty"`
@@ -22,6 +23,16 @@ type commandSnapshot struct {
 	SubIDs        string  `json:"sub_ids,omitempty"`
 	Topic         string  `json:"topic,omitempty"`
 	TopN          *uint   `json:"top_n,omitempty"`
+	LeasePeriod   string  `json:"lease_period,omitempty"`
+	GroupSequence *uint   `json:"group_sequence_number,omitempty"`
+	DataOnly      string  `json:"data_only,omitempty"`
+	SendEmpty     string  `json:"send_empty,omitempty"`
+	SendKeys      string  `json:"send_keys,omitempty"`
+	SendOOF       string  `json:"send_oof,omitempty"`
+	SkipN         *uint   `json:"skip_n,omitempty"`
+	MaximumMsgs   *uint   `json:"maximum_messages,omitempty"`
+	TimeoutIntvl  *uint   `json:"timeout_interval,omitempty"`
+	GracePeriod   *uint   `json:"grace_period,omitempty"`
 	Timeout       int     `json:"timeout,omitempty"`
 	Data          []byte  `json:"data,omitempty"`
 }
@@ -60,6 +71,12 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 		if command.header.filter != nil {
 			snapshot.Filter = string(command.header.filter)
 		}
+		if command.header.messageType != nil {
+			snapshot.MessageType = string(command.header.messageType)
+		}
+		if command.header.leasePeriod != nil {
+			snapshot.LeasePeriod = string(command.header.leasePeriod)
+		}
 		if command.header.options != nil {
 			snapshot.Options = string(command.header.options)
 		}
@@ -72,6 +89,10 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 		if command.header.sequenceID != nil {
 			value := *command.header.sequenceID
 			snapshot.SequenceID = &value
+		}
+		if command.header.groupSequenceNumber != nil {
+			value := *command.header.groupSequenceNumber
+			snapshot.GroupSequence = &value
 		}
 		if command.header.sowKey != nil {
 			snapshot.SowKey = string(command.header.sowKey)
@@ -91,6 +112,34 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 		if command.header.topN != nil {
 			value := *command.header.topN
 			snapshot.TopN = &value
+		}
+		if command.header.dataOnly != nil {
+			snapshot.DataOnly = string(command.header.dataOnly)
+		}
+		if command.header.sendEmpty != nil {
+			snapshot.SendEmpty = string(command.header.sendEmpty)
+		}
+		if command.header.sendKeys != nil {
+			snapshot.SendKeys = string(command.header.sendKeys)
+		}
+		if command.header.sendOOF != nil {
+			snapshot.SendOOF = string(command.header.sendOOF)
+		}
+		if command.header.skipN != nil {
+			value := *command.header.skipN
+			snapshot.SkipN = &value
+		}
+		if command.header.maximumMessages != nil {
+			value := *command.header.maximumMessages
+			snapshot.MaximumMsgs = &value
+		}
+		if command.header.timeoutInterval != nil {
+			value := *command.header.timeoutInterval
+			snapshot.TimeoutIntvl = &value
+		}
+		if command.header.gracePeriod != nil {
+			value := *command.header.gracePeriod
+			snapshot.GracePeriod = &value
 		}
 	}
 
@@ -133,6 +182,12 @@ func commandFromSnapshot(snapshot commandSnapshot) *Command {
 	if snapshot.Filter != "" {
 		command.header.filter = []byte(snapshot.Filter)
 	}
+	if snapshot.MessageType != "" {
+		command.header.messageType = []byte(snapshot.MessageType)
+	}
+	if snapshot.LeasePeriod != "" {
+		command.header.leasePeriod = []byte(snapshot.LeasePeriod)
+	}
 	if snapshot.Options != "" {
 		command.header.options = []byte(snapshot.Options)
 	}
@@ -145,6 +200,10 @@ func commandFromSnapshot(snapshot commandSnapshot) *Command {
 	if snapshot.SequenceID != nil {
 		value := *snapshot.SequenceID
 		command.header.sequenceID = &value
+	}
+	if snapshot.GroupSequence != nil {
+		value := *snapshot.GroupSequence
+		command.header.groupSequenceNumber = &value
 	}
 	if snapshot.SowKey != "" {
 		command.header.sowKey = []byte(snapshot.SowKey)
@@ -164,6 +223,34 @@ func commandFromSnapshot(snapshot commandSnapshot) *Command {
 	if snapshot.TopN != nil {
 		value := *snapshot.TopN
 		command.header.topN = &value
+	}
+	if snapshot.DataOnly != "" {
+		command.header.dataOnly = []byte(snapshot.DataOnly)
+	}
+	if snapshot.SendEmpty != "" {
+		command.header.sendEmpty = []byte(snapshot.SendEmpty)
+	}
+	if snapshot.SendKeys != "" {
+		command.header.sendKeys = []byte(snapshot.SendKeys)
+	}
+	if snapshot.SendOOF != "" {
+		command.header.sendOOF = []byte(snapshot.SendOOF)
+	}
+	if snapshot.SkipN != nil {
+		value := *snapshot.SkipN
+		command.header.skipN = &value
+	}
+	if snapshot.MaximumMsgs != nil {
+		value := *snapshot.MaximumMsgs
+		command.header.maximumMessages = &value
+	}
+	if snapshot.TimeoutIntvl != nil {
+		value := *snapshot.TimeoutIntvl
+		command.header.timeoutInterval = &value
+	}
+	if snapshot.GracePeriod != nil {
+		value := *snapshot.GracePeriod
+		command.header.gracePeriod = &value
 	}
 	if snapshot.Data != nil {
 		command.data = make([]byte, len(snapshot.Data))

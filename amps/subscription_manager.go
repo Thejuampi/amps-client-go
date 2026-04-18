@@ -21,10 +21,6 @@ type DefaultSubscriptionManager struct {
 	resubscriptionTimeout    int
 }
 
-// trackedResumeGroup tracks a set of subscription IDs that share a resume command.
-// SAFETY: group.command is set once in subscribeResume under manager.lock and is
-// never mutated after creation. Concurrent reads from Resubscribe (after copying
-// the group pointer under RLock) are safe because the field is immutable.
 type trackedResumeGroup struct {
 	lock              sync.RWMutex
 	command           *Command
@@ -419,10 +415,22 @@ func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Messag
 		return
 	}
 
+	var existingHandler func(*Message) error
+	manager.lock.RLock()
+	if messageHandler == nil {
+		if existing, exists := manager.subscriptions[subscriptionID]; exists {
+			existingHandler = existing.messageHandler
+		}
+	}
+	manager.lock.RUnlock()
+
 	manager.lock.Lock()
 	if messageHandler == nil {
 		if existing, exists := manager.subscriptions[subscriptionID]; exists {
 			messageHandler = existing.messageHandler
+		}
+		if messageHandler == nil {
+			messageHandler = existingHandler
 		}
 	}
 	manager.subscriptions[subscriptionID] = trackedSubscription{
@@ -505,20 +513,30 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 		ids = append(ids, subID)
 	}
 	failedHandler := manager.failedResubscribeHandler
-	subscriptions := make([]trackedSubscription, 0, len(ids))
-	for _, subID := range ids {
-		if sub, ok := manager.subscriptions[subID]; ok {
-			subscriptions = append(subscriptions, sub)
-		}
-	}
+	manager.lock.RUnlock()
+
+	sort.Strings(ids)
+
+	manager.lock.RLock()
 	var resumedGroups = make([]*trackedResumeGroup, 0, len(manager.resumedGroups))
 	for group := range manager.resumedGroups {
 		resumedGroups = append(resumedGroups, group)
 	}
 	manager.lock.RUnlock()
 	sort.Slice(resumedGroups, func(left int, right int) bool {
-		return trackedSubscriptionID(resumedGroups[left].command) < trackedSubscriptionID(resumedGroups[right].command)
+		leftID, _ := resumedGroups[left].command.SubID()
+		rightID, _ := resumedGroups[right].command.SubID()
+		return leftID < rightID
 	})
+
+	subscriptions := make([]trackedSubscription, 0, len(ids))
+	for _, subID := range ids {
+		manager.lock.RLock()
+		if sub, ok := manager.subscriptions[subID]; ok {
+			subscriptions = append(subscriptions, sub)
+		}
+		manager.lock.RUnlock()
+	}
 
 	state := ensureClientState(client)
 	noResubscribe := map[string]struct{}{}

@@ -4,20 +4,24 @@ This file is for autonomous coding agents working in this repository.
 Follow it strictly.
 
 ## Rule Sources and Precedence
+
 1. Direct user request in the current task.
 2. This `AGENTS.md`.
 3. `.github/copilot-instructions.md`.
 4. Existing repository conventions in code/tests.
 
 Cursor-specific rules:
+
 - No `.cursor/rules/` directory exists.
 - No `.cursorrules` file exists.
 
 Copilot-specific rules:
+
 - `.github/copilot-instructions.md` exists and is mandatory.
 - This guide merges its important points.
 
 ## Project Context
+
 - Module: `github.com/Thejuampi/amps-client-go`
 - Go version: `1.25`
 - Public package: `amps`
@@ -28,14 +32,28 @@ Copilot-specific rules:
 - Perf tooling: `tools/perfgate`, `tools/perfreport`
 
 ## Non-Negotiable Engineering Principles
+
 - TDD is mandatory for every request.
 - Always do `RED -> GREEN -> REFACTOR`.
 - Mutation thinking is mandatory from the start of every task.
+- Optimal code is mandatory, not optional polish.
 - Always follow `KISS`, `DRY`, `SOLID`, and `YAGNI`.
 - Every behavior change requires tests, even tiny ones.
 - Example: timeout `1 -> 2` must have tests for both `1` and `2`.
 
+## Performance Is A Requirement
+
+- Do not stop at “works”. Prefer the fastest clear implementation that fits the repository’s style and parity goals.
+- Treat unnecessary allocations, avoidable copies, hot-path branches, and measurable throughput regressions as bugs.
+- For changes touching hot paths, copy/serialization paths, parsing, routing, locking, or queueing:
+  - inspect the existing benchmark or perf-gate coverage first
+  - add or update a focused benchmark or allocation test when practical
+  - verify the likely regression path, not just correctness
+- If a simpler implementation is materially slower, it is not automatically the right implementation here.
+- `make perf-check` is mandatory for performance-sensitive changes and strongly preferred whenever changed code appears in the perf suite.
+
 ## Mutation-First Development Policy
+
 - Mutation testing is not a final optional check. It is part of ideation, planning, implementation, testing, review, and refinement.
 - During idea/planning:
   - list the critical branches, invariants, boundaries, and failure paths that could be inverted, removed, or bypassed.
@@ -56,7 +74,9 @@ Copilot-specific rules:
 - Never treat line coverage as sufficient evidence of test quality.
 
 ## Build, Lint, and Test Commands
+
 Preferred Make targets:
+
 ```bash
 make build
 make static-scan
@@ -72,6 +92,7 @@ make release
 ```
 
 Equivalent direct commands:
+
 ```bash
 go build ./...
 go vet ./...
@@ -91,26 +112,33 @@ go run ./tools/perfgate -baseline tools/perf_baseline.json
 ```
 
 ### Focused test commands (important)
+
 Single test in one package:
+
 ```bash
 go test ./amps -run '^TestClientConnect$' -count=1
 ```
 
 Single fake broker test:
+
 ```bash
 go test ./tools/fakeamps -run '^TestHandleConnectionCommandFlow$' -count=1
 ```
 
 Single subtest:
+
 ```bash
 go test ./amps -run '^TestClientConnect$/ReconnectPath$' -count=1
 ```
+
 Verbose single test:
+
 ```bash
 go test ./amps -run '^TestName$' -count=1 -v
 ```
 
 ## Coverage and Mutation Expectations
+
 - Test design target for changed feature areas: `>= 80%` coverage.
 - Coverage gate is mandatory and must pass before merge (`make coverage-check`).
 - Enforced repository gate for `./amps/...`:
@@ -119,6 +147,7 @@ go test ./amps -run '^TestName$' -count=1 -v
   - IO/stateful files `>= 80%`
 
 Quick coverage checks:
+
 ```bash
 go test ./tools/fakeamps -coverprofile tools/fakeamps.cover.out
 go tool cover -func tools/fakeamps.cover.out
@@ -127,6 +156,7 @@ go run ./tools/coveragegate -profile coverage.out
 ```
 
 Mutation requirements:
+
 - Mutation testing is mandatory in practice.
 - If tests still pass after random logic changes, tests are not strong enough.
 - For every critical branch, add assertions that fail when logic is inverted/removed.
@@ -134,6 +164,7 @@ Mutation requirements:
 - Target mindset: tests should fail for deleted guards, inverted booleans, wrong comparison operators, missing side effects, missing error propagation, and off-by-one logic.
 
 ## Required TDD Workflow
+
 1. RED: write/adjust failing tests first.
 2. GREEN: implement minimal code to pass.
 3. REFACTOR: improve design while keeping tests green.
@@ -143,36 +174,44 @@ Mutation requirements:
 Never skip RED.
 
 ## Code Style and Conventions
+
 ### Formatting and structure
+
 - `gofmt` is source of truth.
 - Keep functions small and intention-revealing.
 - Avoid over-engineering (YAGNI).
 
 ### Imports
+
 - Use imports, never fully qualified names inside same package.
 - Keep import groups in standard Go order.
 - Avoid alias imports unless required for collisions.
 
 ### Variables and types
+
 - Use `var` for local variable declarations.
 - Prefer concrete types internally; interfaces at boundaries.
 - Keep exported API shapes aligned with C++ parity intent.
 
 ### Naming
+
 - Follow Go naming (`CamelCase`, exported names capitalized).
 - Keep parity naming style where relevant: `SetFoo(...)` and `Foo()`.
 - Use consistent domain terms (command id, sub id, bookmark, publish store).
 
 ### Error handling
+
 - In `amps` package code, use `NewError(...)` with correct kind.
 - Return early on errors and include actionable context.
 - Do not swallow errors silently.
 
 ### Comments
+
 - Add comments only for non-obvious intent/protocol semantics.
 - Do not restate obvious code.
 
 ## Testing Conventions
+
 - Prefer white-box tests in same package (`package amps` for amps tests).
 - Keep tests deterministic and fast.
 - One assert per test is preferred; split tests if assertions are independent.
@@ -180,6 +219,7 @@ Never skip RED.
 - Cover happy path, edge cases, and failures.
 
 ## Parity-Driven Development Rules
+
 - This repo targets behavioral parity with C++ AMPS client semantics.
 - For parity features, update implementation + tests + parity docs/manifests:
   - `docs/cpp_to_go_parity_matrix.md`
@@ -187,6 +227,7 @@ Never skip RED.
   - `tools/parity_behavior_manifest.json`
 
 ## Agent Completion Checklist
+
 - RED test added and verified failing.
 - GREEN implementation added and tests passing.
 - Mutation resistance reviewed for all changed logic.

@@ -79,7 +79,7 @@ Intentional validation limits:
 
 Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         fakeamps server                              │
 │                                                                      │
@@ -121,6 +121,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 ## Stateful Features
 
 ### Message Journal (Transaction Log)
+
 - Bounded ring-buffer log of all published messages
 - Bookmark format: `epoch_us|publisher|seq|`
 - `BOOKMARK_EPOCH ("0")` replays from the beginning
@@ -128,6 +129,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 - Content filters applied during replay
 
 ### SOW Cache (State-of-the-World)
+
 - Per-topic, per-sow-key storage of last-known record values
 - SOW queries return real cached records with group_begin/group_end batching
 - **Filtered queries**: content filter expressions evaluated against SOW data
@@ -142,11 +144,13 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 - Automatic sow_key extraction from JSON payloads (`_sow_key`, `id`, `key` fields)
 
 ### Per-Topic Message Types
+
 - Each topic is bound to a message type (json, protobuf, nvfix, fix, xml, binary, etc.)
 - Message type is set on first publish and echoed on all subsequent deliveries
 - Default message type is `json`
 
 ### Content Filtering
+
 - Filter expressions evaluated on subscribe fan-out, SOW queries, bookmark replay, and SOW delete
 - Supported operators: `=`, `==`, `!=`, `>`, `<`, `>=`, `<=`
 - **NOT** prefix: `NOT /field = value`
@@ -163,12 +167,14 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 - **Array quantifiers**: `[ANY] /items/field ...` and `[ALL] /items/field ...`
 
 ### Topic Matching
+
 - Exact match: `orders` matches only `orders`
 - Dot-hierarchy wildcard: `orders.>` matches `orders.us`, `orders.eu.west`
 - Double-dot wildcard: `orders..product` matches `orders.us.product`
 - Catch-all: `>` matches everything
 
 ### Views & Aggregation
+
 - Passthrough views: virtual topics from filtered source topics
 - Aggregation views: COUNT, SUM, AVG, MIN, MAX with GROUP BY
 - **JOIN views**: INNER, LEFT, RIGHT joins across multiple source topics
@@ -177,6 +183,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 - Projection fields
 
 ### Subscriptions
+
 - **Pause / Resume**: `pause` and `resume` commands to suspend/unsuspend delivery
 - **Conflation**: per-subscription message merge for slow consumers with configurable interval
 - **Conflation key**: `conflation_key=/field` to merge by a specific JSON field instead of SOW key
@@ -222,7 +229,7 @@ Modeled after real 60East AMPS's multi-threaded design ("an army of threads"):
 
 ## Flags
 
-```
+```text
 -addr            listen address (default "127.0.0.1:19000")
 -config          load AMPS XML configuration from this file (default "")
 -sample-config   print a sample AMPS XML configuration and exit (default false)

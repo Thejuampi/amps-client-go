@@ -2,6 +2,7 @@ package amps
 
 import (
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -591,6 +592,7 @@ func (msg *Message) Copy() *Message {
 		len(header.commandID) +
 		len(header.clientName) +
 		len(header.correlationID) +
+		len(header.dataOnly) +
 		len(header.filter) +
 		len(header.leasePeriod) +
 		len(header.messageType) +
@@ -599,6 +601,9 @@ func (msg *Message) Copy() *Message {
 		len(header.password) +
 		len(header.queryID) +
 		len(header.reason) +
+		len(header.sendEmpty) +
+		len(header.sendKeys) +
+		len(header.sendOOF) +
 		len(header.sowKey) +
 		len(header.sowKeys) +
 		len(header.status) +
@@ -613,6 +618,7 @@ func (msg *Message) Copy() *Message {
 		header.commandID != nil ||
 		header.clientName != nil ||
 		header.correlationID != nil ||
+		header.dataOnly != nil ||
 		header.filter != nil ||
 		header.leasePeriod != nil ||
 		header.messageType != nil ||
@@ -621,6 +627,9 @@ func (msg *Message) Copy() *Message {
 		header.password != nil ||
 		header.queryID != nil ||
 		header.reason != nil ||
+		header.sendEmpty != nil ||
+		header.sendKeys != nil ||
+		header.sendOOF != nil ||
 		header.sowKey != nil ||
 		header.sowKeys != nil ||
 		header.status != nil ||
@@ -652,6 +661,7 @@ func (msg *Message) Copy() *Message {
 		expiration := *header.expiration
 		message.header.expiration = &expiration
 	}
+	copiedBytes, message.header.dataOnly = copyMessageBytes(copiedBytes, header.dataOnly)
 	copiedBytes, message.header.filter = copyMessageBytes(copiedBytes, header.filter)
 	if header.groupSequenceNumber != nil {
 		gseq := *header.groupSequenceNumber
@@ -692,6 +702,9 @@ func (msg *Message) Copy() *Message {
 		sequenceID := *header.sequenceID
 		message.header.sequenceID = &sequenceID
 	}
+	copiedBytes, message.header.sendEmpty = copyMessageBytes(copiedBytes, header.sendEmpty)
+	copiedBytes, message.header.sendKeys = copyMessageBytes(copiedBytes, header.sendKeys)
+	copiedBytes, message.header.sendOOF = copyMessageBytes(copiedBytes, header.sendOOF)
 	copiedBytes, message.header.sowKey = copyMessageBytes(copiedBytes, header.sowKey)
 	copiedBytes, message.header.sowKeys = copyMessageBytes(copiedBytes, header.sowKeys)
 	copiedBytes, message.header.status = copyMessageBytes(copiedBytes, header.status)
@@ -709,6 +722,22 @@ func (msg *Message) Copy() *Message {
 	}
 	copiedBytes, message.header.userID = copyMessageBytes(copiedBytes, header.userID)
 	_, message.header.version = copyMessageBytes(copiedBytes, header.version)
+	if header.skipN != nil {
+		skipN := *header.skipN
+		message.header.skipN = &skipN
+	}
+	if header.maximumMessages != nil {
+		maxMsgs := *header.maximumMessages
+		message.header.maximumMessages = &maxMsgs
+	}
+	if header.timeoutInterval != nil {
+		ti := *header.timeoutInterval
+		message.header.timeoutInterval = &ti
+	}
+	if header.gracePeriod != nil {
+		gp := *header.gracePeriod
+		message.header.gracePeriod = &gp
+	}
 
 	return message
 }
@@ -1044,6 +1073,89 @@ func (msg *Message) UserID() (string, bool) {
 	return string(header.userID), header.userID != nil
 }
 
+func (msg *Message) Password() (string, bool) {
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.password), header.password != nil
+}
+
+func (m *Message) DataOnly() (bool, bool) {
+	header := messageHeader(m)
+	if header != nil && header.dataOnly != nil {
+		return string(header.dataOnly) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SendEmpty() (bool, bool) {
+	header := messageHeader(m)
+	if header != nil && header.sendEmpty != nil {
+		return string(header.sendEmpty) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SendKeys() (bool, bool) {
+	header := messageHeader(m)
+	if header != nil && header.sendKeys != nil {
+		return string(header.sendKeys) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SendOOF() (bool, bool) {
+	header := messageHeader(m)
+	if header != nil && header.sendOOF != nil {
+		return string(header.sendOOF) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SkipN() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.skipN != nil {
+		return *header.skipN, true
+	}
+	return 0, false
+}
+
+func (m *Message) MaximumMessages() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.maximumMessages != nil {
+		return *header.maximumMessages, true
+	}
+	return 0, false
+}
+
+func (m *Message) TimeoutInterval() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.timeoutInterval != nil {
+		return *header.timeoutInterval, true
+	}
+	return 0, false
+}
+
+func (m *Message) GracePeriod() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.gracePeriod != nil {
+		return *header.gracePeriod, true
+	}
+	return 0, false
+}
+
+func (m *Message) LeasePeriodUint() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.leasePeriod != nil {
+		val, err := strconv.ParseUint(string(header.leasePeriod), 10, 64)
+		if err == nil {
+			return uint(val), true
+		}
+	}
+	return 0, false
+}
+
 // Ack acknowledges the message using topic and bookmark fields.
 func (msg *Message) Ack(options ...string) error {
 	if msg == nil || msg.client == nil {
@@ -1176,10 +1288,6 @@ func (msg *Message) IsValid() bool {
 }
 
 // Replace replaces message contents with another message.
-// CONFLATION SAFETY: During conflation, Replace is called under the message
-// stream lock (ms.lock). Consumers call consumeConflateState which removes the
-// entry from sowKeyMap under the same lock before Read returns the message,
-// preventing concurrent Replace calls on a message already returned to the caller.
 func (msg *Message) Replace(other *Message) *Message {
 	if msg == nil || other == nil {
 		return msg
@@ -1229,4 +1337,45 @@ func (msg *Message) ThrowFor() error {
 		return reasonToError(reason)
 	}
 	return NewError(UnknownError, "message failure without reason")
+}
+
+type OOFReason int
+
+const (
+	OOFReasonDeleted OOFReason = iota
+	OOFReasonExpired
+	OOFReasonMatch
+	OOFReasonEntitlement
+	OOFReasonUnknown
+)
+
+func (r OOFReason) String() string {
+	switch r {
+	case OOFReasonDeleted:
+		return "deleted"
+	case OOFReasonExpired:
+		return "expired"
+	case OOFReasonMatch:
+		return "match"
+	case OOFReasonEntitlement:
+		return "entitlement"
+	default:
+		return "unknown"
+	}
+}
+
+func (m *Message) OOFReason() OOFReason {
+	reason, _ := m.Reason()
+	switch reason {
+	case "deleted":
+		return OOFReasonDeleted
+	case "expired":
+		return OOFReasonExpired
+	case "match":
+		return OOFReasonMatch
+	case "entitlement":
+		return OOFReasonEntitlement
+	default:
+		return OOFReasonUnknown
+	}
 }

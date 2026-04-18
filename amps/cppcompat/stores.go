@@ -470,3 +470,77 @@ func (store *HybridPublishStore) Flush(timeout time.Duration) error {
 	}
 	return firstErr
 }
+
+func (store *HybridPublishStore) ReplaySingle(replayer func(*amps.Command) error, sequence uint64) (bool, error) {
+	if store == nil {
+		return false, nil
+	}
+	if found, err := store.primary.ReplaySingle(replayer, sequence); found || err != nil {
+		return found, err
+	}
+	return store.secondary.ReplaySingle(replayer, sequence)
+}
+
+func (store *HybridPublishStore) UnpersistedCount() int {
+	if store == nil {
+		return 0
+	}
+	return store.primary.UnpersistedCount() + store.secondary.UnpersistedCount()
+}
+
+func (store *HybridPublishStore) GetLowestUnpersisted() uint64 {
+	if store == nil {
+		return 0
+	}
+	primary := store.primary.GetLowestUnpersisted()
+	secondary := store.secondary.GetLowestUnpersisted()
+	if primary == 0 {
+		return secondary
+	}
+	if secondary == 0 {
+		return primary
+	}
+	if primary < secondary {
+		return primary
+	}
+	return secondary
+}
+
+func (store *HybridPublishStore) GetLastPersisted() uint64 {
+	if store == nil {
+		return 0
+	}
+	primary := store.primary.GetLastPersisted()
+	secondary := store.secondary.GetLastPersisted()
+	if primary > secondary {
+		return primary
+	}
+	return secondary
+}
+
+func (store *HybridPublishStore) SetErrorOnPublishGap(enabled bool) {
+	if store == nil {
+		return
+	}
+	store.primary.SetErrorOnPublishGap(enabled)
+	store.secondary.SetErrorOnPublishGap(enabled)
+}
+
+func (store *HybridPublishStore) ErrorOnPublishGap() bool {
+	if store == nil {
+		return false
+	}
+	return store.primary.ErrorOnPublishGap()
+}
+
+func (store *HybridPublishStore) SetInitialSequence(sequence uint64) {
+	if store == nil {
+		return
+	}
+	if primary, ok := store.primary.(interface{ SetInitialSequence(uint64) }); ok {
+		primary.SetInitialSequence(sequence)
+	}
+	if secondary, ok := store.secondary.(interface{ SetInitialSequence(uint64) }); ok {
+		secondary.SetInitialSequence(sequence)
+	}
+}

@@ -105,6 +105,16 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	header.parseField([]byte("records_updated"), []byte("4"))
 	header.parseField([]byte("records_invalid"), []byte("5"))
 	header.parseField([]byte("sow_keys"), []byte("k1,k2"))
+	header.parseField([]byte("data_only"), []byte("true"))
+	header.parseField([]byte("send_empty"), []byte("true"))
+	header.parseField([]byte("send_keys"), []byte("true"))
+	header.parseField([]byte("send_oof"), []byte("true"))
+	header.parseField([]byte("group_sequence_number"), []byte("11"))
+	header.parseField([]byte("lease_period"), []byte("12"))
+	header.parseField([]byte("skip_n"), []byte("13"))
+	header.parseField([]byte("maximum_messages"), []byte("14"))
+	header.parseField([]byte("timeout_interval"), []byte("15"))
+	header.parseField([]byte("grace_period"), []byte("16"))
 	header.parseField([]byte("topic_matches"), []byte("5"))
 	header.parseField([]byte("topic_matches"), []byte("invalid"))
 	header.parseField([]byte("bs"), []byte("bad"))
@@ -148,6 +158,16 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 		`"top_n":5`,
 		`"version":"5.3.5.1"`,
 		`"mt":"json"`,
+		`"data_only":"true"`,
+		`"send_empty":"true"`,
+		`"send_keys":"true"`,
+		`"send_oof":"true"`,
+		`"lease_period":"12"`,
+		`"group_sequence_number":11`,
+		`"skip_n":13`,
+		`"maximum_messages":14`,
+		`"timeout_interval":15`,
+		`"grace_period":16`,
 	} {
 		if !strings.Contains(written, token) {
 			t.Fatalf("expected header token %q in %q", token, written)
@@ -709,5 +729,39 @@ func TestGetRawTransmissionTimeFormatsUnixNanoLazily(t *testing.T) {
 	var actual = message.GetRawTransmissionTime()
 	if actual != expected {
 		t.Fatalf("unexpected raw transmission time: got %q want %q", actual, expected)
+	}
+}
+
+func TestMessagePasswordAndOOFReasonCoverage(t *testing.T) {
+	var nilMessage *Message
+	if password, ok := nilMessage.Password(); ok || password != "" {
+		t.Fatalf("expected nil Password to report empty value, got %q ok=%v", password, ok)
+	}
+
+	reasonStrings := map[OOFReason]string{
+		OOFReasonDeleted:     "deleted",
+		OOFReasonExpired:     "expired",
+		OOFReasonMatch:       "match",
+		OOFReasonEntitlement: "entitlement",
+		OOFReasonUnknown:     "unknown",
+	}
+	for reason, expected := range reasonStrings {
+		if got := reason.String(); got != expected {
+			t.Fatalf("OOFReason(%d).String()=%q want %q", reason, got, expected)
+		}
+	}
+
+	reasonCases := map[string]OOFReason{
+		"deleted":     OOFReasonDeleted,
+		"expired":     OOFReasonExpired,
+		"match":       OOFReasonMatch,
+		"entitlement": OOFReasonEntitlement,
+		"other":       OOFReasonUnknown,
+	}
+	for encoded, expected := range reasonCases {
+		message := &Message{header: &_Header{reason: []byte(encoded)}}
+		if got := message.OOFReason(); got != expected {
+			t.Fatalf("OOFReason(%q)=%v want %v", encoded, got, expected)
+		}
 	}
 }

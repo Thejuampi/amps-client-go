@@ -662,3 +662,18 @@ func TestHAStoreLogonOptionsSnapshotNilCoverage(t *testing.T) {
 	var nilHA *HAClient
 	nilHA.storeLogonOptionsSnapshot()
 }
+
+func TestNewHAClientDefaultHeartbeat(t *testing.T) {
+	ha := NewHAClient("ha-heartbeat-default")
+	client := ha.Client()
+
+	if client == nil {
+		t.Fatalf("expected non-nil client from HAClient")
+	}
+	if client.heartbeatInterval.Load() != 30 {
+		t.Fatalf("expected default heartbeatInterval=30, got %d", client.heartbeatInterval.Load())
+	}
+	if client.heartbeatTimeout.Load() != 60 {
+		t.Fatalf("expected default heartbeatTimeout=60, got %d", client.heartbeatTimeout.Load())
+	}
+}

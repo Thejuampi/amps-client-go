@@ -7,6 +7,11 @@ on:
         description: "Release version in X.Y.Z format"
         required: true
         type: string
+      runner_labels:
+        description: "JSON array of runs-on labels"
+        required: true
+        default: '["ubuntu-latest"]'
+        type: string
       dry_run:
         description: "Validate the full release flow without committing, tagging, pushing, or publishing"
         required: true
@@ -22,7 +27,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJson(github.event.inputs.runner_labels) }}
     env:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
       RELEASE_TAG: v${{ github.event.inputs.version }}
@@ -47,21 +52,16 @@ jobs:
           set -euo pipefail
 
           PUSH_TOKEN="${RELEASE_PUSH_TOKEN:-}"
-          if [[ "${RELEASE_DRY_RUN}" != "true" && -z "${PUSH_TOKEN}" ]]; then
-            echo "RELEASE_PUSH_TOKEN is required for non-dry-run workflow releases."
-            exit 1
-          fi
-
           if [[ -z "${PUSH_TOKEN}" ]]; then
             PUSH_TOKEN="${GITHUB_PUSH_TOKEN}"
-            echo "Using GITHUB_TOKEN for dry-run git operations."
+            echo "Using GITHUB_TOKEN for git fetch/push operations."
+            echo "If protected main pushes fail, configure RELEASE_PUSH_TOKEN with bypass rights."
           else
             echo "Using RELEASE_PUSH_TOKEN for git fetch/push operations."
           fi
- 
+
           git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          echo "GH_TOKEN=${PUSH_TOKEN}" >> "$GITHUB_ENV"
- 
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
@@ -76,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
- 
+
           if [[ ! "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Version must match X.Y.Z, got '${RELEASE_VERSION}'."
             exit 1
@@ -94,33 +94,72 @@ jobs:
             exit 1
           fi
 
-      - name: Validate workflow runner
+      - name: Update version files
         shell: bash
         run: |
           set -euo pipefail
 
-          for tool in git go make gh pwsh; do
-            if ! command -v "${tool}" >/dev/null 2>&1; then
-              echo "Required tool '${tool}' is not available on the workflow runner."
-              exit 1
-            fi
-          done
+          printf '%s\n' "${RELEASE_VERSION}" > VERSION
+          RELEASE_VERSION="${RELEASE_VERSION}" perl -0pi -e 's/^Version:\s*`[^`]+`$/"Version: `" . $ENV{RELEASE_VERSION} . "`"/me' README.md
+          RELEASE_VERSION="${RELEASE_VERSION}" perl -0pi -e 's/^(\s*ClientVersion\s*=\s*)"[^"]+"/$1 . "\"" . $ENV{RELEASE_VERSION} . "\""/me' amps/client.go
 
-      - name: Run scripted release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ env.GH_TOKEN }}
-        run: |
-          if ($env:RELEASE_DRY_RUN -eq 'true') {
-            & .\release.local.ps1 -Version $env:RELEASE_VERSION -Yes -Hosted -DryRun
-          }
-          else {
-            & .\release.local.ps1 -Version $env:RELEASE_VERSION -Yes -Hosted
-          }
+          if git diff --quiet -- VERSION README.md amps/client.go; then
+            echo "Release version files did not change."
+            exit 1
+          fi
+
+      - name: Release gates
+        run: make release-hosted
 
       - name: Vulnerability scan (advisory)
         continue-on-error: true
         run: make vuln-scan
+
+      - name: Commit release bump
+        if: env.RELEASE_DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add VERSION README.md amps/client.go
+          git commit -m "release: ${RELEASE_TAG}"
+
+      - name: Create annotated tag
+        if: env.RELEASE_DRY_RUN != 'true'
+        run: git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}"
+
+      - name: Push branch and tag
+        if: env.RELEASE_DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git push origin HEAD:main; then
+            echo "Push to main failed."
+            echo "If main is protected, configure the RELEASE_PUSH_TOKEN secret with a token that can bypass branch protection."
+            exit 1
+          fi
+          git push origin "${RELEASE_TAG}"
+
+      - name: Create GitHub release
+        if: env.RELEASE_DRY_RUN != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${RELEASE_TAG}" --verify-tag --generate-notes
+
+      - name: Warm Go proxy and pkg.go.dev (non-blocking)
+        if: env.RELEASE_DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set +e
+          URLS=(
+            "https://proxy.golang.org/github.com/Thejuampi/amps-client-go/@v/${RELEASE_TAG}.info"
+            "https://pkg.go.dev/github.com/Thejuampi/amps-client-go/amps@${RELEASE_TAG}"
+          )
+          for URL in "${URLS[@]}"; do
+            echo "Requesting ${URL}"
+            curl -fsS --retry 3 --retry-delay 2 "${URL}" || true
+          done
+          exit 0
 
       - name: Release summary
         shell: bash
@@ -137,10 +176,11 @@ jobs:
             echo "- Version: ${RELEASE_VERSION}"
             echo "- Tag: ${RELEASE_TAG}"
             echo "- Dry run: ${RELEASE_DRY_RUN}"
-            echo "- Path: release.local.ps1 -Hosted"
-            echo "- Runner: ubuntu-latest"
-            echo "- Perf gate: local strict only"
-            echo "- Parity check: conditional via make release-hosted"
+            if [[ -d ../amps-c++-client-5.3.5.1-Windows ]]; then
+              echo "- Parity check: executed"
+            else
+              echo "- Parity check: skipped because ../amps-c++-client-5.3.5.1-Windows is absent"
+            fi
             if [[ "${RELEASE_DRY_RUN}" != "true" ]]; then
               echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
             fi

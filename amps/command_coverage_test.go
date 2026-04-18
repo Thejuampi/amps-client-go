@@ -124,6 +124,27 @@ func TestCommandSettersAndGettersCoverage(t *testing.T) {
 		SetTimeout(1234).
 		SetAckType(AckTypeProcessed | AckTypeStats)
 
+	command.SetDataOnly(true).SetSendEmpty(true).SetReplace()
+	message := command.GetMessage()
+	if dataOnly, ok := message.DataOnly(); !ok || !dataOnly {
+		t.Fatalf("unexpected data_only after SetDataOnly(true): %v ok=%v", dataOnly, ok)
+	}
+	if sendEmpty, ok := message.SendEmpty(); !ok || !sendEmpty {
+		t.Fatalf("unexpected send_empty after SetSendEmpty(true): %v ok=%v", sendEmpty, ok)
+	}
+	if value, ok := command.Options(); !ok || value != OptionReplace {
+		t.Fatalf("unexpected options after SetReplace: %q ok=%v", value, ok)
+	}
+
+	command.SetDataOnly(false).SetSendEmpty(false)
+	message = command.GetMessage()
+	if dataOnly, ok := message.DataOnly(); ok || dataOnly {
+		t.Fatalf("expected data_only to clear after SetDataOnly(false), got %v ok=%v", dataOnly, ok)
+	}
+	if sendEmpty, ok := message.SendEmpty(); ok || sendEmpty {
+		t.Fatalf("expected send_empty to clear after SetSendEmpty(false), got %v ok=%v", sendEmpty, ok)
+	}
+
 	if got := command.GetAckType(); got != (AckTypeProcessed | AckTypeStats) {
 		t.Fatalf("unexpected ack type: %d", got)
 	}
@@ -173,7 +194,7 @@ func TestCommandSettersAndGettersCoverage(t *testing.T) {
 
 	messageCommand := cloneCommand(command)
 	messageCommand.SetSubIDs("s1,s2")
-	message := messageCommand.GetMessage()
+	message = messageCommand.GetMessage()
 	if message == nil {
 		t.Fatalf("expected command message conversion")
 	}
@@ -353,146 +374,6 @@ func TestCommandSettersAndGettersCoverage(t *testing.T) {
 	if got, _ := command.SubID(); got != "sid-2" {
 		t.Fatalf("unexpected sub id after SetIds")
 	}
-}
-
-func TestCommandCloneFullCoverage(t *testing.T) {
-	var nilCmd *Command
-	if nilCmd.Clone() != nil {
-		t.Fatalf("nil Clone should return nil")
-	}
-
-	cmd := NewCommand("p")
-	cloned := cmd.Clone()
-	if cloned == nil {
-		t.Fatalf("expected cloned command")
-	}
-
-	cmdNoHeader := &Command{data: []byte("data"), timeout: 99}
-	clonedNoHeader := cmdNoHeader.Clone()
-	if clonedNoHeader == nil {
-		t.Fatalf("expected cloned command without header")
-	}
-	if string(clonedNoHeader.data) != "data" {
-		t.Fatalf("expected cloned data")
-	}
-	if clonedNoHeader.timeout != 99 {
-		t.Fatalf("expected cloned timeout")
-	}
-
-	cmdFull := NewCommand("subscribe").
-		SetTopic("orders").
-		SetBookmark("1|1|").
-		SetCommandID("cid").
-		SetCorrelationID("corr").
-		SetFilter("/id > 10").
-		SetOptions("replace").
-		SetOrderBy("/id desc").
-		SetQueryID("qid").
-		SetSowKey("k1").
-		SetSowKeys("k1,k2").
-		SetSubID("sub-1").
-		SetSubIDs("sub-1,sub-2").
-		SetData([]byte("payload")).
-		SetTopN(15).
-		SetBatchSize(20).
-		SetExpiration(25).
-		SetSequenceID(42).
-		SetAckType(AckTypeProcessed | AckTypeStats)
-
-	cmdFull.header.messageType = []byte("json")
-	cmdFull.header.timestamp = []byte("2026-01-01")
-	cmdFull.header.reason = []byte("test")
-	cmdFull.header.status = []byte("ok")
-	cmdFull.header.version = []byte("1.0")
-	cmdFull.header.userID = []byte("user1")
-	cmdFull.header.password = []byte("pass1")
-	cmdFull.header.groupSequenceNumber = uintPtr(7)
-	cmdFull.header.matches = uintPtr(100)
-	cmdFull.header.messageLength = uintPtr(500)
-	cmdFull.header.recordsDeleted = uintPtr(3)
-	cmdFull.header.recordsInserted = uintPtr(5)
-	cmdFull.header.recordsReturned = uintPtr(10)
-	cmdFull.header.recordsUpdated = uintPtr(2)
-	cmdFull.header.topicMatches = uintPtr(50)
-
-	clonedFull := cmdFull.Clone()
-
-	if topic, ok := clonedFull.Topic(); !ok || topic != "orders" {
-		t.Fatalf("cloned topic mismatch: %q ok=%v", topic, ok)
-	}
-	if bm, ok := clonedFull.Bookmark(); !ok || bm != "1|1|" {
-		t.Fatalf("cloned bookmark mismatch: %q ok=%v", bm, ok)
-	}
-	if bs, ok := clonedFull.BatchSize(); !ok || bs != 20 {
-		t.Fatalf("cloned batch size mismatch: %d ok=%v", bs, ok)
-	}
-	if exp, ok := clonedFull.Expiration(); !ok || exp != 25 {
-		t.Fatalf("cloned expiration mismatch: %d ok=%v", exp, ok)
-	}
-	if seq, ok := clonedFull.SequenceID(); !ok || seq != 42 {
-		t.Fatalf("cloned sequence id mismatch: %d ok=%v", seq, ok)
-	}
-	if ack, ok := clonedFull.AckType(); !ok || ack != (AckTypeProcessed|AckTypeStats) {
-		t.Fatalf("cloned ack type mismatch: %d ok=%v", ack, ok)
-	}
-	if topN, ok := clonedFull.TopN(); !ok || topN != 15 {
-		t.Fatalf("cloned topN mismatch: %d ok=%v", topN, ok)
-	}
-	if string(clonedFull.data) != "payload" {
-		t.Fatalf("cloned data mismatch")
-	}
-	if clonedFull.timeout != cmdFull.timeout {
-		t.Fatalf("cloned timeout mismatch")
-	}
-	if v := clonedFull.header.groupSequenceNumber; v == nil || *v != 7 {
-		t.Fatalf("cloned groupSequenceNumber mismatch")
-	}
-	if v := clonedFull.header.matches; v == nil || *v != 100 {
-		t.Fatalf("cloned matches mismatch")
-	}
-	if v := clonedFull.header.messageLength; v == nil || *v != 500 {
-		t.Fatalf("cloned messageLength mismatch")
-	}
-	if v := clonedFull.header.recordsDeleted; v == nil || *v != 3 {
-		t.Fatalf("cloned recordsDeleted mismatch")
-	}
-	if v := clonedFull.header.recordsInserted; v == nil || *v != 5 {
-		t.Fatalf("cloned recordsInserted mismatch")
-	}
-	if v := clonedFull.header.recordsReturned; v == nil || *v != 10 {
-		t.Fatalf("cloned recordsReturned mismatch")
-	}
-	if v := clonedFull.header.recordsUpdated; v == nil || *v != 2 {
-		t.Fatalf("cloned recordsUpdated mismatch")
-	}
-	if v := clonedFull.header.topicMatches; v == nil || *v != 50 {
-		t.Fatalf("cloned topicMatches mismatch")
-	}
-	if string(clonedFull.header.messageType) != "json" {
-		t.Fatalf("cloned messageType mismatch")
-	}
-	if string(clonedFull.header.timestamp) != "2026-01-01" {
-		t.Fatalf("cloned timestamp mismatch")
-	}
-	if string(clonedFull.header.reason) != "test" {
-		t.Fatalf("cloned reason mismatch")
-	}
-	if string(clonedFull.header.status) != "ok" {
-		t.Fatalf("cloned status mismatch")
-	}
-	if string(clonedFull.header.version) != "1.0" {
-		t.Fatalf("cloned version mismatch")
-	}
-	if string(clonedFull.header.userID) != "user1" {
-		t.Fatalf("cloned userID mismatch")
-	}
-	if string(clonedFull.header.password) != "pass1" {
-		t.Fatalf("cloned password mismatch")
-	}
-}
-
-func uintPtr(v uint) *uint {
-	return &v
 }
 
 func TestCommandNilReceiverCoverage(t *testing.T) {

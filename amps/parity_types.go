@@ -25,6 +25,8 @@ const (
 	ConnectionStatePublishReplayed    ConnectionState = 8
 	ConnectionStateHeartbeatInitiated ConnectionState = 16
 	ConnectionStateResubscribed       ConnectionState = 32
+	ConnectionStateReconnecting       ConnectionState = 64
+	ConnectionStateAuthenticating     ConnectionState = 128
 	ConnectionStateUnknown            ConnectionState = 16384
 )
 
@@ -112,6 +114,10 @@ type PublishStore interface {
 	GetLastPersisted() uint64
 	SetErrorOnPublishGap(enabled bool)
 	ErrorOnPublishGap() bool
+}
+
+type publishStoreInitialSequenceSetter interface {
+	SetInitialSequence(sequence uint64)
 }
 
 // BookmarkStore defines persistence operations used for replay and deduplication.
@@ -216,6 +222,8 @@ type clientParityState struct {
 	manualDisconnect       bool
 	recoveryInProgress     bool
 	recoveryRequested      bool
+	slowClientPolicy       *SlowClientPolicy
+	compressionEnabled     bool
 	lock                   sync.Mutex
 }
 
@@ -376,6 +384,9 @@ func (client *Client) buildConnectionInfo() ConnectionInfo {
 		}
 	}
 	info["client_name"] = client.clientName
+	if client.replicationGroup != "" {
+		info["replication_group"] = client.replicationGroup
+	}
 	return info
 }
 

@@ -18,6 +18,14 @@ type fakePublishStore struct {
 	flushErr     error
 	flushCalls   int
 	flushFn      func(time.Duration) error
+
+	replaySingleCalls    int
+	replaySingleSequence uint64
+	replaySingleErr      error
+	lowestUnpersisted    uint64
+	lastPersisted        uint64
+	errorOnPublishGap    bool
+	initialSequence      uint64
 }
 
 func (store *fakePublishStore) Store(command *amps.Command) (uint64, error) {
@@ -49,7 +57,11 @@ func (store *fakePublishStore) Replay(replayer func(*amps.Command) error) error 
 }
 
 func (store *fakePublishStore) ReplaySingle(replayer func(*amps.Command) error, sequence uint64) (bool, error) {
-	_ = sequence
+	store.replaySingleCalls++
+	store.replaySingleSequence = sequence
+	if store.replaySingleErr != nil {
+		return false, store.replaySingleErr
+	}
 	if len(store.replayData) == 0 || replayer == nil {
 		return false, nil
 	}
@@ -64,12 +76,15 @@ func (store *fakePublishStore) Flush(timeout time.Duration) error {
 	}
 	return store.flushErr
 }
-func (store *fakePublishStore) GetLowestUnpersisted() uint64 { return 0 }
-func (store *fakePublishStore) GetLastPersisted() uint64     { return 0 }
+func (store *fakePublishStore) GetLowestUnpersisted() uint64 { return store.lowestUnpersisted }
+func (store *fakePublishStore) GetLastPersisted() uint64     { return store.lastPersisted }
 func (store *fakePublishStore) SetErrorOnPublishGap(enabled bool) {
-	_ = enabled
+	store.errorOnPublishGap = enabled
 }
-func (store *fakePublishStore) ErrorOnPublishGap() bool { return false }
+func (store *fakePublishStore) ErrorOnPublishGap() bool { return store.errorOnPublishGap }
+func (store *fakePublishStore) SetInitialSequence(sequence uint64) {
+	store.initialSequence = sequence
+}
 
 type fakeBookmarkStoreWithErrors struct {
 	inner                    *amps.MemoryBookmarkStore
@@ -561,6 +576,109 @@ func TestStoresCoverage(t *testing.T) {
 	if err := replayHybrid.Replay(func(*amps.Command) error { return nil }); err == nil {
 		t.Fatalf("expected primary replay error")
 	}
+
+	replayFallbackPrimary := &fakePublishStore{}
+	replayFallbackSecondary := &fakePublishStore{replayData: []*amps.Command{amps.NewCommand("publish").SetTopic("secondary")}}
+	replaySingleHybrid := &HybridPublishStore{primary: replayFallbackPrimary, secondary: replayFallbackSecondary}
+	found, err := replaySingleHybrid.ReplaySingle(func(command *amps.Command) error {
+		topic, _ := command.Topic()
+		if topic != "secondary" {
+			t.Fatalf("unexpected replay single topic: %q", topic)
+		}
+		return nil
+	}, 44)
+	if err != nil || !found {
+		t.Fatalf("expected replay single fallback success, found=%v err=%v", found, err)
+	}
+	if replayFallbackPrimary.replaySingleCalls != 1 || replayFallbackSecondary.replaySingleCalls != 1 {
+		t.Fatalf("expected replay single to try primary then secondary, got primary=%d secondary=%d", replayFallbackPrimary.replaySingleCalls, replayFallbackSecondary.replaySingleCalls)
+	}
+	if replayFallbackPrimary.replaySingleSequence != 44 || replayFallbackSecondary.replaySingleSequence != 44 {
+		t.Fatalf("expected replay single sequence to be forwarded, got primary=%d secondary=%d", replayFallbackPrimary.replaySingleSequence, replayFallbackSecondary.replaySingleSequence)
+	}
+
+	replayPrimaryOnly := &fakePublishStore{replayData: []*amps.Command{amps.NewCommand("publish").SetTopic("primary")}}
+	replayPrimaryOnlySecondary := &fakePublishStore{replayData: []*amps.Command{amps.NewCommand("publish").SetTopic("secondary")}}
+	replayPrimaryOnlyHybrid := &HybridPublishStore{primary: replayPrimaryOnly, secondary: replayPrimaryOnlySecondary}
+	found, err = replayPrimaryOnlyHybrid.ReplaySingle(func(command *amps.Command) error {
+		topic, _ := command.Topic()
+		if topic != "primary" {
+			t.Fatalf("unexpected primary replay single topic: %q", topic)
+		}
+		return nil
+	}, 45)
+	if err != nil || !found {
+		t.Fatalf("expected replay single primary success, found=%v err=%v", found, err)
+	}
+	if replayPrimaryOnlySecondary.replaySingleCalls != 0 {
+		t.Fatalf("expected secondary replay single to be skipped when primary succeeds")
+	}
+
+	replayPrimaryError := &fakePublishStore{replaySingleErr: errors.New("replay single failed")}
+	replayPrimaryErrorSecondary := &fakePublishStore{replayData: []*amps.Command{amps.NewCommand("publish").SetTopic("secondary")}}
+	replayPrimaryErrorHybrid := &HybridPublishStore{primary: replayPrimaryError, secondary: replayPrimaryErrorSecondary}
+	found, err = replayPrimaryErrorHybrid.ReplaySingle(func(*amps.Command) error { return nil }, 46)
+	if err == nil || found {
+		t.Fatalf("expected replay single primary error, found=%v err=%v", found, err)
+	}
+	if replayPrimaryErrorSecondary.replaySingleCalls != 0 {
+		t.Fatalf("expected secondary replay single to be skipped on primary error")
+	}
+
+	countPrimary := &fakePublishStore{replayData: []*amps.Command{amps.NewCommand("publish")}, lowestUnpersisted: 9, lastPersisted: 15, errorOnPublishGap: true}
+	countSecondary := &fakePublishStore{replayData: []*amps.Command{amps.NewCommand("publish"), amps.NewCommand("publish")}, lowestUnpersisted: 7, lastPersisted: 19}
+	countHybrid := &HybridPublishStore{primary: countPrimary, secondary: countSecondary}
+	if count := countHybrid.UnpersistedCount(); count != 3 {
+		t.Fatalf("unexpected UnpersistedCount: %d", count)
+	}
+	if lowest := countHybrid.GetLowestUnpersisted(); lowest != 7 {
+		t.Fatalf("unexpected GetLowestUnpersisted: %d", lowest)
+	}
+	if last := countHybrid.GetLastPersisted(); last != 19 {
+		t.Fatalf("unexpected GetLastPersisted: %d", last)
+	}
+	if !countHybrid.ErrorOnPublishGap() {
+		t.Fatalf("expected ErrorOnPublishGap to reflect primary store")
+	}
+	countHybrid.SetErrorOnPublishGap(false)
+	if countPrimary.errorOnPublishGap || countSecondary.errorOnPublishGap {
+		t.Fatalf("expected SetErrorOnPublishGap(false) to update both stores")
+	}
+	countHybrid.SetInitialSequence(88)
+	if countPrimary.initialSequence != 88 || countSecondary.initialSequence != 88 {
+		t.Fatalf("expected SetInitialSequence to update both stores, got primary=%d secondary=%d", countPrimary.initialSequence, countSecondary.initialSequence)
+	}
+
+	if lowest := (&HybridPublishStore{primary: &fakePublishStore{lowestUnpersisted: 0}, secondary: &fakePublishStore{lowestUnpersisted: 12}}).GetLowestUnpersisted(); lowest != 12 {
+		t.Fatalf("expected secondary lowest unpersisted when primary is zero, got %d", lowest)
+	}
+	if lowest := (&HybridPublishStore{primary: &fakePublishStore{lowestUnpersisted: 12}, secondary: &fakePublishStore{lowestUnpersisted: 0}}).GetLowestUnpersisted(); lowest != 12 {
+		t.Fatalf("expected primary lowest unpersisted when secondary is zero, got %d", lowest)
+	}
+	if lowest := (&HybridPublishStore{primary: &fakePublishStore{lowestUnpersisted: 5}, secondary: &fakePublishStore{lowestUnpersisted: 12}}).GetLowestUnpersisted(); lowest != 5 {
+		t.Fatalf("expected smaller primary lowest unpersisted, got %d", lowest)
+	}
+	if last := (&HybridPublishStore{primary: &fakePublishStore{lastPersisted: 22}, secondary: &fakePublishStore{lastPersisted: 19}}).GetLastPersisted(); last != 22 {
+		t.Fatalf("expected larger primary last persisted, got %d", last)
+	}
+
+	if found, err := nilHybrid.ReplaySingle(nil, 1); found || err != nil {
+		t.Fatalf("nil hybrid ReplaySingle should noop")
+	}
+	if count := nilHybrid.UnpersistedCount(); count != 0 {
+		t.Fatalf("nil hybrid UnpersistedCount should be zero, got %d", count)
+	}
+	if lowest := nilHybrid.GetLowestUnpersisted(); lowest != 0 {
+		t.Fatalf("nil hybrid GetLowestUnpersisted should be zero, got %d", lowest)
+	}
+	if last := nilHybrid.GetLastPersisted(); last != 0 {
+		t.Fatalf("nil hybrid GetLastPersisted should be zero, got %d", last)
+	}
+	nilHybrid.SetErrorOnPublishGap(true)
+	if nilHybrid.ErrorOnPublishGap() {
+		t.Fatalf("nil hybrid ErrorOnPublishGap should be false")
+	}
+	nilHybrid.SetInitialSequence(99)
 
 	logged := NewLoggedBookmarkStore(nil)
 	message := amps.NewCommand("publish").

@@ -24,21 +24,21 @@ Required state assumptions:
 
 | Method | Required State | Purpose | Notes |
 |---|---|---|---|
-| `NewClient(clientName ...string)` | None | Construct client instance | Initializes routing and parity state.
-| `Connect(uri string)` | Constructed | Open transport connection | Persists URI for connection info and reconnect.
-| `Logon(optionalParams ...LogonParams)` | Connected | Authenticate session | Supports timeout, auth, and correlation options.
-| `Disconnect()` / `Close()` | Any | Stop transport and message routes | Emits disconnect path and closes socket resources.
-| `ClientName()` / `SetClientName(...)` | Any | Manage client identity | C++ parity aliases: `Name` / `SetName`.
-| `SetLogonCorrelationID(...)` | Before `Logon` | Set logon correlation metadata | Alias parity: `SetLogonCorrelationData`.
-| `SetHeartbeat(interval, timeout)` | Connected/logged on | Configure heartbeat policy | Effective only when endpoint heartbeat behavior is enabled.
+| `NewClient(clientName ...string)` | None | Construct client instance | Initializes routing and parity state. |
+| `Connect(uri string)` | Constructed | Open transport connection | Persists URI for connection info and reconnect. |
+| `Logon(optionalParams ...LogonParams)` | Connected | Authenticate session | Supports timeout, auth, and correlation options. |
+| `Disconnect()` / `Close()` | Any | Stop transport and message routes | Emits disconnect path and closes socket resources. |
+| `ClientName()` / `SetClientName(...)` | Any | Manage client identity | C++ parity aliases: `Name` / `SetName`. |
+| `SetLogonCorrelationID(...)` | Before `Logon` | Set logon correlation metadata | Alias parity: `SetLogonCorrelationData`. |
+| `SetHeartbeat(interval, timeout)` | Connected/logged on | Configure heartbeat policy | Effective only when endpoint heartbeat behavior is enabled. |
 
 ## Command Execution Entrypoints
 
 | Method | Required State | Purpose | Return |
 |---|---|---|---|
-| `Execute(command)` | Connected | Sync command execution | `*MessageStream`
-| `ExecuteAsync(command, handler)` | Connected | Async command with callback routing | route ID
-| `ExecuteAsyncNoResubscribe(...)` | Connected | Async command excluded from resubscribe tracking | route ID
+| `Execute(command)` | Connected | Sync command execution | `*MessageStream` |
+| `ExecuteAsync(command, handler)` | Connected | Async command with callback routing | route ID |
+| `ExecuteAsyncNoResubscribe(...)` | Connected | Async command excluded from resubscribe tracking | route ID |
 
 Execution semantics:
 
@@ -75,17 +75,17 @@ Recovery checklist:
 ```go
 client := amps.NewClient("entrypoint-example")
 if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
-	panic(err)
+ panic(err)
 }
 defer client.Close()
 
 if err := client.Logon(); err != nil {
-	panic(err)
+ panic(err)
 }
 
 stream, err := client.Execute(amps.NewCommand("flush"))
 if err != nil {
-	panic(err)
+ panic(err)
 }
 defer stream.Close()
 ```

@@ -59,15 +59,15 @@ Store policy:
 
 ```go
 client.SetRetryOnDisconnect(true).
-	SetAutoAck(true).
-	SetAckBatchSize(100).
-	SetAckTimeout(time.Second).
-	SetPublishStore(amps.NewFilePublishStore("state/publish.json")).
-	SetBookmarkStore(amps.NewFileBookmarkStore("state/bookmarks.json"))
+ SetAutoAck(true).
+ SetAckBatchSize(100).
+ SetAckTimeout(time.Second).
+ SetPublishStore(amps.NewFilePublishStore("state/publish.json")).
+ SetBookmarkStore(amps.NewFileBookmarkStore("state/bookmarks.json"))
 
 client.AddConnectionStateListener(amps.ConnectionStateListenerFunc(func(state amps.ConnectionState) {
-	// send connection-state metric
-	_ = state
+ // send connection-state metric
+ _ = state
 }))
 ```
 

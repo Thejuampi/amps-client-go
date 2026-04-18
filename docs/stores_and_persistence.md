@@ -82,22 +82,22 @@ Options:
 
 ```go
 opts := amps.FileStoreOptions{
-	UseWAL:             true,
-	SyncOnWrite:        true,
-	CheckpointInterval: 10,
-	MMap: amps.MMapOptions{
-		Enabled:     true,
-		InitialSize: 64 * 1024,
-	},
+ UseWAL:             true,
+ SyncOnWrite:        true,
+ CheckpointInterval: 10,
+ MMap: amps.MMapOptions{
+  Enabled:     true,
+  InitialSize: 64 * 1024,
+ },
 }
 client.SetPublishStore(amps.NewFilePublishStoreWithOptions("state/publish.json", opts))
 client.SetBookmarkStore(amps.NewFileBookmarkStoreWithOptions("state/bookmarks.json", opts))
 
 if err := client.Publish("orders", `{"id":42}`); err != nil {
-	panic(err)
+ panic(err)
 }
 if err := client.PublishFlush(2 * time.Second); err != nil {
-	panic(err)
+ panic(err)
 }
 ```
 

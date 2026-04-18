@@ -800,3 +800,104 @@ func TestFilePublishStoreLoadCheckpointMaxSequenceRejectsNewCommand(t *testing.T
 		t.Fatalf("expected exhausted checkpoint store to return zero sequence, got %d", sequence)
 	}
 }
+
+func TestMemoryPublishStoreSetInitialSequence(t *testing.T) {
+	store := NewMemoryPublishStore()
+
+	seq, err := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
+	if err != nil || seq != 1 {
+		t.Fatalf("expected first sequence 1, got %d err=%v", seq, err)
+	}
+
+	store.SetInitialSequence(100)
+
+	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
+	if nextErr != nil || nextSeq != 101 {
+		t.Fatalf("expected sequence 101 after SetInitialSequence(100), got %d err=%v", nextSeq, nextErr)
+	}
+}
+
+func TestMemoryPublishStoreSetInitialSequenceNoOpIfSmaller(t *testing.T) {
+	store := NewMemoryPublishStore()
+
+	store.SetInitialSequence(50)
+
+	seq, err := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
+	if err != nil || seq != 51 {
+		t.Fatalf("expected sequence 51, got %d err=%v", seq, err)
+	}
+
+	store.SetInitialSequence(30)
+
+	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
+	if nextErr != nil || nextSeq != 52 {
+		t.Fatalf("expected sequence 52 (SetInitialSequence(30) should be no-op), got %d err=%v", nextSeq, nextErr)
+	}
+}
+
+func TestMemoryPublishStoreSetInitialSequenceNilReceiver(t *testing.T) {
+	var store *MemoryPublishStore
+	store.SetInitialSequence(100)
+}
+
+func TestFilePublishStoreSetInitialSequence(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "store_initial_seq.json")
+
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	seq, err := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
+	if err != nil || seq != 1 {
+		t.Fatalf("expected first sequence 1, got %d err=%v", seq, err)
+	}
+
+	store.SetInitialSequence(200)
+
+	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
+	if nextErr != nil || nextSeq != 201 {
+		t.Fatalf("expected sequence 201 after SetInitialSequence(200), got %d err=%v", nextSeq, nextErr)
+	}
+}
+
+func TestFilePublishStoreSetInitialSequencePersistsAcrossReload(t *testing.T) {
+	cases := []struct {
+		name    string
+		options FileStoreOptions
+	}{
+		{
+			name: "no-wal",
+			options: FileStoreOptions{
+				UseWAL:             false,
+				SyncOnWrite:        false,
+				CheckpointInterval: 100,
+			},
+		},
+		{
+			name: "wal",
+			options: FileStoreOptions{
+				UseWAL:             true,
+				SyncOnWrite:        false,
+				CheckpointInterval: 100,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "store_initial_seq_"+tc.name+".json")
+			store := NewFilePublishStoreWithOptions(path, tc.options)
+
+			firstSeq, firstErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
+			if firstErr != nil || firstSeq != 1 {
+				t.Fatalf("expected first sequence 1, got %d err=%v", firstSeq, firstErr)
+			}
+
+			store.SetInitialSequence(200)
+
+			reloaded := NewFilePublishStoreWithOptions(path, tc.options)
+			nextSeq, nextErr := reloaded.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
+			if nextErr != nil || nextSeq != 201 {
+				t.Fatalf("expected persisted initial sequence to survive reload, got %d err=%v", nextSeq, nextErr)
+			}
+		})
+	}
+}

@@ -38,6 +38,14 @@ const (
 
 	TimedOutError
 
+	SlowClientError
+
+	ServerShuttingDownError
+
+	TransportDisabledError
+
+	AlreadyExistsError
+
 	MessageHandlerError
 
 	UnknownError
@@ -57,6 +65,8 @@ func reasonToError(reason string) error {
 		err = AuthenticationError
 	case "bad regex":
 		err = BadRegexTopicError
+	case "already exists":
+		err = AlreadyExistsError
 	}
 
 	return NewError(err)
@@ -101,6 +111,14 @@ func NewError(errorCode int, message ...interface{}) error {
 		errorName = "SubscriptionAlreadyExistsError"
 	case TimedOutError:
 		errorName = "TimedOutError"
+	case SlowClientError:
+		errorName = "SlowClientError"
+	case ServerShuttingDownError:
+		errorName = "ServerShuttingDownError"
+	case TransportDisabledError:
+		errorName = "TransportDisabledError"
+	case AlreadyExistsError:
+		errorName = "AlreadyExistsError"
 	case MessageHandlerError:
 		errorName = "MessageHandlerError"
 	default:
