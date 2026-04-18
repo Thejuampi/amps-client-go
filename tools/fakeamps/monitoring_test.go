@@ -1970,7 +1970,7 @@ func dialAdminWebSocket(t *testing.T, baseURL string, path string, headers map[s
 	request.WriteString("Upgrade: websocket\r\n")
 	request.WriteString("Connection: Upgrade\r\n")
 	request.WriteString("Sec-WebSocket-Version: 13\r\n")
-	request.WriteString("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n")
+	request.WriteString("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n") // gitleaks:allow
 	for key, value := range headers {
 		request.WriteString(key + ": " + value + "\r\n")
 	}

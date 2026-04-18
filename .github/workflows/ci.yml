@@ -22,9 +22,10 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          check-latest: true
 
-      - name: Static analysis
-        run: make static-scan
+      - name: Code scanning
+        run: make scan
 
       - name: Unit tests
         run: go test ./... -skip Integration
@@ -49,7 +50,3 @@ jobs:
 
       - name: Coverage gate
         run: go run ./tools/coveragegate -profile coverage.out
-
-      - name: Vulnerability scan (advisory)
-        continue-on-error: true
-        run: make vuln-scan

@@ -27,6 +27,9 @@ This is a Go reimplementation of the C++ AMPS client (target: v5.3.5.1), maintai
 
 ```bash
 make build            # go build ./...
+make scan             # blocking code scan suite (static + vuln + secret)
+make security-scan    # govulncheck + gitleaks
+make secret-scan      # secret scan only
 make test             # go test ./... -skip Integration
 make test-race        # go test -race ./... -skip Integration
 make integration-test # go test ./... -run Integration
@@ -39,6 +42,7 @@ make release          # static-scan + unit + race + build + fakeamps integration
 ## Coverage Policy (Enforced)
 
 - Coverage gate is required before merge: `make coverage-check`.
+- Code scanning gate is required before merge: `make scan`.
 - `./amps/...` thresholds are strict: aggregate `>=90%`, pure files `100%`, IO/stateful files `>=80%`.
 - Test design target for changed areas is `>=80%`, but gate values above are mandatory.
 
@@ -55,6 +59,7 @@ make release          # static-scan + unit + race + build + fakeamps integration
 ## Release Gate Policy
 
 - Release verification is `make release`.
+- Release includes the blocking code scan suite (`make scan`), not just local linting.
 - Release may not skip or relax fakeamps-backed integration.
 - Release may not skip or relax parity validation.
 - Strict release environments must provide the sibling C++ reference tree at `../amps-c++-client-5.3.5.1-Windows`.

@@ -79,6 +79,9 @@ Preferred Make targets:
 
 ```bash
 make build
+make scan
+make security-scan
+make secret-scan
 make static-scan
 make test
 make test-race
@@ -95,6 +98,7 @@ Equivalent direct commands:
 
 ```bash
 go build ./...
+go run github.com/zricethezav/gitleaks/v8@v8.30.1 dir . --no-banner --redact --exit-code 1
 go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks=SA* ./...
 go run github.com/gordonklaus/ineffassign@v0.2.0 ./...
@@ -107,9 +111,17 @@ go vet ./...
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
-go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.25.9+auto -- go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 go run ./tools/perfgate -baseline tools/perf_baseline.json
 ```
+
+Code scanning stack:
+- `make static-scan`: Go correctness and API misuse (`go vet`, `staticcheck`, `ineffassign`, `errcheck`)
+- `make vuln-scan`: Go dependency and stdlib vulnerability scan on patched Go `1.25.9`
+- `make secret-scan`: secret leak detection with `gitleaks`
+- GitHub CodeQL: correctness and security queries on PRs, pushes, and schedule
+- GitHub dependency review: blocks PRs that introduce vulnerable dependencies
+- Dependabot: keeps Go modules and GitHub Actions updated
 
 ### Focused test commands (important)
 
@@ -141,6 +153,7 @@ go test ./amps -run '^TestName$' -count=1 -v
 
 - Test design target for changed feature areas: `>= 80%` coverage.
 - Coverage gate is mandatory and must pass before merge (`make coverage-check`).
+- `make scan` is mandatory before merge for changes that affect shipped code or release process.
 - Enforced repository gate for `./amps/...`:
   - aggregate `>= 90%`
   - pure files `100%`
@@ -233,6 +246,7 @@ Never skip RED.
 - Mutation resistance reviewed for all changed logic.
 - At least a few likely mutations spot-checked on non-trivial changes.
 - `make static-scan` run.
+- `make scan` run.
 - Focused tests run.
 - `go test ./...` run.
 - Coverage gate verified (`make coverage-check` or equivalent).

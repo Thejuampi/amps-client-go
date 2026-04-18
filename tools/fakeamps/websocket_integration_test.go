@@ -135,7 +135,7 @@ func TestWebSocketUpgradeAndLogonCommandFlow(t *testing.T) {
 		"Upgrade: websocket",
 		"Connection: Upgrade",
 		"Sec-WebSocket-Version: 13",
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", // gitleaks:allow
 		"X-Preflight-Token: parity",
 		"",
 		"",

@@ -66,6 +66,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          check-latest: true
 
       - name: Configure git identity
         run: |
@@ -110,10 +111,6 @@ jobs:
 
       - name: Release gates
         run: make release-hosted
-
-      - name: Vulnerability scan (advisory)
-        continue-on-error: true
-        run: make vuln-scan
 
       - name: Commit release bump
         if: env.RELEASE_DRY_RUN != 'true'
