@@ -901,3 +901,36 @@ func TestFilePublishStoreSetInitialSequencePersistsAcrossReload(t *testing.T) {
 		})
 	}
 }
+
+func TestFilePublishStoreReplaySingleCoverage(t *testing.T) {
+	var nilStore *FilePublishStore
+	if found, err := nilStore.ReplaySingle(nil, 1); err == nil || found {
+		t.Fatalf("expected nil FilePublishStore ReplaySingle error, found=%v err=%v", found, err)
+	}
+
+	loadErrStore := &FilePublishStore{
+		MemoryPublishStore: NewMemoryPublishStore(),
+		loadErr:            errors.New("load failed"),
+	}
+	if found, err := loadErrStore.ReplaySingle(nil, 1); err == nil || err.Error() != "load failed" || found {
+		t.Fatalf("expected load error from FilePublishStore ReplaySingle, found=%v err=%v", found, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "store_replay_single.json")
+	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	sequence, err := store.Store(NewCommand("publish").SetTopic("orders").SetData([]byte("payload")))
+	if err != nil {
+		t.Fatalf("Store() error = %v", err)
+	}
+
+	found, err := store.ReplaySingle(func(command *Command) error {
+		topic, _ := command.Topic()
+		if topic != "orders" {
+			t.Fatalf("unexpected replayed topic: %q", topic)
+		}
+		return nil
+	}, sequence)
+	if err != nil || !found {
+		t.Fatalf("expected ReplaySingle hit, found=%v err=%v", found, err)
+	}
+}

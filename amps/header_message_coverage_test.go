@@ -48,6 +48,15 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	if value, ok := parseUint32Value([]byte("42")); !ok || value != 42 {
 		t.Fatalf("unexpected parseUint32Value value=%d ok=%v", value, ok)
 	}
+	if _, ok := parseUintValueWithMax([]byte("4294967296"), (1<<32)-1); ok {
+		t.Fatalf("overflow parseUintValueWithMax should fail")
+	}
+	if _, ok := parseUintValueWithMax([]byte("12a"), (1<<32)-1); ok {
+		t.Fatalf("non-digit parseUintValueWithMax should fail")
+	}
+	if value, ok := parseUintValueWithMax([]byte("42"), (1<<32)-1); !ok || value != 42 {
+		t.Fatalf("unexpected parseUintValueWithMax value=%d ok=%v", value, ok)
+	}
 	if value, ok := parseUint64Value([]byte("18446744073709551615")); !ok || value == 0 {
 		t.Fatalf("expected parseUint64Value success, got value=%d ok=%v", value, ok)
 	}

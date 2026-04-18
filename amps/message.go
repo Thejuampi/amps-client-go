@@ -2,7 +2,6 @@ package amps
 
 import (
 	"errors"
-	"strconv"
 	"time"
 )
 
@@ -1148,9 +1147,8 @@ func (m *Message) GracePeriod() (uint, bool) {
 func (m *Message) LeasePeriodUint() (uint, bool) {
 	header := messageHeader(m)
 	if header != nil && header.leasePeriod != nil {
-		val, err := strconv.ParseUint(string(header.leasePeriod), 10, 64)
-		if err == nil {
-			return uint(val), true
+		if val, ok := parseUintValue(header.leasePeriod); ok {
+			return val, true
 		}
 	}
 	return 0, false

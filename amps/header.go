@@ -171,9 +171,10 @@ func (header *_Header) parseField(key []byte, value []byte) {
 		case bytesEqualString(key, "filter"):
 			header.filter = value
 		case bytesEqualString(key, "skip_n"):
-			val, _ := strconv.ParseUint(string(value), 10, 64)
-			v := uint(val)
-			header.skipN = &v
+			if parsed, ok := parseUintValue(value); ok {
+				v := parsed
+				header.skipN = &v
+			}
 		}
 	case 7:
 		switch key[0] {
@@ -235,9 +236,10 @@ func (header *_Header) parseField(key []byte, value []byte) {
 					header.topicMatches = &header.topicMatchesValue
 				}
 			case bytesEqualString(key, "timeout_interval"):
-				val, _ := strconv.ParseUint(string(value), 10, 64)
-				v := uint(val)
-				header.timeoutInterval = &v
+				if parsed, ok := parseUintValue(value); ok {
+					v := parsed
+					header.timeoutInterval = &v
+				}
 			}
 		case 'd':
 			if bytesEqualString(key, "data_only") {
@@ -246,14 +248,15 @@ func (header *_Header) parseField(key []byte, value []byte) {
 		case 'g':
 			switch {
 			case bytesEqualString(key, "group_sequence_number"), bytesEqualString(key, "gseq"):
-				val, _ := strconv.ParseUint(string(value), 10, 64)
-				v := uint(val)
-				header.groupSequenceNumberValue = v
-				header.groupSequenceNumber = &header.groupSequenceNumberValue
+				if parsed, ok := parseUintValue(value); ok {
+					header.groupSequenceNumberValue = parsed
+					header.groupSequenceNumber = &header.groupSequenceNumberValue
+				}
 			case bytesEqualString(key, "grace_period"):
-				val, _ := strconv.ParseUint(string(value), 10, 64)
-				v := uint(val)
-				header.gracePeriod = &v
+				if parsed, ok := parseUintValue(value); ok {
+					v := parsed
+					header.gracePeriod = &v
+				}
 			}
 		case 'l':
 			if bytesEqualString(key, "lease_period") {
@@ -262,9 +265,10 @@ func (header *_Header) parseField(key []byte, value []byte) {
 		case 'm':
 			switch {
 			case bytesEqualString(key, "maximum_messages"), bytesEqualString(key, "max_msgs"):
-				val, _ := strconv.ParseUint(string(value), 10, 64)
-				v := uint(val)
-				header.maximumMessages = &v
+				if parsed, ok := parseUintValue(value); ok {
+					v := parsed
+					header.maximumMessages = &v
+				}
 			}
 		}
 	}

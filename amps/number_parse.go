@@ -25,19 +25,17 @@ func parseUintBytes(value []byte) (uint64, bool) {
 }
 
 func parseUint32Value(value []byte) (uint, bool) {
-	if len(value) == 0 {
+	return parseUintValueWithMax(value, (1<<32)-1)
+}
+
+func parseUintValue(value []byte) (uint, bool) {
+	return parseUintValueWithMax(value, uint64(^uint(0)))
+}
+
+func parseUintValueWithMax(value []byte, max uint64) (uint, bool) {
+	result, ok := parseUintBytes(value)
+	if !ok || result > max {
 		return 0, false
-	}
-	var result uint64
-	for index := 0; index < len(value); index++ {
-		var digit = value[index]
-		if digit < '0' || digit > '9' {
-			return 0, false
-		}
-		result = (result * 10) + uint64(digit-'0')
-		if result > (1<<32)-1 {
-			return 0, false
-		}
 	}
 	return uint(result), true
 }
