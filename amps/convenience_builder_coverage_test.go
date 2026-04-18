@@ -1,6 +1,7 @@
 package amps
 
 import (
+	"crypto/tls"
 	"errors"
 	"strings"
 	"testing"
@@ -60,10 +61,25 @@ func TestConvenienceHelpersCoverage(t *testing.T) {
 	if client.tlsConfig == nil || len(client.tlsConfig.CipherSuites) != 1 || client.tlsConfig.CipherSuites[0] != 0x1301 {
 		t.Fatalf("unexpected TLS cipher suites: %+v", client.tlsConfig)
 	}
-	client.SetTLSMinVersion(0x0304)
+	var reported error
+	client.SetErrorHandler(func(err error) {
+		reported = err
+	})
+	client.SetTLSMinVersion(tls.VersionTLS10)
 	client.SetTLSInsecureSkipVerify(true)
-	if client.tlsConfig.MinVersion != 0x0304 || !client.tlsConfig.InsecureSkipVerify {
+	if client.tlsConfig.MinVersion != 0x0303 || !client.tlsConfig.InsecureSkipVerify {
 		t.Fatalf("unexpected TLS config after existing-config setters: %+v", client.tlsConfig)
+	}
+	if reported == nil || !strings.Contains(reported.Error(), "TLS 1.2") {
+		t.Fatalf("expected insecure TLS min version warning, got %v", reported)
+	}
+	reported = nil
+	client.SetTLSMinVersion(tls.VersionTLS13)
+	if client.tlsConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("expected secure TLS minimum to be preserved, got %d", client.tlsConfig.MinVersion)
+	}
+	if reported != nil {
+		t.Fatalf("expected no warning for secure TLS min version, got %v", reported)
 	}
 
 	if !IsEntitlementReadError(errors.New("wrapped entitlement_read failure")) || IsEntitlementReadError(nil) {
@@ -234,6 +250,9 @@ func TestMessageTypeBuildersCoverage(t *testing.T) {
 	}
 	if encoded := appendMsgPackString(nil, strings.Repeat("c", 300)); len(encoded) == 0 || encoded[0] != 0xda {
 		t.Fatalf("expected str16 encoding, got %v", encoded[:1])
+	}
+	if encoded := appendMsgPackString(nil, strings.Repeat("d", 65536)); len(encoded) == 0 || encoded[0] != 0xdb {
+		t.Fatalf("expected str32 encoding, got %v", encoded[:1])
 	}
 	tooLargeMessagePack := NewMessagePackBuilder()
 	for i := 0; i < 16; i++ {

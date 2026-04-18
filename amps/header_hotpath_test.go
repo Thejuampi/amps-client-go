@@ -253,6 +253,34 @@ func TestHeaderParseTopicOnlyUnquotedFastPathRejectsEmptyTopic(t *testing.T) {
 	}
 }
 
+func TestHeaderParseResetClearsExtendedTextExtras(t *testing.T) {
+	message := &Message{header: new(_Header)}
+
+	if _, err := parseHeader(message, true, []byte(`{"lease_period":"7","data_only":"true","t":"orders"}tail`)); err != nil {
+		t.Fatalf("parse header with extended text extras failed: %v", err)
+	}
+	if leasePeriod, ok := message.LeasePeriod(); !ok || leasePeriod != "7" {
+		t.Fatalf("expected lease period after first parse, got (%q, %v)", leasePeriod, ok)
+	}
+	if dataOnly, ok := message.DataOnly(); !ok || !dataOnly {
+		t.Fatalf("expected data_only after first parse, got (%v, %v)", dataOnly, ok)
+	}
+
+	left, err := parseHeader(message, true, []byte(`"t":orders}tail`))
+	if err != nil {
+		t.Fatalf("parse topic-only fast path failed: %v", err)
+	}
+	if string(left) != "tail" {
+		t.Fatalf("unexpected payload tail: got %q", string(left))
+	}
+	if _, ok := message.LeasePeriod(); ok {
+		t.Fatalf("expected reset parse to clear stale lease period")
+	}
+	if _, ok := message.DataOnly(); ok {
+		t.Fatalf("expected reset parse to clear stale data_only")
+	}
+}
+
 func TestHeaderWriteStrictParityFixtureExactOutput(t *testing.T) {
 	var header = strictParityHeaderWriteBenchmarkHeader()
 	var buffer = bytes.NewBuffer(nil)

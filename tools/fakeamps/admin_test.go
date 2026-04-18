@@ -79,6 +79,9 @@ func TestNewAdminServerAppliesHeadersAndCipherSuites(t *testing.T) {
 	if server.TLSConfig.MaxVersion != tls.VersionTLS12 {
 		t.Fatalf("server.TLSConfig.MaxVersion = %d, want TLS 1.2 for TLS 1.2-only suites", server.TLSConfig.MaxVersion)
 	}
+	if server.ReadHeaderTimeout <= 0 {
+		t.Fatalf("server.ReadHeaderTimeout = %v, want a defensive timeout", server.ReadHeaderTimeout)
+	}
 }
 
 func TestBuildAdminTLSConfigRejectsTLS13CipherSuites(t *testing.T) {

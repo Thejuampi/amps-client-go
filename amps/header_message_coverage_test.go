@@ -384,7 +384,7 @@ func TestMessageCopyAndReplaceCoverage(t *testing.T) {
 	message.header.expiration = func() *uint { v := uint(3); return &v }()
 	message.header.filter = []byte("/id > 1")
 	message.header.groupSequenceNumber = func() *uint { v := uint(4); return &v }()
-	message.header.leasePeriod = []byte("lease")
+	ensureHeaderTextExtras(message.header).leasePeriod = []byte("lease")
 	message.header.matches = func() *uint { v := uint(5); return &v }()
 	message.header.messageLength = func() *uint { v := uint(6); return &v }()
 	message.header.options = []byte("opts")
@@ -461,7 +461,7 @@ func TestMessageAccessorsCoverage(t *testing.T) {
 	message.header.topic = []byte("orders")
 	message.header.userID = []byte("user")
 	message.header.bookmark = []byte("1|1|")
-	message.header.leasePeriod = []byte("lease")
+	ensureHeaderTextExtras(message.header).leasePeriod = []byte("lease")
 	message.rawTransmissionTime = time.Now().UTC().Format(time.RFC3339Nano)
 
 	ack := AckTypeProcessed

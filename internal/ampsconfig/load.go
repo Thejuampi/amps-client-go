@@ -347,6 +347,7 @@ func SampleConfig() string {
 }
 
 func expandConfigFile(path string, opts LoadOptions, stack map[string]bool, includeComments bool) (string, error) {
+	// #nosec G304 -- config path and include expansion are explicit operator-controlled inputs.
 	var contentBytes, err = os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read config %s: %w", path, err)

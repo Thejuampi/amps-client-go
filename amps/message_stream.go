@@ -1,6 +1,7 @@
 package amps
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 
@@ -17,6 +18,8 @@ const (
 	messageStreamStateDisconnected = 0x01
 	messageStreamStateComplete     = 0x02
 )
+
+const maxMessageStreamTimeoutMillis = uint64(math.MaxInt64 / int64(time.Millisecond))
 
 // MessageStream stores exported state used by AMPS client APIs.
 type MessageStream struct {
@@ -213,7 +216,9 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.current != nil
 	}
 
-	if message, ok := ms.queue.waitDequeueTimeout(time.Millisecond * time.Duration(ms.timeout)); ok { // #nosec G115 -- timeout is caller-provided stream config
+	if message, ok := ms.queue.waitDequeueTimeout(
+		time.Millisecond * time.Duration(clampMessageStreamTimeoutMillis(ms.timeout)),
+	); ok {
 		ms.setCurrentFromQueue(message)
 		return true
 	}
@@ -223,6 +228,10 @@ func (ms *MessageStream) HasNext() bool {
 
 	ms.timedOut.Store(true)
 	return true
+}
+
+func clampMessageStreamTimeoutMillis(timeout uint64) uint64 {
+	return min(timeout, maxMessageStreamTimeoutMillis)
 }
 
 func (ms *MessageStream) consumeConflateState() {
@@ -440,7 +449,11 @@ func (ms *MessageStream) setState(state int32) {
 }
 
 func newMessageStream(client *Client) *MessageStream {
-	return &MessageStream{state: messageStreamStateUnset, client: client, queue: newQueue(256)}
+	stream := &MessageStream{}
+	stream.state = messageStreamStateUnset
+	stream.client = client
+	stream.queue = newQueue(256)
+	return stream
 }
 
 type _MessageQueue struct {

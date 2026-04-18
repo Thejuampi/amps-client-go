@@ -1,10 +1,13 @@
 package amps
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // JSONMessageBuilder constructs JSON-formatted messages for AMPS.
@@ -205,8 +208,14 @@ func appendMsgPackString(buf []byte, s string) []byte {
 		buf = append(buf, 0xa0|byte(len(s))) // fixstr
 	} else if len(s) <= 255 {
 		buf = append(buf, 0xd9, byte(len(s))) // str8
+	} else if length, ok := safecast.Uint16FromIntChecked(len(s)); ok {
+		buf = append(buf, 0xda, 0x00, 0x00) // str16
+		binary.BigEndian.PutUint16(buf[len(buf)-2:], length)
+	} else if length, ok := safecast.Uint32FromIntChecked(len(s)); ok {
+		buf = append(buf, 0xdb, 0x00, 0x00, 0x00, 0x00) // str32
+		binary.BigEndian.PutUint32(buf[len(buf)-4:], length)
 	} else {
-		buf = append(buf, 0xda, byte(len(s)>>8), byte(len(s))) // str16
+		return nil
 	}
 	buf = append(buf, s...)
 	return buf
@@ -245,13 +254,18 @@ func (b *BSONMessageBuilder) Bytes() []byte {
 		body = append(body, 0x02) // string type
 		body = appendBSONCString(body, f.key)
 		body = appendBSONString(body, f.val)
+		if body == nil {
+			return nil
+		}
 	}
 	body = append(body, 0x00) // document terminator
 
-	var size = int32(len(body) + 4)
-	var header = []byte{
-		byte(size), byte(size >> 8), byte(size >> 16), byte(size >> 24),
+	var size, ok = safecast.Uint32FromIntChecked(len(body) + 4)
+	if !ok {
+		return nil
 	}
+	var header = make([]byte, 4)
+	binary.LittleEndian.PutUint32(header, size)
 	return append(header, body...)
 }
 
@@ -262,8 +276,12 @@ func appendBSONCString(buf []byte, s string) []byte {
 }
 
 func appendBSONString(buf []byte, s string) []byte {
-	var length = int32(len(s) + 1)
-	buf = append(buf, byte(length), byte(length>>8), byte(length>>16), byte(length>>24))
+	var length, ok = safecast.Uint32FromIntChecked(len(s) + 1)
+	if !ok {
+		return nil
+	}
+	buf = append(buf, 0x00, 0x00, 0x00, 0x00)
+	binary.LittleEndian.PutUint32(buf[len(buf)-4:], length)
 	buf = append(buf, s...)
 	buf = append(buf, 0x00)
 	return buf

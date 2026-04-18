@@ -44,6 +44,7 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 
 	snapshot := commandSnapshot{Data: nil}
 	if command.header != nil {
+		var textExtras = headerTextExtras(command.header)
 		snapshot.Command = commandIntToString(command.header.command)
 		value := command.header.command
 		snapshot.CommandEnum = &value
@@ -74,8 +75,8 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 		if command.header.messageType != nil {
 			snapshot.MessageType = string(command.header.messageType)
 		}
-		if command.header.leasePeriod != nil {
-			snapshot.LeasePeriod = string(command.header.leasePeriod)
+		if textExtras != nil && textExtras.leasePeriod != nil {
+			snapshot.LeasePeriod = string(textExtras.leasePeriod)
 		}
 		if command.header.options != nil {
 			snapshot.Options = string(command.header.options)
@@ -113,17 +114,17 @@ func snapshotFromCommand(command *Command) commandSnapshot {
 			value := *command.header.topN
 			snapshot.TopN = &value
 		}
-		if command.header.dataOnly != nil {
-			snapshot.DataOnly = string(command.header.dataOnly)
+		if textExtras != nil && textExtras.dataOnly != nil {
+			snapshot.DataOnly = string(textExtras.dataOnly)
 		}
-		if command.header.sendEmpty != nil {
-			snapshot.SendEmpty = string(command.header.sendEmpty)
+		if textExtras != nil && textExtras.sendEmpty != nil {
+			snapshot.SendEmpty = string(textExtras.sendEmpty)
 		}
-		if command.header.sendKeys != nil {
-			snapshot.SendKeys = string(command.header.sendKeys)
+		if textExtras != nil && textExtras.sendKeys != nil {
+			snapshot.SendKeys = string(textExtras.sendKeys)
 		}
-		if command.header.sendOOF != nil {
-			snapshot.SendOOF = string(command.header.sendOOF)
+		if textExtras != nil && textExtras.sendOOF != nil {
+			snapshot.SendOOF = string(textExtras.sendOOF)
 		}
 		if command.header.skipN != nil {
 			value := *command.header.skipN
@@ -186,7 +187,9 @@ func commandFromSnapshot(snapshot commandSnapshot) *Command {
 		command.header.messageType = []byte(snapshot.MessageType)
 	}
 	if snapshot.LeasePeriod != "" {
-		command.header.leasePeriod = []byte(snapshot.LeasePeriod)
+		if textExtras := ensureHeaderTextExtras(command.header); textExtras != nil {
+			textExtras.leasePeriod = []byte(snapshot.LeasePeriod)
+		}
 	}
 	if snapshot.Options != "" {
 		command.header.options = []byte(snapshot.Options)
@@ -225,16 +228,24 @@ func commandFromSnapshot(snapshot commandSnapshot) *Command {
 		command.header.topN = &value
 	}
 	if snapshot.DataOnly != "" {
-		command.header.dataOnly = []byte(snapshot.DataOnly)
+		if textExtras := ensureHeaderTextExtras(command.header); textExtras != nil {
+			textExtras.dataOnly = []byte(snapshot.DataOnly)
+		}
 	}
 	if snapshot.SendEmpty != "" {
-		command.header.sendEmpty = []byte(snapshot.SendEmpty)
+		if textExtras := ensureHeaderTextExtras(command.header); textExtras != nil {
+			textExtras.sendEmpty = []byte(snapshot.SendEmpty)
+		}
 	}
 	if snapshot.SendKeys != "" {
-		command.header.sendKeys = []byte(snapshot.SendKeys)
+		if textExtras := ensureHeaderTextExtras(command.header); textExtras != nil {
+			textExtras.sendKeys = []byte(snapshot.SendKeys)
+		}
 	}
 	if snapshot.SendOOF != "" {
-		command.header.sendOOF = []byte(snapshot.SendOOF)
+		if textExtras := ensureHeaderTextExtras(command.header); textExtras != nil {
+			textExtras.sendOOF = []byte(snapshot.SendOOF)
+		}
 	}
 	if snapshot.SkipN != nil {
 		value := *snapshot.SkipN

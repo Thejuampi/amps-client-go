@@ -140,8 +140,8 @@ func TestStoreCodecCoverage(t *testing.T) {
 		SetMessageType("json").
 		SetTimeout(2000).
 		SetData([]byte("payload"))
-	command.header.sendKeys = []byte("true")
-	command.header.sendOOF = []byte("true")
+	ensureHeaderTextExtras(command.header).sendKeys = []byte("true")
+	ensureHeaderTextExtras(command.header).sendOOF = []byte("true")
 	command.header.maximumMessages = func() *uint { v := uint(6); return &v }()
 	command.header.timeoutInterval = func() *uint { v := uint(7); return &v }()
 	command.header.gracePeriod = func() *uint { v := uint(8); return &v }()

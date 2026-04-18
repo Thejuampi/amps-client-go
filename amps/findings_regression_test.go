@@ -489,13 +489,14 @@ func TestCommandCloneDeepCopiesExtendedFields(t *testing.T) {
 	if string(cloned.header.topic) != "orders" || string(cloned.header.commandID) != "cmd-1" {
 		t.Fatalf("expected Clone to preserve command identity fields")
 	}
-	if string(cloned.header.messageType) != "json" || string(cloned.header.leasePeriod) != "7" {
+	var clonedTextExtras = headerTextExtras(cloned.header)
+	if string(cloned.header.messageType) != "json" || clonedTextExtras == nil || string(clonedTextExtras.leasePeriod) != "7" {
 		t.Fatalf("expected Clone to preserve extended header fields")
 	}
 	if cloned.header.groupSequenceNumber == nil || *cloned.header.groupSequenceNumber != 11 {
 		t.Fatalf("expected Clone to preserve group sequence number")
 	}
-	if string(cloned.header.dataOnly) != "true" || string(cloned.header.sendEmpty) != "true" {
+	if clonedTextExtras == nil || string(clonedTextExtras.dataOnly) != "true" || string(clonedTextExtras.sendEmpty) != "true" {
 		t.Fatalf("expected Clone to preserve boolean header flags")
 	}
 	if cloned.header.skipN == nil || *cloned.header.skipN != 3 {
@@ -503,7 +504,7 @@ func TestCommandCloneDeepCopiesExtendedFields(t *testing.T) {
 	}
 
 	command.header.topic[0] = 'x'
-	command.header.dataOnly = nil
+	ensureHeaderTextExtras(command.header).dataOnly = nil
 	command.data[0] = 'X'
 
 	if string(cloned.header.topic) != "orders" {
@@ -512,7 +513,7 @@ func TestCommandCloneDeepCopiesExtendedFields(t *testing.T) {
 	if string(cloned.Data()) != "payload" {
 		t.Fatalf("expected Clone to deep copy payload bytes, got %q", string(cloned.Data()))
 	}
-	if string(cloned.header.dataOnly) != "true" {
+	if clonedTextExtras == nil || string(clonedTextExtras.dataOnly) != "true" {
 		t.Fatalf("expected Clone to deep copy flag bytes")
 	}
 }
@@ -594,16 +595,18 @@ func TestMessageCopyPreservesExtendedFields(t *testing.T) {
 			options:             []byte("replace"),
 			filter:              []byte("/id > 10"),
 			messageType:         []byte("json"),
-			leasePeriod:         []byte("7"),
-			dataOnly:            []byte("true"),
-			sendEmpty:           []byte("true"),
-			sendKeys:            []byte("true"),
-			sendOOF:             []byte("true"),
 			groupSequenceNumber: func() *uint { value := uint(11); return &value }(),
 			skipN:               func() *uint { value := uint(3); return &value }(),
 			maximumMessages:     func() *uint { value := uint(5); return &value }(),
 			timeoutInterval:     func() *uint { value := uint(13); return &value }(),
 			gracePeriod:         func() *uint { value := uint(2); return &value }(),
+			textExtras: &_HeaderTextExtras{
+				leasePeriod: []byte("7"),
+				dataOnly:    []byte("true"),
+				sendEmpty:   []byte("true"),
+				sendKeys:    []byte("true"),
+				sendOOF:     []byte("true"),
+			},
 		},
 		data: []byte(`{"id":1}`),
 	}
@@ -661,11 +664,13 @@ func TestMessageCopyAllocationsRemainLow(t *testing.T) {
 			options:     []byte("replace"),
 			filter:      []byte("/id > 10"),
 			messageType: []byte("json"),
-			leasePeriod: []byte("7"),
-			dataOnly:    []byte("true"),
-			sendEmpty:   []byte("true"),
-			sendKeys:    []byte("true"),
-			sendOOF:     []byte("true"),
+			textExtras: &_HeaderTextExtras{
+				leasePeriod: []byte("7"),
+				dataOnly:    []byte("true"),
+				sendEmpty:   []byte("true"),
+				sendKeys:    []byte("true"),
+				sendOOF:     []byte("true"),
+			},
 		},
 		data: []byte(`{"id":1,"name":"test","value":123.45,"active":true}`),
 	}

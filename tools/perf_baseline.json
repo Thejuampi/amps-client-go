@@ -38,7 +38,7 @@
       "allocs_op": 2.0
     },
     "BenchmarkHeaderReset": {
-      "ns_op": 0.108,
+      "ns_op": 5.48,
       "allocs_op": 0.0
     },
     "BenchmarkMessageReset": {

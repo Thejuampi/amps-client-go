@@ -5,11 +5,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1918,6 +1920,40 @@ func TestNotifyWorkspaceRemovalsDoesNotFanoutOOFWhenFanoutDisabled(t *testing.T)
 
 	if body, ok := tryReadFrameBody(subscriberPeer, 150*time.Millisecond); ok {
 		t.Fatalf("received unexpected delta OOF with fanout disabled: %s", body)
+	}
+}
+
+func TestMonitoringInstanceCountsSaturatesAcceptedConnections(t *testing.T) {
+	var previous = globalConnectionsAccepted.Load()
+	globalConnectionsAccepted.Store(math.MaxUint64)
+	defer globalConnectionsAccepted.Store(previous)
+
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var counts = service.instanceCounts()
+	if counts["connections_accepted"] != math.MaxInt64 {
+		t.Fatalf("connections_accepted = %d, want MaxInt64 saturation", counts["connections_accepted"])
+	}
+}
+
+func TestClearSOWTopicRecordsPersistsDiskRemoval(t *testing.T) {
+	var oldSOW = sow
+	var rootDir = filepath.Join(t.TempDir(), "sow-root")
+	sow = newDiskSOWCache(rootDir, 0, evictionNone)
+	defer func() {
+		sow = oldSOW
+	}()
+
+	sow.upsert("orders", "k1", []byte(`{"id":1}`), "bm1", "ts1", 1, 0)
+
+	var cleared, _, ok = clearSOWTopicRecords("orders", "clear")
+	if !ok || cleared != 1 {
+		t.Fatalf("clearSOWTopicRecords() = (%d, ok=%v), want cleared=1 ok=true", cleared, ok)
+	}
+
+	var reloaded = newDiskSOWCache(rootDir, 0, evictionNone)
+	var result = reloaded.query("orders", "", -1, "")
+	if result.totalCount != 0 {
+		t.Fatalf("expected disk-backed clear to remove persisted records, got %d", result.totalCount)
 	}
 }
 

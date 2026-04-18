@@ -7,10 +7,12 @@ INEFFASSIGN_VERSION ?= v0.2.0
 ERRCHECK_VERSION ?= v1.10.0
 GOVULNCHECK_VERSION ?= v1.1.4
 GITLEAKS_VERSION ?= v8.30.1
+GOSEC_VERSION ?= v2.22.4
 COVERPROFILE ?= $(abspath coverage.out)
 MARKDOWNLINT ?= npx --yes markdownlint-cli2
 MARKDOWNLINT_REPORT ?= $(abspath markdownlint-report.txt)
 GITLEAKS_REPORT ?= $(abspath gitleaks-report.sarif)
+GOSEC_REPORT ?= $(abspath gosec-report.sarif)
 
 ifeq ($(OS),Windows_NT)
 PARITY_CHECK_IF_AVAILABLE = @if exist ..\amps-c++-client-5.3.5.1-Windows ( $(MAKE) parity-check ) else ( echo Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found. )
@@ -22,7 +24,7 @@ else \
 fi
 endif
 
-.PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan security-scan secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted
+.PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted
 
 help:
 	@echo Available targets:
@@ -35,7 +37,9 @@ help:
 	@echo   make fmt              Format Go source files
 	@echo   make vet              Run go vet
 	@echo   make static-scan      Run blocking static analysis (vet, staticcheck, ineffassign, errcheck)
-	@echo   make security-scan    Run blocking security scans (govulncheck, gitleaks)
+	@echo   make security-scan    Run blocking security scans (gosec, govulncheck, gitleaks)
+	@echo   make gosec-scan       Run blocking gosec security analysis
+	@echo   make gosec-report     Write gosec SARIF output to $(GOSEC_REPORT)
 	@echo   make secret-scan      Run secret scanning with gitleaks
 	@echo   make secret-report    Write gitleaks SARIF output to $(GITLEAKS_REPORT)
 	@echo   make scan             Run the full blocking code scanning suite
@@ -80,7 +84,13 @@ static-scan:
 	$(GO) run github.com/gordonklaus/ineffassign@$(INEFFASSIGN_VERSION) $(PKG)
 	$(GO) run github.com/kisielk/errcheck@$(ERRCHECK_VERSION) -ignoretests $(PKG)
 
-security-scan: vuln-scan secret-scan
+security-scan: gosec-scan vuln-scan secret-scan
+
+gosec-scan:
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
+
+gosec-report:
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -fmt sarif -out $(GOSEC_REPORT) ./...
 
 secret-scan:
 	$(GO) run github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION) dir . --no-banner --redact --exit-code 1
@@ -100,7 +110,7 @@ markdown-fix:
 	$(MARKDOWNLINT) --fix
 
 vuln-scan:
-	$(GO) run ./tools/withtoolchain -toolchain go1.25.9+auto -- $(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
+	$(GO) run ./tools/withtoolchain -toolchain go1.25.9+auto -- run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
 
 tidy:
 	$(GO) mod tidy

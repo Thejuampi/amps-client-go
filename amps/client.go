@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // ClientVersion and related constants define protocol and client behavior values.
@@ -252,7 +254,7 @@ func unsafeStringFromBytes(value []byte) string {
 	if len(value) == 0 {
 		return ""
 	}
-	return unsafe.String(unsafe.SliceData(value), len(value))
+	return unsafe.String(unsafe.SliceData(value), len(value)) // #nosec G103 -- hot-path audited conversion from immutable byte slice to string.
 }
 
 func defaultErrorHandler(client *Client) func(err error) {
@@ -651,12 +653,14 @@ func (client *Client) readRoutine() {
 					}
 
 					dataLength := *client.message.header.messageLength
-					if dataLength > uint(len(left)) {
+					leftLength, _ := safecast.Uint64FromIntChecked(len(left))
+					if uint64(dataLength) > leftLength {
 						client.onConnectionError(NewError(ProtocolError, "SOW record payload exceeds frame bounds"))
 						return
 					}
 					maxInt := int(^uint(0) >> 1)
-					if dataLength > uint(maxInt) {
+					maxDataLength, _ := safecast.Uint64FromIntChecked(maxInt)
+					if uint64(dataLength) > maxDataLength {
 						client.onConnectionError(NewError(ProtocolError, "SOW record payload length exceeds int bounds"))
 						return
 					}

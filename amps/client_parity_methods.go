@@ -270,21 +270,27 @@ func commandToMessage(command *Command) *Message {
 		message.header.gracePeriod = &gracePeriod
 	}
 
+	var commandTextExtras = headerTextExtras(command.header)
+	var messageTextExtras *_HeaderTextExtras
+	if commandTextExtras != nil {
+		messageTextExtras = ensureHeaderTextExtras(message.header)
+	}
+
 	var totalBytes = len(command.data) +
 		len(command.header.commandID) +
 		len(command.header.topic) +
 		len(command.header.bookmark) +
 		len(command.header.correlationID) +
-		len(command.header.dataOnly) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.dataOnly })) +
 		len(command.header.filter) +
-		len(command.header.leasePeriod) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.leasePeriod })) +
 		len(command.header.messageType) +
 		len(command.header.options) +
 		len(command.header.orderBy) +
 		len(command.header.queryID) +
-		len(command.header.sendEmpty) +
-		len(command.header.sendKeys) +
-		len(command.header.sendOOF) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.sendEmpty })) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.sendKeys })) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.sendOOF })) +
 		len(command.header.sowKey) +
 		len(command.header.sowKeys) +
 		len(command.header.subID) +
@@ -299,16 +305,22 @@ func commandToMessage(command *Command) *Message {
 	buf, message.header.topic = copyMessageBytes(buf, command.header.topic)
 	buf, message.header.bookmark = copyMessageBytes(buf, command.header.bookmark)
 	buf, message.header.correlationID = copyMessageBytes(buf, command.header.correlationID)
-	buf, message.header.dataOnly = copyMessageBytes(buf, command.header.dataOnly)
+	if messageTextExtras != nil {
+		buf, messageTextExtras.dataOnly = copyMessageBytes(buf, commandTextExtras.dataOnly)
+	}
 	buf, message.header.filter = copyMessageBytes(buf, command.header.filter)
-	buf, message.header.leasePeriod = copyMessageBytes(buf, command.header.leasePeriod)
+	if messageTextExtras != nil {
+		buf, messageTextExtras.leasePeriod = copyMessageBytes(buf, commandTextExtras.leasePeriod)
+	}
 	buf, message.header.messageType = copyMessageBytes(buf, command.header.messageType)
 	buf, message.header.options = copyMessageBytes(buf, command.header.options)
 	buf, message.header.orderBy = copyMessageBytes(buf, command.header.orderBy)
 	buf, message.header.queryID = copyMessageBytes(buf, command.header.queryID)
-	buf, message.header.sendEmpty = copyMessageBytes(buf, command.header.sendEmpty)
-	buf, message.header.sendKeys = copyMessageBytes(buf, command.header.sendKeys)
-	buf, message.header.sendOOF = copyMessageBytes(buf, command.header.sendOOF)
+	if messageTextExtras != nil {
+		buf, messageTextExtras.sendEmpty = copyMessageBytes(buf, commandTextExtras.sendEmpty)
+		buf, messageTextExtras.sendKeys = copyMessageBytes(buf, commandTextExtras.sendKeys)
+		buf, messageTextExtras.sendOOF = copyMessageBytes(buf, commandTextExtras.sendOOF)
+	}
 	buf, message.header.sowKey = copyMessageBytes(buf, command.header.sowKey)
 	buf, message.header.sowKeys = copyMessageBytes(buf, command.header.sowKeys)
 	buf, message.header.subID = copyMessageBytes(buf, command.header.subID)
@@ -485,6 +497,13 @@ func makeAckBatchKey(topic string, subID string) string {
 	return topic + "\x1f" + subID
 }
 
+func commandTextBytes(extras *_HeaderTextExtras, selector func(*_HeaderTextExtras) []byte) []byte {
+	if extras == nil {
+		return nil
+	}
+	return selector(extras)
+}
+
 func (client *Client) maybeAutoAck(message *Message) {
 	if message == nil {
 		return
@@ -494,7 +513,11 @@ func (client *Client) maybeAutoAck(message *Message) {
 	}
 
 	header := messageHeader(message)
-	if header == nil || header.leasePeriod == nil {
+	if header == nil {
+		return
+	}
+	var textExtras = headerTextExtras(header)
+	if textExtras == nil || textExtras.leasePeriod == nil {
 		return
 	}
 	if len(header.topic) == 0 || len(header.bookmark) == 0 {

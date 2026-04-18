@@ -6,10 +6,11 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // ---------------------------------------------------------------------------
@@ -81,14 +82,17 @@ func (j *messageJournal) initDisk() {
 	}
 
 	// Create directory if needed.
-	if err := os.MkdirAll(j.diskPath, 0755); err != nil {
+	root, err := openFakeampsDiskRoot(j.diskPath)
+	if err != nil {
 		log.Printf("fakeamps: journal disk init: mkdir failed: %v", err)
 		return
 	}
+	defer func() {
+		_ = root.Close()
+	}()
 
 	// Open or create journal file (append mode).
-	journalFile := filepath.Join(j.diskPath, "journal.dat")
-	f, err := os.OpenFile(journalFile, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	f, err := root.OpenFile("journal.dat", os.O_CREATE|os.O_RDWR|os.O_APPEND, fakeampsDataFileMode)
 	if err != nil {
 		log.Printf("fakeamps: journal disk init: open failed: %v", err)
 		return
@@ -97,8 +101,7 @@ func (j *messageJournal) initDisk() {
 	j.diskWriter = bufio.NewWriterSize(f, 256*1024)
 
 	// Open or create sequence file.
-	seqFile := filepath.Join(j.diskPath, "sequence.dat")
-	sf, err := os.OpenFile(seqFile, os.O_CREATE|os.O_RDWR, 0644)
+	sf, err := root.OpenFile("sequence.dat", os.O_CREATE|os.O_RDWR, fakeampsDataFileMode)
 	if err != nil {
 		log.Printf("fakeamps: journal disk init: seq file failed: %v", err)
 		_ = f.Close()
@@ -265,26 +268,51 @@ func (j *messageJournal) writeToDisk(topic, sowKey string, payload []byte, times
 	sowKeyLen := len(sowKey)
 	tsLen := len(timestamp)
 	payloadLen := len(payload)
+	var topicLenField, topicLenOK = safecast.Uint16FromIntChecked(topicLen)
+	if !topicLenOK {
+		log.Printf("fakeamps: journal write: topic too large")
+		return
+	}
+	var sowKeyLenField, sowKeyLenOK = safecast.Uint16FromIntChecked(sowKeyLen)
+	if !sowKeyLenOK {
+		log.Printf("fakeamps: journal write: sow key too large")
+		return
+	}
+	var tsLenField, tsLenOK = safecast.Uint16FromIntChecked(tsLen)
+	if !tsLenOK {
+		log.Printf("fakeamps: journal write: timestamp too large")
+		return
+	}
+	var payloadLenField, payloadLenOK = safecast.Uint32FromIntChecked(payloadLen)
+	if !payloadLenOK {
+		log.Printf("fakeamps: journal write: payload too large")
+		return
+	}
 	recordSize := 2 + topicLen + 2 + sowKeyLen + 2 + tsLen + 8 + 4 + payloadLen
+	var recordSizeField, recordSizeOK = safecast.Uint32FromIntChecked(recordSize)
+	if !recordSizeOK {
+		log.Printf("fakeamps: journal write: record too large")
+		return
+	}
 
 	// Reserve buffer.
 	recBuf := make([]byte, recordSize)
 	pos := 0
 
 	// Topic.
-	binary.BigEndian.PutUint16(recBuf[pos:pos+2], uint16(topicLen))
+	binary.BigEndian.PutUint16(recBuf[pos:pos+2], topicLenField)
 	pos += 2
 	copy(recBuf[pos:pos+topicLen], topic)
 	pos += topicLen
 
 	// SowKey.
-	binary.BigEndian.PutUint16(recBuf[pos:pos+2], uint16(sowKeyLen))
+	binary.BigEndian.PutUint16(recBuf[pos:pos+2], sowKeyLenField)
 	pos += 2
 	copy(recBuf[pos:pos+sowKeyLen], sowKey)
 	pos += sowKeyLen
 
 	// Timestamp.
-	binary.BigEndian.PutUint16(recBuf[pos:pos+2], uint16(tsLen))
+	binary.BigEndian.PutUint16(recBuf[pos:pos+2], tsLenField)
 	pos += 2
 	copy(recBuf[pos:pos+tsLen], timestamp)
 	pos += tsLen
@@ -294,13 +322,13 @@ func (j *messageJournal) writeToDisk(topic, sowKey string, payload []byte, times
 	pos += 8
 
 	// Payload.
-	binary.BigEndian.PutUint32(recBuf[pos:pos+4], uint32(payloadLen))
+	binary.BigEndian.PutUint32(recBuf[pos:pos+4], payloadLenField)
 	pos += 4
 	copy(recBuf[pos:pos+payloadLen], payload)
 
 	// Write length prefix + record.
 	lenBuf := [4]byte{}
-	binary.BigEndian.PutUint32(lenBuf[:], uint32(recordSize))
+	binary.BigEndian.PutUint32(lenBuf[:], recordSizeField)
 
 	j.diskFlushMu.Lock()
 	if _, err := j.diskWriter.Write(lenBuf[:]); err != nil {
@@ -483,7 +511,11 @@ func parseBookmarkSeq(bookmark string) uint64 {
 // ---------------------------------------------------------------------------
 
 func makeBookmark(seq uint64) string {
-	epoch := uint64(time.Now().UnixMicro())
+	var epochMicros = time.Now().UnixMicro()
+	var epoch uint64
+	if value, ok := safecast.Uint64FromInt64Checked(epochMicros); ok {
+		epoch = value
+	}
 	var buf [64]byte
 	b := buf[:0]
 	b = strconv.AppendUint(b, epoch, 10)

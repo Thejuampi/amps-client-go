@@ -814,7 +814,9 @@ func (com *Command) SetLeasePeriod(period uint) *Command {
 	if h == nil {
 		return nil
 	}
-	h.leasePeriod = []byte(strconv.FormatUint(uint64(period), 10))
+	if extras := ensureHeaderTextExtras(h); extras != nil {
+		extras.leasePeriod = []byte(strconv.FormatUint(uint64(period), 10))
+	}
 	return com
 }
 
@@ -832,10 +834,12 @@ func (com *Command) SetDataOnly(dataOnly bool) *Command {
 	if h == nil {
 		return nil
 	}
-	if dataOnly {
-		h.dataOnly = []byte("true")
-	} else {
-		h.dataOnly = nil
+	if extras := ensureHeaderTextExtras(h); extras != nil {
+		if dataOnly {
+			extras.dataOnly = []byte("true")
+		} else {
+			extras.dataOnly = nil
+		}
 	}
 	return com
 }
@@ -845,10 +849,12 @@ func (com *Command) SetSendEmpty(sendEmpty bool) *Command {
 	if h == nil {
 		return nil
 	}
-	if sendEmpty {
-		h.sendEmpty = []byte("true")
-	} else {
-		h.sendEmpty = nil
+	if extras := ensureHeaderTextExtras(h); extras != nil {
+		if sendEmpty {
+			extras.sendEmpty = []byte("true")
+		} else {
+			extras.sendEmpty = nil
+		}
 	}
 	return com
 }

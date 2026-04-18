@@ -55,8 +55,12 @@ func (client *Client) SetTLSMinVersion(version uint16) *Client {
 	if client == nil {
 		return client
 	}
+	if version < tls.VersionTLS12 {
+		client.onError(NewError(CommandError, fmt.Sprintf("requested TLS minimum version %#x is below TLS 1.2; clamping to TLS 1.2", version)))
+		version = tls.VersionTLS12
+	}
 	if client.tlsConfig == nil {
-		client.tlsConfig = &tls.Config{MinVersion: version}
+		client.tlsConfig = &tls.Config{MinVersion: version} // #nosec G402 -- SetTLSMinVersion clamps insecure values to TLS 1.2 above.
 	} else {
 		client.tlsConfig.MinVersion = version
 	}
@@ -70,6 +74,7 @@ func (client *Client) SetTLSCAPath(caPath string) *Client {
 	if client.tlsConfig == nil {
 		client.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
+	// #nosec G304 -- caller-provided CA bundle path is an intentional public API input.
 	caCert, err := os.ReadFile(caPath)
 	if err != nil {
 		client.onError(fmt.Errorf("failed to read CA file: %w", err))

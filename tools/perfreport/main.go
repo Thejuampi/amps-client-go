@@ -466,10 +466,15 @@ func writeJSON(path string, value any) error {
 		return err
 	}
 	bytes = append(bytes, '\n')
-	return os.WriteFile(path, bytes, 0o644)
+	return writeOwnerOnlyFile(path, bytes)
+}
+
+func writeOwnerOnlyFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o600)
 }
 
 func readTail(path string) (tailFile, error) {
+	// #nosec G304 -- perf report input paths are explicit operator-controlled inputs.
 	var data, err = os.ReadFile(path)
 	if err != nil {
 		return tailFile{}, err
@@ -483,6 +488,7 @@ func readTail(path string) (tailFile, error) {
 }
 
 func readManifest(path string) (apiManifest, error) {
+	// #nosec G304 -- perf report input paths are explicit operator-controlled inputs.
 	var data, err = os.ReadFile(path)
 	if err != nil {
 		return apiManifest{}, err
@@ -496,6 +502,7 @@ func readManifest(path string) (apiManifest, error) {
 }
 
 func readParityManifest(path string) (parityManifest, error) {
+	// #nosec G304 -- perf report input paths are explicit operator-controlled inputs.
 	var data, err = os.ReadFile(path)
 	if err != nil {
 		return parityManifest{}, err
@@ -1166,7 +1173,7 @@ func commandMerge(arguments []string) error {
 		return err
 	}
 	var markdown = strings.Join(markdownLines, "\n") + "\n"
-	return os.WriteFile(*outMarkdown, []byte(markdown), 0o644)
+	return writeOwnerOnlyFile(*outMarkdown, []byte(markdown))
 }
 
 func commandCompareMerged(arguments []string) error {
@@ -1178,10 +1185,12 @@ func commandCompareMerged(arguments []string) error {
 		return err
 	}
 
+	// #nosec G304 -- perf report input paths are explicit operator-controlled inputs.
 	var baselineData, err = os.ReadFile(*baselinePath)
 	if err != nil {
 		return err
 	}
+	// #nosec G304 -- perf report input paths are explicit operator-controlled inputs.
 	var currentData, err2 = os.ReadFile(*currentPath)
 	if err2 != nil {
 		return err2

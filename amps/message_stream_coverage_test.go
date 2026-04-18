@@ -1,11 +1,21 @@
 package amps
 
 import (
+	"math"
 	"testing"
 	"time"
 )
 
 func TestMessageStreamGeneralCoverage(t *testing.T) {
+	constructor := newMessageStream
+	constructed := constructor(NewClient("stream-factory"))
+	if constructed == nil || constructed.client == nil || constructed.queue == nil {
+		t.Fatalf("expected newMessageStream to initialize client and queue")
+	}
+	if constructed.state != messageStreamStateUnset || constructed.queue.capacity != 256 {
+		t.Fatalf("unexpected newMessageStream defaults: state=%d capacity=%d", constructed.state, constructed.queue.capacity)
+	}
+
 	stream := newMessageStream(nil)
 	if stream.IsValid() {
 		t.Fatalf("unset stream should be invalid")
@@ -35,6 +45,12 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	stream.SetTimeout(123).SetMaxDepth(9)
 	if stream.Timeout() != 123 || stream.MaxDepth() != 9 {
 		t.Fatalf("unexpected timeout/max depth")
+	}
+	if got := clampMessageStreamTimeoutMillis(maxMessageStreamTimeoutMillis); got != maxMessageStreamTimeoutMillis {
+		t.Fatalf("expected timeout clamp helper to preserve boundary, got %d", got)
+	}
+	if got := clampMessageStreamTimeoutMillis(maxMessageStreamTimeoutMillis + 1); got != maxMessageStreamTimeoutMillis {
+		t.Fatalf("expected timeout clamp helper to cap oversized timeout, got %d", got)
 	}
 	stream.setState(messageStreamStateDisconnected)
 	if stream.state == messageStreamStateDisconnected {
@@ -650,6 +666,39 @@ func TestMessageStreamAdditionalBranchCoverage(t *testing.T) {
 	}
 	if message := stream.Next(); message == nil || string(message.Data()) != "timed" {
 		t.Fatalf("unexpected message from timeout path")
+	}
+
+	stream = newMessageStream(nil)
+	stream.setState(messageStreamStateReading)
+	stream.SetTimeout(uint64(math.MaxInt64/int64(time.Millisecond)) + 1)
+	done := make(chan bool, 1)
+	go func() {
+		done <- stream.HasNext()
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		stream.queue.lock.Lock()
+		waiters := stream.queue.waiters
+		stream.queue.lock.Unlock()
+		if waiters > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("clamped-timeout HasNext did not enter wait path")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	stream.queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("bounded-timeout")})
+	select {
+	case hasNext := <-done:
+		if !hasNext {
+			t.Fatalf("expected HasNext true when oversized timeout is clamped")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("clamped-timeout HasNext did not unblock after enqueue")
+	}
+	if message := stream.Next(); message == nil || string(message.Data()) != "bounded-timeout" {
+		t.Fatalf("unexpected message from clamped-timeout path")
 	}
 
 	stream = newMessageStream(nil)
