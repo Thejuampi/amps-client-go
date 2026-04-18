@@ -1152,6 +1152,35 @@ func TestMonitoringServiceLoginValidationAndHistoryErrors(t *testing.T) {
 	}
 }
 
+func TestMonitoringServiceLogoutPreservesSecureCookieSettings(t *testing.T) {
+	var service = newMonitoringService(monitoringServiceOptions{
+		Admin: ampsconfig.AdminConfig{
+			SessionOptions: []string{"Secure=true", "SameSite=Strict"},
+		},
+	})
+	service.sessions["session-1"] = adminSession{ID: "session-1"}
+
+	var request = httptest.NewRequest(http.MethodPost, "/amps/session/logout", nil)
+	request.AddCookie(&http.Cookie{
+		Name:  adminSessionCookieName,
+		Value: "session-1",
+	})
+	var response = httptest.NewRecorder()
+
+	service.handleSessionLogout(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("POST /amps/session/logout status = %d, want 200", response.Code)
+	}
+
+	var cookies = response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("logout response cookies = %d, want 1", len(cookies))
+	}
+	if !cookies[0].Secure || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge != -1 {
+		t.Fatalf("logout cookie = %+v, want secure strict deletion cookie", cookies[0])
+	}
+}
+
 func TestMonitoringServiceProxyEndpointsAndSOWClearAll(t *testing.T) {
 	monitoringClients.Reset()
 	defer monitoringClients.Reset()

@@ -475,6 +475,13 @@ func (service *monitoringService) sessionCookie(sessionID string, expiresAt time
 	return cookie
 }
 
+func (service *monitoringService) expiredSessionCookie() *http.Cookie {
+	var cookie = service.sessionCookie("", time.Unix(0, 0))
+	cookie.Value = ""
+	cookie.MaxAge = -1
+	return cookie
+}
+
 func (service *monitoringService) handleSessionLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -487,13 +494,7 @@ func (service *monitoringService) handleSessionLogout(w http.ResponseWriter, r *
 		service.mu.Unlock()
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     adminSessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, service.expiredSessionCookie())
 	jsonResponse(w, map[string]string{"status": "logged_out"})
 }
 
@@ -1548,14 +1549,19 @@ func buildAdminTLSConfig(cipherNames []string) (*tls.Config, error) {
 	for _, suite := range tls.CipherSuites() {
 		suiteByName[suite.Name] = suite
 	}
+	var insecureSuiteByName = make(map[string]struct{})
 	for _, suite := range tls.InsecureCipherSuites() {
-		suiteByName[suite.Name] = suite
+		insecureSuiteByName[suite.Name] = struct{}{}
 	}
 
 	var config = &tls.Config{}
 	for _, name := range cipherNames {
-		var suite, ok = suiteByName[strings.TrimSpace(name)]
+		var suiteName = strings.TrimSpace(name)
+		var suite, ok = suiteByName[suiteName]
 		if !ok {
+			if _, insecure := insecureSuiteByName[suiteName]; insecure {
+				return nil, fmt.Errorf("insecure admin cipher %q is not allowed", name)
+			}
 			return nil, fmt.Errorf("unsupported admin cipher %q", name)
 		}
 

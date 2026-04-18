@@ -91,6 +91,25 @@ func TestBuildAdminTLSConfigRejectsTLS13CipherSuites(t *testing.T) {
 	}
 }
 
+func TestBuildAdminTLSConfigRejectsInsecureCipherSuites(t *testing.T) {
+	var insecureSuiteName string
+	for _, suite := range tls.InsecureCipherSuites() {
+		insecureSuiteName = suite.Name
+		break
+	}
+	if insecureSuiteName == "" {
+		t.Fatalf("tls.InsecureCipherSuites returned no suites to validate")
+	}
+
+	_, err := buildAdminTLSConfig([]string{insecureSuiteName})
+	if err == nil {
+		t.Fatalf("buildAdminTLSConfig should reject insecure cipher suites")
+	}
+	if !strings.Contains(err.Error(), "insecure") {
+		t.Fatalf("buildAdminTLSConfig error = %v, want insecure cipher suite error", err)
+	}
+}
+
 func TestJSONResponse(t *testing.T) {
 	rr := httptest.NewRecorder()
 	jsonResponse(rr, map[string]string{"ok": "yes"})
