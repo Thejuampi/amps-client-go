@@ -549,6 +549,7 @@ func (client *Client) readRoutine() {
 	client.readTimeout = 0
 	client.readPosition = 0
 	client.receivePosition = 0
+	var batchReceiveTime int64
 
 	for {
 		if client.stopped.Load() {
@@ -570,6 +571,9 @@ func (client *Client) readRoutine() {
 
 			count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
 			client.receivePosition += count
+			if count > 0 {
+				batchReceiveTime = time.Now().UnixNano()
+			}
 			if err != nil {
 				if client.connected.Load() {
 					client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket Read Error: (%v)", err)))
@@ -617,6 +621,9 @@ func (client *Client) readRoutine() {
 
 				count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
 				client.receivePosition += count
+				if count > 0 {
+					batchReceiveTime = time.Now().UnixNano()
+				}
 				if err != nil {
 					if client.connected.Load() {
 						client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket Read Error: (%v)", err)))
@@ -666,6 +673,7 @@ func (client *Client) readRoutine() {
 					}
 					dataLengthValue := int(dataLength) // #nosec G115 -- checked bounds above
 					client.message.data = left[:dataLengthValue]
+					client.message.rawTransmissionUnixNano = batchReceiveTime
 
 					err = client.onMessage(client.message)
 					if err != nil {
@@ -677,6 +685,7 @@ func (client *Client) readRoutine() {
 			} else {
 
 				client.message.data = left
+				client.message.rawTransmissionUnixNano = batchReceiveTime
 
 				err = client.onMessage(client.message)
 				if err != nil {
