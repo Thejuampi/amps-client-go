@@ -116,6 +116,7 @@ go run ./tools/perfgate -baseline tools/perf_baseline.json
 ```
 
 Code scanning stack:
+
 - `make static-scan`: Go correctness and API misuse (`go vet`, `staticcheck`, `ineffassign`, `errcheck`)
 - `make vuln-scan`: Go dependency and stdlib vulnerability scan on patched Go `1.25.9`
 - `make secret-scan`: secret leak detection with `gitleaks`
