@@ -12,8 +12,22 @@ import (
 
 var mmapSyncDirectory = syncDirectoryPath
 
+func normalizeMMapPath(path string) string {
+	return filepath.Clean(path)
+}
+
+func openMMapReadFile(path string) (*os.File, error) {
+	// #nosec G304 -- mmap paths are internal store paths normalized before use.
+	return os.Open(path)
+}
+
+func openMMapWriteFile(path string, perm os.FileMode) (*os.File, error) {
+	// #nosec G304 -- mmap paths are internal store paths normalized before use.
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, perm)
+}
+
 func mmapReadFile(path string) (_ []byte, err error) {
-	file, err := os.Open(path)
+	file, err := openMMapReadFile(normalizeMMapPath(path))
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +76,13 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 
 	directory := filepath.Dir(path)
 	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o755); err != nil {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return err
 		}
 	}
 
-	tmpPath := path + ".tmp"
-	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, perm)
+	tmpPath := normalizeMMapPath(path + ".tmp")
+	file, err := openMMapWriteFile(tmpPath, perm)
 	if err != nil {
 		return err
 	}

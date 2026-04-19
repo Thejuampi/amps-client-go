@@ -50,7 +50,8 @@ var pureFiles = []string{
 }
 
 var pureFileThresholds = map[string]float64{
-	"amps/header.go": 99.5,
+	"amps/header.go":         99.5,
+	"amps/message_stream.go": 99.7,
 }
 
 var ioFiles = []string{

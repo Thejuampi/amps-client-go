@@ -84,6 +84,38 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	if readingStream.current != readingMessage {
 		t.Fatalf("expected HasNext to set current message for zero-timeout reading")
 	}
+	blockingReadingStream := newMessageStream(nil)
+	blockingReadingStream.setState(messageStreamStateReading)
+	blockingReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("blocking-reading")}
+	blockingResult := make(chan bool, 1)
+	go func() {
+		blockingResult <- blockingReadingStream.HasNext()
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		blockingReadingStream.queue.lock.Lock()
+		waiters := blockingReadingStream.queue.waiters
+		blockingReadingStream.queue.lock.Unlock()
+		if waiters > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected HasNext to enter waitDequeue path for zero-timeout reading")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	blockingReadingStream.queue.enqueue(blockingReadingMessage)
+	select {
+	case hasNext := <-blockingResult:
+		if !hasNext {
+			t.Fatalf("expected HasNext to wait for and dequeue a later zero-timeout message")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected HasNext to unblock after queue enqueue")
+	}
+	if blockingReadingStream.current != blockingReadingMessage {
+		t.Fatalf("expected HasNext to set current message after waiting for zero-timeout reading")
+	}
 	timedReadingStream := newMessageStream(nil)
 	timedReadingStream.SetTimeout(1)
 	timedReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("timed-reading")}
@@ -96,9 +128,31 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	}
 	closedReadingStream := newMessageStream(nil)
 	closedReadingStream.setState(messageStreamStateReading)
+	closedResult := make(chan bool, 1)
+	go func() {
+		closedResult <- closedReadingStream.HasNext()
+	}()
+	deadline = time.Now().Add(time.Second)
+	for {
+		closedReadingStream.queue.lock.Lock()
+		waiters := closedReadingStream.queue.waiters
+		closedReadingStream.queue.lock.Unlock()
+		if waiters > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected closed HasNext to enter waitDequeue path")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	closedReadingStream.queue.close()
-	if closedReadingStream.HasNext() {
-		t.Fatalf("expected HasNext to return false for a closed empty reading stream")
+	select {
+	case hasNext := <-closedResult:
+		if hasNext {
+			t.Fatalf("expected HasNext to return false for a closed empty reading stream")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected HasNext to unblock after queue close")
 	}
 	if closedReadingStream.timedOut.Load() {
 		t.Fatalf("expected closed zero-timeout read to avoid timedOut state")

@@ -50,3 +50,12 @@ func TestParseProfileDeduplicatesRepeatedBlocks(t *testing.T) {
 		t.Fatalf("unexpected errors coverage: %+v", errorsCoverage)
 	}
 }
+
+func TestPureFileThresholdOverrides(t *testing.T) {
+	if got := pureFileThresholds["amps/header.go"]; got != 99.5 {
+		t.Fatalf("pureFileThresholds[header.go] = %.1f, want 99.5", got)
+	}
+	if got := pureFileThresholds["amps/message_stream.go"]; got != 99.7 {
+		t.Fatalf("pureFileThresholds[message_stream.go] = %.1f, want 99.7", got)
+	}
+}

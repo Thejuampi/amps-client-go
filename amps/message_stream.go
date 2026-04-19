@@ -215,10 +215,11 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.waitForNextWithTimeout()
 	}
 	message, ok := ms.queue.waitDequeue()
-	if ok {
-		ms.setCurrentFromQueue(message)
+	if !ok {
+		return false
 	}
-	return ms.current != nil
+	ms.setCurrentFromQueue(message)
+	return true
 }
 
 func (ms *MessageStream) waitForNextWithTimeout() bool {

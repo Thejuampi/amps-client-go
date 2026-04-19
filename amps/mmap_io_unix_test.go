@@ -51,3 +51,11 @@ func TestMMapUnixWriteValidationErrors(t *testing.T) {
 		t.Fatalf("expected error for empty path")
 	}
 }
+
+func TestNormalizeMMapPath(t *testing.T) {
+	var got = normalizeMMapPath("./mmap/../store.dat")
+
+	if got != "store.dat" {
+		t.Fatalf("normalizeMMapPath() = %q, want store.dat", got)
+	}
+}
