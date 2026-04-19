@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -216,5 +219,40 @@ func TestDiskSOWPersistenceUsesSafeFilenameAndRestrictedPermissions(t *testing.T
 	var result = loaded.query(topic, "", -1, "")
 	if result.totalCount != 1 {
 		t.Fatalf("expected encoded topic reload, got %d records", result.totalCount)
+	}
+}
+
+func TestSaveTopicToDiskSanitizesTopicInLogOutput(t *testing.T) {
+	var logBuffer bytes.Buffer
+	var originalWriter = log.Writer()
+	var originalFlags = log.Flags()
+	log.SetOutput(&logBuffer)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(originalWriter)
+		log.SetFlags(originalFlags)
+	}()
+
+	var topic = "orders\r\nforged"
+	var cache = &sowCache{diskPath: t.TempDir()}
+	var records = map[string]*sowRecord{
+		"order-1": {
+			topic:     topic,
+			sowKey:    strings.Repeat("k", 1<<16),
+			payload:   []byte(`{"id":1}`),
+			bookmark:  "bm1",
+			timestamp: "20240101T000000000000000",
+			seqNum:    1,
+		},
+	}
+
+	cache.saveTopicToDisk(topic, records)
+
+	var output = logBuffer.String()
+	if !strings.Contains(output, "fakeamps: sow save: sow key too large for topic=ordersforged") {
+		t.Fatalf("expected sanitized topic in log output, got %q", output)
+	}
+	if strings.Contains(output, "\nforged") || strings.Contains(output, "\rforged") {
+		t.Fatalf("expected topic log output to strip CR/LF injection, got %q", output)
 	}
 }

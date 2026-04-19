@@ -337,9 +337,11 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 	}()
 
 	var fileName = encodeSOWTopicFilename(topic)
+	var safeTopic = strings.ReplaceAll(topic, "\n", "")
+	safeTopic = strings.ReplaceAll(safeTopic, "\r", "")
 	if len(records) == 0 {
 		if err := sowRoot.Remove(fileName); err != nil && !os.IsNotExist(err) {
-			log.Printf("fakeamps: sow save: remove failed for topic=%s: %v", topic, err)
+			log.Printf("fakeamps: sow save: remove failed for topic=%s: %v", safeTopic, err)
 		}
 		return
 	}
@@ -367,27 +369,27 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 		}
 		var topicLen, topicLenOK = safecast.Uint16FromIntChecked(len(recordTopic))
 		if !topicLenOK {
-			log.Printf("fakeamps: sow save: topic too large for topic=%s", topic)
+			log.Printf("fakeamps: sow save: topic too large for topic=%s", safeTopic)
 			return
 		}
 		var sowKeyLen, sowKeyLenOK = safecast.Uint16FromIntChecked(len(r.sowKey))
 		if !sowKeyLenOK {
-			log.Printf("fakeamps: sow save: sow key too large for topic=%s", topic)
+			log.Printf("fakeamps: sow save: sow key too large for topic=%s", safeTopic)
 			return
 		}
 		var tsLen, tsLenOK = safecast.Uint16FromIntChecked(len(r.timestamp))
 		if !tsLenOK {
-			log.Printf("fakeamps: sow save: timestamp too large for topic=%s", topic)
+			log.Printf("fakeamps: sow save: timestamp too large for topic=%s", safeTopic)
 			return
 		}
 		var bookmarkLen, bookmarkLenOK = safecast.Uint16FromIntChecked(len(r.bookmark))
 		if !bookmarkLenOK {
-			log.Printf("fakeamps: sow save: bookmark too large for topic=%s", topic)
+			log.Printf("fakeamps: sow save: bookmark too large for topic=%s", safeTopic)
 			return
 		}
 		var payloadLen, payloadLenOK = safecast.Uint32FromIntChecked(len(r.payload))
 		if !payloadLenOK {
-			log.Printf("fakeamps: sow save: payload too large for topic=%s", topic)
+			log.Printf("fakeamps: sow save: payload too large for topic=%s", safeTopic)
 			return
 		}
 
@@ -432,12 +434,12 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 		copy(buf[pos:pos+int(payloadLen)], r.payload)
 
 		if err := writer.Write(buf); err != nil {
-			log.Printf("fakeamps: sow save: write failed for topic=%s: %v", topic, err)
+			log.Printf("fakeamps: sow save: write failed for topic=%s: %v", safeTopic, err)
 			return
 		}
 	}
 	if err := writer.Sync(); err != nil {
-		log.Printf("fakeamps: sow save: sync failed for topic=%s: %v", topic, err)
+		log.Printf("fakeamps: sow save: sync failed for topic=%s: %v", safeTopic, err)
 	}
 }
 
