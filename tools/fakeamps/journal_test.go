@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -124,6 +125,34 @@ func TestDiskJournalPersistence(t *testing.T) {
 		t.Fatalf("expected entries to be loaded from disk at %s", filepath.Join(dir, "journal.dat"))
 	}
 	loaded.Close()
+}
+
+func TestDiskJournalUsesRestrictedPermissions(t *testing.T) {
+	var rootDir = filepath.Join(t.TempDir(), "journal-root")
+	var journal = newDiskJournal(10, rootDir)
+	if journal == nil {
+		t.Fatalf("expected disk journal")
+	}
+	journal.Close()
+
+	var dirInfo, dirErr = os.Stat(rootDir)
+	if dirErr != nil {
+		t.Fatalf("Stat(rootDir): %v", dirErr)
+	}
+	if runtime.GOOS != "windows" && dirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("journal root mode = %o, want 0700", dirInfo.Mode().Perm())
+	}
+
+	for _, name := range []string{"journal.dat", "sequence.dat"} {
+		var path = filepath.Join(rootDir, name)
+		var info, err = os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat(%s): %v", path, err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode = %o, want 0600", name, info.Mode().Perm())
+		}
+	}
 }
 
 func TestDiskJournalPartialInitDoesNotPanicOnWrite(t *testing.T) {

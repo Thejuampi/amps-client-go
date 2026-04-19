@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // ---------------------------------------------------------------------------
@@ -251,11 +254,12 @@ func finalizeFrame(buf *bytes.Buffer) []byte {
 		buf.Reset()
 		return nil
 	}
-	length := uint32(n - 4)
-	raw[0] = byte(length >> 24)
-	raw[1] = byte(length >> 16)
-	raw[2] = byte(length >> 8)
-	raw[3] = byte(length)
+	length, ok := safecast.Uint32FromIntChecked(n - 4)
+	if !ok {
+		buf.Reset()
+		return nil
+	}
+	binary.BigEndian.PutUint32(raw[:4], length)
 	out := make([]byte, n)
 	copy(out, raw)
 	buf.Reset()

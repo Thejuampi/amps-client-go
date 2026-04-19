@@ -22,18 +22,18 @@ This document covers stream and query entrypoints:
 
 | Method | Pattern | Notes |
 |---|---|---|
-| `Subscribe(...)` / `SubscribeAsync(...)` | Continuous stream | Optional content filter.
-| `DeltaSubscribe(...)` / `DeltaSubscribeAsync(...)` | Delta stream | Endpoint SOW/delta behavior applies.
-| `Unsubscribe(subID ...string)` | Stream termination | `all` when omitted.
+| `Subscribe(...)` / `SubscribeAsync(...)` | Continuous stream | Optional content filter. |
+| `DeltaSubscribe(...)` / `DeltaSubscribeAsync(...)` | Delta stream | Endpoint SOW/delta behavior applies. |
+| `Unsubscribe(subID ...string)` | Stream termination | `all` when omitted. |
 
 ## SOW Commands
 
 | Method | Pattern | Termination Condition |
 |---|---|---|
-| `Sow(...)` / `SowAsync(...)` | Snapshot query | Group end/completed ack.
-| `SowAndSubscribe(...)` / `SowAndSubscribeAsync(...)` | Snapshot + stream | Remains active until unsubscribe.
-| `SowAndDeltaSubscribe(...)` / `SowAndDeltaSubscribeAsync(...)` | Snapshot + delta stream | Remains active until unsubscribe.
-| `SowDelete(...)` / `SowDeleteByData(...)` / `SowDeleteByKeys(...)` | Mutation + stats ack | Stats ack consumed by helper.
+| `Sow(...)` / `SowAsync(...)` | Snapshot query | Group end/completed ack. |
+| `SowAndSubscribe(...)` / `SowAndSubscribeAsync(...)` | Snapshot + stream | Remains active until unsubscribe. |
+| `SowAndDeltaSubscribe(...)` / `SowAndDeltaSubscribeAsync(...)` | Snapshot + delta stream | Remains active until unsubscribe. |
+| `SowDelete(...)` / `SowDeleteByData(...)` / `SowDeleteByKeys(...)` | Mutation + stats ack | Stats ack consumed by helper. |
 
 ## Ack and Handler Order
 
@@ -91,20 +91,20 @@ Recovery path:
 ```go
 stream, err := client.SowAndSubscribe("orders", "/status = 'open'")
 if err != nil {
-	panic(err)
+ panic(err)
 }
 defer stream.Close()
 
 for stream.HasNext() {
-	msg := stream.Next()
-	if msg == nil {
-		break
-	}
-	// process snapshot or live update
+ msg := stream.Next()
+ if msg == nil {
+  break
+ }
+ // process snapshot or live update
 }
 
 if err := client.Unsubscribe(); err != nil {
-	panic(err)
+ panic(err)
 }
 ```
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -275,5 +276,20 @@ func TestCompareMergedIncludesBaselineOnlyRows(t *testing.T) {
 	}
 	if !foundBaselineOnly {
 		t.Fatalf("expected comparison output to include baseline-only benchmark")
+	}
+}
+
+func TestWriteOwnerOnlyFileUsesRestrictedPermissions(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "report.json")
+	if err := writeOwnerOnlyFile(path, []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("writeOwnerOnlyFile() error: %v", err)
+	}
+
+	var info, err = os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(path): %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("writeOwnerOnlyFile mode = %o, want 0600", info.Mode().Perm())
 	}
 }

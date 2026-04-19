@@ -36,6 +36,7 @@ type logonOptionsSnapshot struct {
 func NewHAClient(clientName ...string) *HAClient {
 	client := NewClient(clientName...)
 	client.SetRetryOnDisconnect(true)
+	client.SetHeartbeat(30)
 	var defaultReconnectDelay = 200 * time.Millisecond
 	ha := &HAClient{
 		client:                 client,
@@ -68,16 +69,13 @@ func (ha *HAClient) handleDisconnect(err error) {
 	if ha.stopped.Load() {
 		return
 	}
-
-	// CAS must happen BEFORE creating the context and storing reconnectCancel.
-	// Otherwise a failing CAS would overwrite the existing goroutine's cancel
-	// function, making it impossible to cancel the active reconnect loop.
 	if !ha.reconnecting.CompareAndSwap(false, true) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ha.client.notifyConnectionState(ConnectionStateReconnecting)
 
+	ctx, cancel := context.WithCancel(context.Background())
 	ha.lock.Lock()
 	ha.reconnectCancel = cancel
 	ha.lock.Unlock()
@@ -86,7 +84,6 @@ func (ha *HAClient) handleDisconnect(err error) {
 		defer func() {
 			ha.reconnecting.Store(false)
 			ha.lock.Lock()
-			cancel() // always cancel to avoid context/goroutine leak
 			ha.reconnectCancel = nil
 			ha.lock.Unlock()
 		}()
@@ -94,6 +91,7 @@ func (ha *HAClient) handleDisconnect(err error) {
 		if ha.client != nil && shouldReportHAReconnectError(connectErr) {
 			ha.client.reportException(connectErr)
 		}
+		_ = err
 	}()
 }
 
@@ -346,9 +344,14 @@ func (ha *HAClient) SetTimeout(timeout time.Duration) *HAClient {
 		timeout = 0
 	}
 	ha.lock.Lock()
+	if ha.timeout == timeout {
+		ha.lock.Unlock()
+		ha.timeoutNanos.Store(int64(timeout))
+		return ha
+	}
 	ha.timeout = timeout
-	ha.timeoutNanos.Store(int64(timeout))
 	ha.lock.Unlock()
+	ha.timeoutNanos.Store(int64(timeout))
 	return ha
 }
 
@@ -371,13 +374,13 @@ func (ha *HAClient) SetReconnectDelay(delay time.Duration) *HAClient {
 	ha.lock.Lock()
 	ha.reconnectDelay = delay
 	if fixed, ok := ha.reconnectDelayStrategy.(*FixedDelayStrategy); ok && fixed != nil && fixed.Delay == delay {
-		ha.reconnectDelayNanos.Store(int64(delay))
 		ha.lock.Unlock()
+		ha.reconnectDelayNanos.Store(int64(delay))
 		return ha
 	}
 	ha.reconnectDelayStrategy = NewFixedDelayStrategy(delay)
-	ha.reconnectDelayNanos.Store(int64(delay))
 	ha.lock.Unlock()
+	ha.reconnectDelayNanos.Store(int64(delay))
 	return ha
 }
 

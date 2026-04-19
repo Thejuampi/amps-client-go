@@ -2,6 +2,7 @@ package amps
 
 import (
 	"errors"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -382,6 +383,168 @@ func TestHandleSendFailureOnlyForPublishCommands(t *testing.T) {
 	client.handleSendFailure(NewCommand("sow_delete").SetTopic("orders").SetData([]byte("x")), errors.New("fail"))
 	if !called {
 		t.Fatalf("expected failed write callback for sow_delete command")
+	}
+}
+
+func TestClientLogonAckSetsPublishStoreInitialSequence(t *testing.T) {
+	client := NewClient("logon-seq-store")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.resetDisconnectSignal()
+	client.connection = conn
+	client.url, _ = url.Parse("tcp://localhost:9007/amps/json")
+	client.SetErrorHandler(func(error) {})
+
+	store := NewMemoryPublishStore()
+	client.SetPublishStore(store)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- client.Logon()
+	}()
+
+	_, handler := waitForAnyRouteHandler(t, client)
+	ack := AckTypeProcessed
+	seq := uint64(500)
+	_ = handler(&Message{header: &_Header{
+		command:    CommandAck,
+		ackType:    &ack,
+		status:     []byte("success"),
+		version:    []byte("5.3.5.1"),
+		clientName: []byte("12345"),
+		sequenceID: &seq,
+		bookmark:   []byte("1|100|"),
+	}})
+
+	if err := <-result; err != nil {
+		t.Fatalf("expected successful logon, got %v", err)
+	}
+
+	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("x")))
+	if nextErr != nil || nextSeq != 501 {
+		t.Fatalf("expected next sequence 501 after logon ack seq 500, got %d err=%v", nextSeq, nextErr)
+	}
+
+	if bm, hasBm := client.LogonAckBookmark(); !hasBm || bm != "1|100|" {
+		t.Fatalf("expected logon ack bookmark '1|100|', got %q has=%v", bm, hasBm)
+	}
+}
+
+func TestClientLogonAckExtractsSequenceZeroSkipsSetInitialSequence(t *testing.T) {
+	client := NewClient("logon-seq-zero")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.resetDisconnectSignal()
+	client.connection = conn
+	client.url, _ = url.Parse("tcp://localhost:9007/amps/json")
+	client.SetErrorHandler(func(error) {})
+
+	store := NewMemoryPublishStore()
+	client.SetPublishStore(store)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- client.Logon()
+	}()
+
+	_, handler := waitForAnyRouteHandler(t, client)
+	ack := AckTypeProcessed
+	_ = handler(&Message{header: &_Header{
+		command:    CommandAck,
+		ackType:    &ack,
+		status:     []byte("success"),
+		version:    []byte("5.3.5.1"),
+		clientName: []byte("12345"),
+	}})
+
+	if err := <-result; err != nil {
+		t.Fatalf("expected successful logon, got %v", err)
+	}
+
+	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("x")))
+	if nextErr != nil || nextSeq != 1 {
+		t.Fatalf("expected default sequence 1 when no seq in ack, got %d err=%v", nextSeq, nextErr)
+	}
+}
+
+func TestClientLogonAckWithoutSequenceDoesNotReusePreviousSequence(t *testing.T) {
+	client := NewClient("logon-seq-reset")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.resetDisconnectSignal()
+	client.connection = conn
+	client.url, _ = url.Parse("tcp://localhost:9007/amps/json")
+	client.SetErrorHandler(func(error) {})
+
+	store := NewMemoryPublishStore()
+	client.SetPublishStore(store)
+
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- client.Logon()
+	}()
+
+	_, firstHandler := waitForAnyRouteHandler(t, client)
+	ack := AckTypeProcessed
+	firstSeq := uint64(500)
+	_ = firstHandler(&Message{header: &_Header{
+		command:    CommandAck,
+		ackType:    &ack,
+		status:     []byte("success"),
+		version:    []byte("5.3.5.1"),
+		clientName: []byte("12345"),
+		sequenceID: &firstSeq,
+	}})
+
+	if err := <-firstResult; err != nil {
+		t.Fatalf("expected first logon success, got %v", err)
+	}
+
+	secondStore := NewMemoryPublishStore()
+	client.SetPublishStore(secondStore)
+
+	secondResult := make(chan error, 1)
+	go func() {
+		secondResult <- client.Logon()
+	}()
+
+	_, secondHandler := waitForAnyRouteHandler(t, client)
+	_ = secondHandler(&Message{header: &_Header{
+		command:    CommandAck,
+		ackType:    &ack,
+		status:     []byte("success"),
+		version:    []byte("5.3.5.1"),
+		clientName: []byte("12345"),
+	}})
+
+	if err := <-secondResult; err != nil {
+		t.Fatalf("expected second logon success, got %v", err)
+	}
+
+	nextSeq, nextErr := secondStore.Store(NewCommand("publish").SetTopic("t").SetData([]byte("x")))
+	if nextErr != nil || nextSeq != 1 {
+		t.Fatalf("expected second logon without sequence to leave default sequence 1, got %d err=%v", nextSeq, nextErr)
+	}
+}
+
+func TestClientDisconnectZerosHeartbeatConfig(t *testing.T) {
+	client := NewClient("heartbeat-zero-on-disconnect")
+	client.SetHeartbeat(10, 20)
+
+	if client.heartbeatInterval.Load() != 10 {
+		t.Fatalf("expected heartbeatInterval=10, got %d", client.heartbeatInterval.Load())
+	}
+	if client.heartbeatTimeout.Load() != 20 {
+		t.Fatalf("expected heartbeatTimeout=20, got %d", client.heartbeatTimeout.Load())
+	}
+
+	_ = client.Disconnect()
+
+	if client.heartbeatInterval.Load() != 0 {
+		t.Fatalf("expected heartbeatInterval=0 after disconnect, got %d", client.heartbeatInterval.Load())
+	}
+	if client.heartbeatTimeout.Load() != 0 {
+		t.Fatalf("expected heartbeatTimeout=0 after disconnect, got %d", client.heartbeatTimeout.Load())
 	}
 }
 

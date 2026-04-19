@@ -54,3 +54,11 @@ func TestSyncOpenedDirectoryClosesFile(t *testing.T) {
 		t.Fatalf("expected close to be called once, got %d", file.closeCalls)
 	}
 }
+
+func TestNormalizeSyncDirectoryPath(t *testing.T) {
+	var got = normalizeSyncDirectoryPath("./foo/../bar")
+
+	if got != "bar" {
+		t.Fatalf("expected cleaned sync directory path, got %q", got)
+	}
+}

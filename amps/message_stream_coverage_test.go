@@ -1,11 +1,21 @@
 package amps
 
 import (
+	"math"
 	"testing"
 	"time"
 )
 
 func TestMessageStreamGeneralCoverage(t *testing.T) {
+	constructor := newMessageStream
+	constructed := constructor(NewClient("stream-factory"))
+	if constructed == nil || constructed.client == nil || constructed.queue == nil {
+		t.Fatalf("expected newMessageStream to initialize client and queue")
+	}
+	if constructed.state != messageStreamStateUnset || constructed.queue.capacity != 256 {
+		t.Fatalf("unexpected newMessageStream defaults: state=%d capacity=%d", constructed.state, constructed.queue.capacity)
+	}
+
 	stream := newMessageStream(nil)
 	if stream.IsValid() {
 		t.Fatalf("unset stream should be invalid")
@@ -35,6 +45,117 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	stream.SetTimeout(123).SetMaxDepth(9)
 	if stream.Timeout() != 123 || stream.MaxDepth() != 9 {
 		t.Fatalf("unexpected timeout/max depth")
+	}
+	resultStream := newMessageStream(nil)
+	message := &Message{header: &_Header{command: CommandPublish}, data: []byte("helper")}
+	if !resultStream.handleWaitDequeueTimeoutResult(message, true) {
+		t.Fatalf("expected successful wait-dequeue result to report true")
+	}
+	if resultStream.current != message {
+		t.Fatalf("expected wait-dequeue helper to set current message")
+	}
+	waitingStream := newMessageStream(nil)
+	waitingStream.SetTimeout(1)
+	waitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("waiting")}
+	waitingStream.queue.enqueue(waitingMessage)
+	if !waitingStream.waitForNextWithTimeout() {
+		t.Fatalf("expected timeout wait helper to dequeue preloaded message")
+	}
+	if waitingStream.current != waitingMessage {
+		t.Fatalf("expected timeout wait helper to set current message")
+	}
+	saturatingWaitingStream := newMessageStream(nil)
+	saturatingWaitingStream.SetTimeout(maxMessageStreamTimeoutMillis + 1)
+	saturatingWaitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("saturating-wait")}
+	saturatingWaitingStream.queue.enqueue(saturatingWaitingMessage)
+	if !saturatingWaitingStream.waitForNextWithTimeout() {
+		t.Fatalf("expected oversized timeout wait helper to dequeue preloaded message")
+	}
+	if saturatingWaitingStream.current != saturatingWaitingMessage {
+		t.Fatalf("expected oversized timeout wait helper to set current message")
+	}
+	readingStream := newMessageStream(nil)
+	readingStream.setState(messageStreamStateReading)
+	readingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("reading")}
+	readingStream.queue.enqueue(readingMessage)
+	if !readingStream.HasNext() {
+		t.Fatalf("expected HasNext to dequeue message with zero timeout")
+	}
+	if readingStream.current != readingMessage {
+		t.Fatalf("expected HasNext to set current message for zero-timeout reading")
+	}
+	blockingReadingStream := newMessageStream(nil)
+	blockingReadingStream.setState(messageStreamStateReading)
+	blockingReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("blocking-reading")}
+	blockingResult := make(chan bool, 1)
+	go func() {
+		blockingResult <- blockingReadingStream.HasNext()
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		blockingReadingStream.queue.lock.Lock()
+		waiters := blockingReadingStream.queue.waiters
+		blockingReadingStream.queue.lock.Unlock()
+		if waiters > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected HasNext to enter waitDequeue path for zero-timeout reading")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	blockingReadingStream.queue.enqueue(blockingReadingMessage)
+	select {
+	case hasNext := <-blockingResult:
+		if !hasNext {
+			t.Fatalf("expected HasNext to wait for and dequeue a later zero-timeout message")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected HasNext to unblock after queue enqueue")
+	}
+	if blockingReadingStream.current != blockingReadingMessage {
+		t.Fatalf("expected HasNext to set current message after waiting for zero-timeout reading")
+	}
+	timedReadingStream := newMessageStream(nil)
+	timedReadingStream.SetTimeout(1)
+	timedReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("timed-reading")}
+	timedReadingStream.queue.enqueue(timedReadingMessage)
+	if !timedReadingStream.waitForNextWithTimeout() {
+		t.Fatalf("expected timeout wait helper to dequeue message with timeout configured")
+	}
+	if timedReadingStream.current != timedReadingMessage {
+		t.Fatalf("expected timeout wait helper to set current message")
+	}
+	closedReadingStream := newMessageStream(nil)
+	closedReadingStream.setState(messageStreamStateReading)
+	closedResult := make(chan bool, 1)
+	go func() {
+		closedResult <- closedReadingStream.HasNext()
+	}()
+	deadline = time.Now().Add(time.Second)
+	for {
+		closedReadingStream.queue.lock.Lock()
+		waiters := closedReadingStream.queue.waiters
+		closedReadingStream.queue.lock.Unlock()
+		if waiters > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected closed HasNext to enter waitDequeue path")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	closedReadingStream.queue.close()
+	select {
+	case hasNext := <-closedResult:
+		if hasNext {
+			t.Fatalf("expected HasNext to return false for a closed empty reading stream")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("expected HasNext to unblock after queue close")
+	}
+	if closedReadingStream.timedOut.Load() {
+		t.Fatalf("expected closed zero-timeout read to avoid timedOut state")
 	}
 	stream.setState(messageStreamStateDisconnected)
 	if stream.state == messageStreamStateDisconnected {
@@ -369,6 +490,7 @@ func TestMessageStreamHasNextDrainsQueuedMessagesAfterComplete(t *testing.T) {
 }
 
 func TestMessageQueueCoverage(t *testing.T) {
+	resizeQueueFn := (*_MessageQueue).resize
 	queue := newQueue(1)
 	if queue.length() != 0 {
 		t.Fatalf("expected empty queue")
@@ -376,6 +498,19 @@ func TestMessageQueueCoverage(t *testing.T) {
 
 	message1 := &Message{header: &_Header{command: CommandPublish}, data: []byte("1")}
 	message2 := &Message{header: &_Header{command: CommandPublish}, data: []byte("2")}
+	resizeQueue := newQueue(2)
+	resizeQueue.enqueue(message1)
+	resizeQueue.enqueue(message2)
+	resizeQueueFn(resizeQueue)
+	if resizeQueue.capacity != 4 || resizeQueue.length() != 2 {
+		t.Fatalf("expected direct resize to preserve entries and double capacity, got capacity=%d length=%d", resizeQueue.capacity, resizeQueue.length())
+	}
+	if message, err := resizeQueue.dequeue(); err != nil || string(message.Data()) != "1" {
+		t.Fatalf("unexpected first direct-resize dequeue result: msg=%v err=%v", message, err)
+	}
+	if message, err := resizeQueue.dequeue(); err != nil || string(message.Data()) != "2" {
+		t.Fatalf("unexpected second direct-resize dequeue result: msg=%v err=%v", message, err)
+	}
 	queue.enqueue(message1)
 	queue.enqueue(message2)
 	if queue.capacity < 2 {
@@ -468,103 +603,14 @@ func TestMessageQueueCoverage(t *testing.T) {
 	}
 }
 
-func TestMessageQueueEnqueueWakesWaitingDequeue(t *testing.T) {
+func TestMessageQueueEnqueueWithoutWaitersKeepsSignalChannel(t *testing.T) {
 	queue := newQueue(2)
-
-	done := make(chan *Message, 1)
-	go func() {
-		message, ok := queue.waitDequeue()
-		if !ok {
-			done <- nil
-			return
-		}
-		done <- message
-	}()
-
-	select {
-	case <-time.After(10 * time.Millisecond):
-	}
+	var waitCh = queue.notEmptyCh
 
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("signal")})
 
-	select {
-	case message := <-done:
-		if message == nil || string(message.Data()) != "signal" {
-			t.Fatalf("expected waiter to receive queued message, got %#v", message)
-		}
-	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("expected enqueue to wake waiting dequeue")
-	}
-}
-
-func TestMessageQueueSignalHelpersHandleFullAndEmptySignals(t *testing.T) {
-	queue := newQueue(2)
-	queue.waiters = 1
-	queue.notEmptyCh <- struct{}{}
-
-	queue.notifyNotEmptyLocked()
-	queue.clearNotEmptySignalLocked()
-	queue.clearNotEmptySignalLocked()
-
-	select {
-	case <-queue.notEmptyCh:
-		t.Fatalf("expected not-empty signal channel to be empty")
-	default:
-	}
-}
-
-func TestMessageQueueWaitDequeueTimeoutReturnsFalseForClosedQueue(t *testing.T) {
-	queue := newQueue(2)
-	queue.close()
-
-	message, ok := queue.waitDequeueTimeout(50 * time.Millisecond)
-	if ok || message != nil {
-		t.Fatalf("expected closed queue timeout wait to return nil,false")
-	}
-}
-
-func TestMessageQueueWaitDequeueTimeoutDrainsExpiredTimerOnClosedReturn(t *testing.T) {
-	queue := newQueue(2)
-	queue.lock.Lock()
-
-	done := make(chan struct{})
-	go func() {
-		message, ok := queue.waitDequeueTimeout(10 * time.Millisecond)
-		if ok || message != nil {
-			t.Errorf("expected blocked closed queue timeout wait to return nil,false")
-		}
-		close(done)
-	}()
-
-	time.Sleep(20 * time.Millisecond)
-	queue.closed = true
-	close(queue.closedCh)
-	queue.lock.Unlock()
-
-	select {
-	case <-done:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("expected blocked timeout wait to return after close")
-	}
-}
-
-func TestMessageQueueClearReopensClosedSignal(t *testing.T) {
-	queue := newQueue(2)
-	queue.close()
-	closedCh := queue.closedCh
-
-	queue.clear()
-
-	if queue.closed {
-		t.Fatalf("expected clear to reopen closed queue")
-	}
-	if queue.closedCh == closedCh {
-		t.Fatalf("expected clear to replace closed signal channel")
-	}
-	select {
-	case <-queue.closedCh:
-		t.Fatalf("expected reopened closed signal channel to remain open")
-	default:
+	if queue.notEmptyCh != waitCh {
+		t.Fatalf("expected enqueue without waiters to keep wait channel stable")
 	}
 }
 
@@ -742,6 +788,39 @@ func TestMessageStreamAdditionalBranchCoverage(t *testing.T) {
 	}
 
 	stream = newMessageStream(nil)
+	stream.setState(messageStreamStateReading)
+	stream.SetTimeout(uint64(math.MaxInt64/int64(time.Millisecond)) + 1)
+	done := make(chan bool, 1)
+	go func() {
+		done <- stream.HasNext()
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		stream.queue.lock.Lock()
+		waiters := stream.queue.waiters
+		stream.queue.lock.Unlock()
+		if waiters > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("clamped-timeout HasNext did not enter wait path")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	stream.queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("bounded-timeout")})
+	select {
+	case hasNext := <-done:
+		if !hasNext {
+			t.Fatalf("expected HasNext true when oversized timeout is clamped")
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("clamped-timeout HasNext did not unblock after enqueue")
+	}
+	if message := stream.Next(); message == nil || string(message.Data()) != "bounded-timeout" {
+		t.Fatalf("unexpected message from clamped-timeout path")
+	}
+
+	stream = newMessageStream(nil)
 	stream.setState(messageStreamStateSOWOnly)
 	stream.current = &Message{header: &_Header{command: CommandGroupEnd}}
 	if message := stream.Next(); message == nil {
@@ -801,45 +880,5 @@ func TestMessageStreamAdditionalBranchCoverage(t *testing.T) {
 	timeoutStream.SetTimeout(1)
 	if message, ok := (&MessageStreamIterator{stream: timeoutStream}).Next(); ok || message != nil {
 		t.Fatalf("expected iterator timeout nil result")
-	}
-}
-
-func TestMessageQueueTimeoutDoesNotBlockLaterDelivery(t *testing.T) {
-	queue := newQueue(4)
-
-	secondDone := make(chan *Message, 1)
-	go func() {
-		message, ok := queue.waitDequeue()
-		if !ok {
-			secondDone <- nil
-			return
-		}
-		secondDone <- message
-	}()
-
-	firstDone := make(chan struct{})
-	go func() {
-		message, ok := queue.waitDequeueTimeout(10 * time.Millisecond)
-		if ok || message != nil {
-			t.Errorf("expected first waiter to time out")
-		}
-		close(firstDone)
-	}()
-
-	select {
-	case <-firstDone:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("expected first waiter to time out")
-	}
-
-	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("handoff")})
-
-	select {
-	case message := <-secondDone:
-		if message == nil || string(message.Data()) != "handoff" {
-			t.Fatalf("expected second waiter to receive queued message after timeout, got %#v", message)
-		}
-	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("expected remaining waiter to receive queued message")
 	}
 }

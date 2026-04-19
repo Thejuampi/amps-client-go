@@ -35,10 +35,11 @@
     },
     "BenchmarkMessageCopy": {
       "ns_op": 225.8,
-      "allocs_op": 2.0
+      "allocs_op": 2.0,
+      "group": "volatile-micro"
     },
     "BenchmarkHeaderReset": {
-      "ns_op": 0.108,
+      "ns_op": 5.48,
       "allocs_op": 0.0
     },
     "BenchmarkMessageReset": {

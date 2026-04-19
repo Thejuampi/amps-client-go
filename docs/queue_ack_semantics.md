@@ -18,17 +18,17 @@ Without these fields, auto-ack does not emit `ack` commands.
 
 | Method | Input | Behavior |
 |---|---|---|
-| `Ack(topic, bookmark, subID...)` | Topic + bookmark | Sends `ack` command immediately.
-| `AckMessage(message)` | Message containing topic/bookmark | Extracts and sends ack.
-| `FlushAcks()` | None | Flushes buffered auto-acks by topic/subID batch key.
+| `Ack(topic, bookmark, subID...)` | Topic + bookmark | Sends `ack` command immediately. |
+| `AckMessage(message)` | Message containing topic/bookmark | Extracts and sends ack. |
+| `FlushAcks()` | None | Flushes buffered auto-acks by topic/subID batch key. |
 
 ## Auto-Ack Controls
 
 | Method | Purpose | Default |
 |---|---|---|
-| `SetAutoAck(bool)` / `AutoAck()` | Enable or disable auto-ack engine | Disabled.
-| `SetAckBatchSize(uint)` / `AckBatchSize()` | Batch threshold before flush | `1`.
-| `SetAckTimeout(time.Duration)` / `AckTimeout()` | Timer-based flush | `1s`.
+| `SetAutoAck(bool)` / `AutoAck()` | Enable or disable auto-ack engine | Disabled. |
+| `SetAckBatchSize(uint)` / `AckBatchSize()` | Batch threshold before flush | `1`. |
+| `SetAckTimeout(time.Duration)` / `AckTimeout()` | Timer-based flush | `1s`. |
 
 ## Batching Model
 
@@ -72,19 +72,19 @@ Recovery path:
 
 ```go
 client.SetAutoAck(true).
-	SetAckBatchSize(50).
-	SetAckTimeout(500 * time.Millisecond)
+ SetAckBatchSize(50).
+ SetAckTimeout(500 * time.Millisecond)
 
 _, err := client.SubscribeAsync(func(msg *amps.Message) error {
-	// process queue item; ack is deferred to auto-ack policy
-	return nil
+ // process queue item; ack is deferred to auto-ack policy
+ return nil
 }, "queue://orders")
 if err != nil {
-	panic(err)
+ panic(err)
 }
 
 if err := client.FlushAcks(); err != nil {
-	panic(err)
+ panic(err)
 }
 ```
 

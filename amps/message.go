@@ -101,56 +101,56 @@ func parseHeader(msg *Message, resetMessage bool, array []byte) ([]byte, error) 
 	if msg == nil {
 		return array, errors.New("message object error (null pointer)")
 	}
-	var header *_Header
 	if resetMessage {
 		msg.resetForParse()
-		header = ensureMessageHeader(msg)
-	} else {
-		header = ensureMessageHeader(msg)
+		return parseHeaderInto(msg.header, array)
 	}
 
-	parseIntoHeader := func(target *_Header) ([]byte, error) {
-		if len(array) > 5 && array[0] == '"' {
-			if array[1] == 'c' && array[2] == '"' && array[3] == ':' && array[4] == '"' {
-				if end, ok := parseHeaderTrustedCTSubID(target, array, 0); ok {
-					return array[end:], nil
-				}
-			}
+	var header = ensureMessageHeader(msg)
+	original := *header
+	left, err := parseHeaderInto(header, array)
+	if err != nil {
+		*header = original
+		return left, err
+	}
+	return left, nil
+}
+
+func parseHeaderInto(target *_Header, array []byte) ([]byte, error) {
+	if len(array) > 5 {
+		switch array[0] {
+		case '"':
 			if array[1] == 't' && array[2] == '"' && array[3] == ':' {
 				if end, ok := parseHeaderTrustedTopicOnly(target, array, 0); ok {
 					return array[end:], nil
 				}
 			}
-		}
-		if len(array) > 6 && array[0] == '{' && array[1] == '"' && array[2] == 'c' && array[3] == '"' && array[4] == ':' && array[5] == '"' {
-			if end, ok := parseHeaderTrustedCTSubID(target, array, 1); ok {
-				return array[end:], nil
+			if array[1] == 'c' && array[2] == '"' && array[3] == ':' && array[4] == '"' {
+				if end, ok := parseHeaderTrustedCTSubID(target, array, 0); ok {
+					return array[end:], nil
+				}
+			}
+		case '{':
+			if array[1] == '"' {
+				if array[2] == 't' && array[3] == '"' && array[4] == ':' {
+					if end, ok := parseHeaderTrustedTopicOnly(target, array, 1); ok {
+						return array[end:], nil
+					}
+				}
+				if len(array) > 6 && array[2] == 'c' && array[3] == '"' && array[4] == ':' && array[5] == '"' {
+					if end, ok := parseHeaderTrustedCTSubID(target, array, 1); ok {
+						return array[end:], nil
+					}
+				}
 			}
 		}
-		if len(array) > 5 && array[0] == '{' && array[1] == '"' && array[2] == 't' && array[3] == '"' && array[4] == ':' {
-			if end, ok := parseHeaderTrustedTopicOnly(target, array, 1); ok {
-				return array[end:], nil
-			}
-		}
-
-		if end, ok := parseHeaderTrusted(target, array); ok {
-			return array[end:], nil
-		}
-
-		return parseHeaderChecked(target, array)
 	}
 
-	if !resetMessage {
-		original := *header
-		left, err := parseIntoHeader(header)
-		if err != nil {
-			*header = original
-			return left, err
-		}
-		return left, nil
+	if end, ok := parseHeaderTrusted(target, array); ok {
+		return array[end:], nil
 	}
 
-	return parseIntoHeader(header)
+	return parseHeaderChecked(target, array)
 }
 
 func parseHeaderTrusted(header *_Header, array []byte) (int, bool) {
@@ -536,12 +536,14 @@ func isJSONWhitespace(character byte) bool {
 
 type ownedMessage struct {
 	Message
-	header _Header
+	header     _Header
+	textExtras _HeaderTextExtras
 }
 
 func newOwnedMessage() *Message {
 	holder := &ownedMessage{}
 	holder.Message.header = &holder.header
+	holder.Message.header.textExtras = &holder.textExtras
 	return &holder.Message
 }
 
@@ -586,13 +588,13 @@ func (msg *Message) Copy() *Message {
 	}
 
 	message.header.command = header.command
+	var textExtras = headerTextExtras(header)
 	var totalCopiedBytes = len(msg.data) +
 		len(header.bookmark) +
 		len(header.commandID) +
 		len(header.clientName) +
 		len(header.correlationID) +
 		len(header.filter) +
-		len(header.leasePeriod) +
 		len(header.messageType) +
 		len(header.options) +
 		len(header.orderBy) +
@@ -608,13 +610,20 @@ func (msg *Message) Copy() *Message {
 		len(header.topic) +
 		len(header.userID) +
 		len(header.version)
+	if textExtras != nil {
+		totalCopiedBytes +=
+			len(textExtras.dataOnly) +
+				len(textExtras.leasePeriod) +
+				len(textExtras.sendEmpty) +
+				len(textExtras.sendKeys) +
+				len(textExtras.sendOOF)
+	}
 	var needsCopiedBytes = msg.data != nil ||
 		header.bookmark != nil ||
 		header.commandID != nil ||
 		header.clientName != nil ||
 		header.correlationID != nil ||
 		header.filter != nil ||
-		header.leasePeriod != nil ||
 		header.messageType != nil ||
 		header.options != nil ||
 		header.orderBy != nil ||
@@ -630,6 +639,14 @@ func (msg *Message) Copy() *Message {
 		header.topic != nil ||
 		header.userID != nil ||
 		header.version != nil
+	if textExtras != nil {
+		needsCopiedBytes = needsCopiedBytes ||
+			textExtras.dataOnly != nil ||
+			textExtras.leasePeriod != nil ||
+			textExtras.sendEmpty != nil ||
+			textExtras.sendKeys != nil ||
+			textExtras.sendOOF != nil
+	}
 	var copiedBytes []byte
 	if needsCopiedBytes {
 		copiedBytes = make([]byte, totalCopiedBytes)
@@ -657,7 +674,6 @@ func (msg *Message) Copy() *Message {
 		gseq := *header.groupSequenceNumber
 		message.header.groupSequenceNumber = &gseq
 	}
-	copiedBytes, message.header.leasePeriod = copyMessageBytes(copiedBytes, header.leasePeriod)
 	if header.matches != nil {
 		matches := *header.matches
 		message.header.matches = &matches
@@ -708,7 +724,31 @@ func (msg *Message) Copy() *Message {
 		message.header.topicMatches = &tM
 	}
 	copiedBytes, message.header.userID = copyMessageBytes(copiedBytes, header.userID)
-	_, message.header.version = copyMessageBytes(copiedBytes, header.version)
+	copiedBytes, message.header.version = copyMessageBytes(copiedBytes, header.version)
+	if textExtras != nil {
+		var copiedTextExtras = ensureHeaderTextExtras(message.header)
+		copiedBytes, copiedTextExtras.dataOnly = copyMessageBytes(copiedBytes, textExtras.dataOnly)
+		copiedBytes, copiedTextExtras.leasePeriod = copyMessageBytes(copiedBytes, textExtras.leasePeriod)
+		copiedBytes, copiedTextExtras.sendEmpty = copyMessageBytes(copiedBytes, textExtras.sendEmpty)
+		copiedBytes, copiedTextExtras.sendKeys = copyMessageBytes(copiedBytes, textExtras.sendKeys)
+		_, copiedTextExtras.sendOOF = copyMessageBytes(copiedBytes, textExtras.sendOOF)
+	}
+	if header.skipN != nil {
+		skipN := *header.skipN
+		message.header.skipN = &skipN
+	}
+	if header.maximumMessages != nil {
+		maxMsgs := *header.maximumMessages
+		message.header.maximumMessages = &maxMsgs
+	}
+	if header.timeoutInterval != nil {
+		ti := *header.timeoutInterval
+		message.header.timeoutInterval = &ti
+	}
+	if header.gracePeriod != nil {
+		gp := *header.gracePeriod
+		message.header.gracePeriod = &gp
+	}
 
 	return message
 }
@@ -848,11 +888,11 @@ func (msg *Message) GroupSequenceNumber() (uint, bool) {
 
 // LeasePeriod executes the exported leaseperiod operation.
 func (msg *Message) LeasePeriod() (string, bool) {
-	var header = messageHeader(msg)
-	if header == nil {
+	var textExtras = headerTextExtras(messageHeader(msg))
+	if textExtras == nil {
 		return "", false
 	}
-	return string(header.leasePeriod), header.leasePeriod != nil
+	return string(textExtras.leasePeriod), textExtras.leasePeriod != nil
 }
 
 // Matches executes the exported matches operation.
@@ -1044,6 +1084,88 @@ func (msg *Message) UserID() (string, bool) {
 	return string(header.userID), header.userID != nil
 }
 
+func (msg *Message) Password() (string, bool) {
+	var header = messageHeader(msg)
+	if header == nil {
+		return "", false
+	}
+	return string(header.password), header.password != nil
+}
+
+func (m *Message) DataOnly() (bool, bool) {
+	var textExtras = headerTextExtras(messageHeader(m))
+	if textExtras != nil && textExtras.dataOnly != nil {
+		return string(textExtras.dataOnly) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SendEmpty() (bool, bool) {
+	var textExtras = headerTextExtras(messageHeader(m))
+	if textExtras != nil && textExtras.sendEmpty != nil {
+		return string(textExtras.sendEmpty) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SendKeys() (bool, bool) {
+	var textExtras = headerTextExtras(messageHeader(m))
+	if textExtras != nil && textExtras.sendKeys != nil {
+		return string(textExtras.sendKeys) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SendOOF() (bool, bool) {
+	var textExtras = headerTextExtras(messageHeader(m))
+	if textExtras != nil && textExtras.sendOOF != nil {
+		return string(textExtras.sendOOF) == "true", true
+	}
+	return false, false
+}
+
+func (m *Message) SkipN() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.skipN != nil {
+		return *header.skipN, true
+	}
+	return 0, false
+}
+
+func (m *Message) MaximumMessages() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.maximumMessages != nil {
+		return *header.maximumMessages, true
+	}
+	return 0, false
+}
+
+func (m *Message) TimeoutInterval() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.timeoutInterval != nil {
+		return *header.timeoutInterval, true
+	}
+	return 0, false
+}
+
+func (m *Message) GracePeriod() (uint, bool) {
+	header := messageHeader(m)
+	if header != nil && header.gracePeriod != nil {
+		return *header.gracePeriod, true
+	}
+	return 0, false
+}
+
+func (m *Message) LeasePeriodUint() (uint, bool) {
+	var textExtras = headerTextExtras(messageHeader(m))
+	if textExtras != nil && textExtras.leasePeriod != nil {
+		if val, ok := parseUintValue(textExtras.leasePeriod); ok {
+			return val, true
+		}
+	}
+	return 0, false
+}
+
 // Ack acknowledges the message using topic and bookmark fields.
 func (msg *Message) Ack(options ...string) error {
 	if msg == nil || msg.client == nil {
@@ -1176,10 +1298,6 @@ func (msg *Message) IsValid() bool {
 }
 
 // Replace replaces message contents with another message.
-// CONFLATION SAFETY: During conflation, Replace is called under the message
-// stream lock (ms.lock). Consumers call consumeConflateState which removes the
-// entry from sowKeyMap under the same lock before Read returns the message,
-// preventing concurrent Replace calls on a message already returned to the caller.
 func (msg *Message) Replace(other *Message) *Message {
 	if msg == nil || other == nil {
 		return msg
@@ -1229,4 +1347,45 @@ func (msg *Message) ThrowFor() error {
 		return reasonToError(reason)
 	}
 	return NewError(UnknownError, "message failure without reason")
+}
+
+type OOFReason int
+
+const (
+	OOFReasonDeleted OOFReason = iota
+	OOFReasonExpired
+	OOFReasonMatch
+	OOFReasonEntitlement
+	OOFReasonUnknown
+)
+
+func (r OOFReason) String() string {
+	switch r {
+	case OOFReasonDeleted:
+		return "deleted"
+	case OOFReasonExpired:
+		return "expired"
+	case OOFReasonMatch:
+		return "match"
+	case OOFReasonEntitlement:
+		return "entitlement"
+	default:
+		return "unknown"
+	}
+}
+
+func (m *Message) OOFReason() OOFReason {
+	reason, _ := m.Reason()
+	switch reason {
+	case "deleted":
+		return OOFReasonDeleted
+	case "expired":
+		return OOFReasonExpired
+	case "match":
+		return OOFReasonMatch
+	case "entitlement":
+		return OOFReasonEntitlement
+	default:
+		return OOFReasonUnknown
+	}
 }

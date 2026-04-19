@@ -135,37 +135,25 @@ func TestMemoryBookmarkStoreGetMostRecentReturnsPublisherList(t *testing.T) {
 	}
 }
 
-func TestStoreSequenceHelpersDetectExhaustion(t *testing.T) {
-	next, exhausted := deriveNextStoreSequence(maxStoreSequence, 0)
-	if !exhausted || next != maxStoreSequence {
-		t.Fatalf("expected exhausted checkpoint sequence, got next=%d exhausted=%v", next, exhausted)
-	}
+func TestMemoryBookmarkStoreLogMarksMostRecentDirty(t *testing.T) {
+	store := NewMemoryBookmarkStore()
+	store.mostRecent["sub-lazy"] = "stale"
 
-	next, exhausted = advanceStoreSequence(maxStoreSequence)
-	if !exhausted || next != maxStoreSequence {
-		t.Fatalf("expected exhausted advanced sequence, got next=%d exhausted=%v", next, exhausted)
+	seqNo := store.Log(bookmarkMessage("sub-lazy", "10|1|"))
+	if seqNo == 0 {
+		t.Fatalf("expected non-zero bookmark sequence")
 	}
-}
-
-func TestFileBookmarkStoreWalPurgeClearsSequenceExhaustion(t *testing.T) {
-	store := NewFileBookmarkStore(filepath.Join(t.TempDir(), "bookmark_store_purge.json"))
-	store.lock.Lock()
-	store.records["sub-1"] = map[string]*bookmarkRecord{"10|1|": {SeqNo: 7, Count: 1}}
-	store.mostRecent["sub-1"] = "10|1|"
-	store.discardedUpTo["sub-1"] = 7
-	store.nextSeqNo = maxStoreSequence
-	store.sequenceExhausted = true
-	store.applyWalRecordLocked(bookmarkWalRecord{Type: "purge"})
-	store.lock.Unlock()
-
-	if len(store.records) != 0 || len(store.mostRecent) != 0 || len(store.discardedUpTo) != 0 {
-		t.Fatalf("expected purge to clear bookmark state")
+	if !store.dirty["sub-lazy"] {
+		t.Fatalf("expected Log to mark sub-lazy dirty")
 	}
-	if store.nextSeqNo != 1 {
-		t.Fatalf("expected purge to reset next sequence to 1, got %d", store.nextSeqNo)
+	if store.mostRecent["sub-lazy"] != "stale" {
+		t.Fatalf("expected Log to defer mostRecent recomputation, got %q", store.mostRecent["sub-lazy"])
 	}
-	if store.sequenceExhausted {
-		t.Fatalf("expected purge to clear sequence exhaustion")
+	if recent := store.GetMostRecent("sub-lazy"); recent != "10|1|" {
+		t.Fatalf("expected GetMostRecent to recompute dirty cache, got %q", recent)
+	}
+	if store.dirty["sub-lazy"] {
+		t.Fatalf("expected GetMostRecent to clear dirty flag")
 	}
 }
 

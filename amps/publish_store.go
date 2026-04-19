@@ -119,7 +119,7 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 		sequence = store.nextSequence
 	}
 
-	cloned := command.Clone()
+	cloned := cloneCommand(command)
 	cloned.SetSequenceID(sequence)
 	store.entries[sequence] = cloned
 	if wasEmpty {
@@ -236,7 +236,8 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 	store.lock.Unlock()
 
 	if timeout <= 0 {
-		timeout = 24 * time.Hour
+		<-drainedCh
+		return nil
 	}
 
 	var timer = time.NewTimer(timeout)
@@ -258,8 +259,6 @@ func (store *MemoryPublishStore) Flush(timeout time.Duration) error {
 }
 
 // GetLowestUnpersisted returns the current lowest unpersisted value.
-// Returns 0 when no entries are pending, which is unambiguous because valid
-// sequences start at 1 (nextSequence is initialized to 1).
 func (store *MemoryPublishStore) GetLowestUnpersisted() uint64 {
 	if store == nil {
 		return 0
@@ -283,8 +282,8 @@ func (store *MemoryPublishStore) GetLastPersisted() uint64 {
 	if store == nil {
 		return 0
 	}
-	store.lock.RLock()
-	defer store.lock.RUnlock()
+	store.lock.Lock()
+	defer store.lock.Unlock()
 	return store.lastPersisted
 }
 
@@ -303,9 +302,20 @@ func (store *MemoryPublishStore) ErrorOnPublishGap() bool {
 	if store == nil {
 		return false
 	}
-	store.lock.RLock()
-	defer store.lock.RUnlock()
+	store.lock.Lock()
+	defer store.lock.Unlock()
 	return store.errorOnPublishGap
+}
+
+func (store *MemoryPublishStore) SetInitialSequence(sequence uint64) {
+	if store == nil {
+		return
+	}
+	store.lock.Lock()
+	if sequence >= store.nextSequence {
+		store.nextSequence, store.sequenceExhausted = advanceStoreSequence(sequence)
+	}
+	store.lock.Unlock()
 }
 
 // FilePublishStore stores replay or bookmark state for recovery-oriented workflows.
@@ -615,6 +625,10 @@ func (store *FilePublishStore) applyWalRecordLocked(record publishStoreWalRecord
 		if record.Sequence > store.lastPersisted {
 			store.lastPersisted = record.Sequence
 		}
+	case "initial_sequence":
+		if record.Sequence >= store.nextSequence {
+			store.nextSequence, store.sequenceExhausted = advanceStoreSequence(record.Sequence)
+		}
 	case "error_on_gap":
 		if record.ErrorOnGap != nil {
 			store.errorOnPublishGap = *record.ErrorOnGap
@@ -756,4 +770,36 @@ func (store *FilePublishStore) SetErrorOnPublishGap(enabled bool) {
 	store.applyWalRecordLocked(record)
 	store.lock.Unlock()
 	_ = store.bumpMutationAndMaybeCheckpoint()
+}
+
+func (store *FilePublishStore) SetInitialSequence(sequence uint64) {
+	if store == nil {
+		return
+	}
+	store.lock.Lock()
+	if store.loadErr != nil {
+		store.lock.Unlock()
+		return
+	}
+	if sequence < store.nextSequence {
+		store.lock.Unlock()
+		return
+	}
+	if store.options.UseWAL {
+		record := publishStoreWalRecord{
+			Type:     "initial_sequence",
+			Sequence: sequence,
+		}
+		if err := store.appendWalNoLock(record); err != nil {
+			store.lock.Unlock()
+			return
+		}
+		store.applyWalRecordLocked(record)
+		store.lock.Unlock()
+		_ = store.bumpMutationAndMaybeCheckpoint()
+		return
+	}
+	store.nextSequence, store.sequenceExhausted = advanceStoreSequence(sequence)
+	store.lock.Unlock()
+	_ = store.saveCheckpoint()
 }

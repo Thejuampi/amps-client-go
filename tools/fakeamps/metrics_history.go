@@ -117,6 +117,7 @@ func (store *metricsHistoryStore) LoadFile(path string) error {
 		return nil
 	}
 
+	// #nosec G304 -- metrics import path is explicit operator-controlled input.
 	var payload, err = os.ReadFile(path)
 	if err != nil {
 		return err

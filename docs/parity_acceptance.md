@@ -12,20 +12,20 @@ All commands are local/offline. No live AMPS endpoint is required for these gate
 go test -count=1 ./amps/...
 ```
 
-2. Coverage profile and gate:
+1. Coverage profile and gate:
 
 ```bash
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
 ```
 
-3. Symbol + behavior parity gate:
+1. Symbol + behavior parity gate:
 
 ```bash
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 ```
 
-4. Performance regression gate:
+1. Performance regression gate:
 
 ```bash
 go run ./tools/perfgate -baseline tools/perf_baseline.json

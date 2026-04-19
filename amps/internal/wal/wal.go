@@ -46,12 +46,10 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	}
 	if _, err = file.Write(data); err != nil {
 		_ = file.Close()
-		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err = syncFile(file); err != nil {
 		_ = file.Close()
-		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err = file.Close(); err != nil {
@@ -76,6 +74,8 @@ func Append(path string, data []byte, syncWrite bool) (err error) {
 			return err
 		}
 	}
+	_, statErr := os.Stat(path)
+	created := errors.Is(statErr, os.ErrNotExist)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 -- path is provided by store configuration
 	if err != nil {
 		return err
@@ -93,7 +93,7 @@ func Append(path string, data []byte, syncWrite bool) (err error) {
 	if err = file.Close(); err != nil {
 		return err
 	}
-	if syncWrite {
+	if syncWrite && created {
 		return syncDirectory(directory)
 	}
 	return nil
@@ -192,11 +192,6 @@ func Truncate(path string) error {
 		return errors.New("wal path is required")
 	}
 	directory := filepath.Dir(path)
-	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return err
-		}
-	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600) // #nosec G304 -- path is provided by store configuration
 	if err != nil {
 		return err

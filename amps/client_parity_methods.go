@@ -125,7 +125,7 @@ func (client *Client) queueRetryCommand(command *Command, messageHandler func(*M
 
 	state.lock.Lock()
 	state.pendingRetry = append(state.pendingRetry, retryCommand{
-		command:        command.Clone(),
+		command:        cloneCommand(command),
 		messageHandler: messageHandler,
 	})
 	state.lock.Unlock()
@@ -142,7 +142,7 @@ func (client *Client) registerPendingPublishCommand(commandID string, command *C
 		state.lock.Unlock()
 		return
 	}
-	state.pendingPublishByCmdID[commandID] = command.Clone()
+	state.pendingPublishByCmdID[commandID] = cloneCommand(command)
 	state.lock.Unlock()
 }
 
@@ -157,7 +157,7 @@ func (client *Client) registerPendingPublishCommandBytes(commandID []byte, comma
 		state.lock.Unlock()
 		return
 	}
-	state.pendingPublishByCmdID[string(commandID)] = command.Clone()
+	state.pendingPublishByCmdID[string(commandID)] = cloneCommand(command)
 	state.lock.Unlock()
 }
 
@@ -217,6 +217,10 @@ func commandToMessage(command *Command) *Message {
 		gseq := *command.header.groupSequenceNumber
 		message.header.groupSequenceNumber = &gseq
 	}
+	if command.header.maximumMessages != nil {
+		maximumMessages := *command.header.maximumMessages
+		message.header.maximumMessages = &maximumMessages
+	}
 	if command.header.matches != nil {
 		matches := *command.header.matches
 		message.header.matches = &matches
@@ -245,6 +249,14 @@ func commandToMessage(command *Command) *Message {
 		sequence := *command.header.sequenceID
 		message.header.sequenceID = &sequence
 	}
+	if command.header.skipN != nil {
+		skipN := *command.header.skipN
+		message.header.skipN = &skipN
+	}
+	if command.header.timeoutInterval != nil {
+		timeoutInterval := *command.header.timeoutInterval
+		message.header.timeoutInterval = &timeoutInterval
+	}
 	if command.header.topN != nil {
 		topN := *command.header.topN
 		message.header.topN = &topN
@@ -253,16 +265,32 @@ func commandToMessage(command *Command) *Message {
 		tM := *command.header.topicMatches
 		message.header.topicMatches = &tM
 	}
+	if command.header.gracePeriod != nil {
+		gracePeriod := *command.header.gracePeriod
+		message.header.gracePeriod = &gracePeriod
+	}
+
+	var commandTextExtras = headerTextExtras(command.header)
+	var messageTextExtras *_HeaderTextExtras
+	if commandTextExtras != nil {
+		messageTextExtras = ensureHeaderTextExtras(message.header)
+	}
 
 	var totalBytes = len(command.data) +
 		len(command.header.commandID) +
 		len(command.header.topic) +
 		len(command.header.bookmark) +
 		len(command.header.correlationID) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.dataOnly })) +
 		len(command.header.filter) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.leasePeriod })) +
+		len(command.header.messageType) +
 		len(command.header.options) +
 		len(command.header.orderBy) +
 		len(command.header.queryID) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.sendEmpty })) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.sendKeys })) +
+		len(commandTextBytes(commandTextExtras, func(extras *_HeaderTextExtras) []byte { return extras.sendOOF })) +
 		len(command.header.sowKey) +
 		len(command.header.sowKeys) +
 		len(command.header.subID) +
@@ -277,10 +305,22 @@ func commandToMessage(command *Command) *Message {
 	buf, message.header.topic = copyMessageBytes(buf, command.header.topic)
 	buf, message.header.bookmark = copyMessageBytes(buf, command.header.bookmark)
 	buf, message.header.correlationID = copyMessageBytes(buf, command.header.correlationID)
+	if messageTextExtras != nil {
+		buf, messageTextExtras.dataOnly = copyMessageBytes(buf, commandTextExtras.dataOnly)
+	}
 	buf, message.header.filter = copyMessageBytes(buf, command.header.filter)
+	if messageTextExtras != nil {
+		buf, messageTextExtras.leasePeriod = copyMessageBytes(buf, commandTextExtras.leasePeriod)
+	}
+	buf, message.header.messageType = copyMessageBytes(buf, command.header.messageType)
 	buf, message.header.options = copyMessageBytes(buf, command.header.options)
 	buf, message.header.orderBy = copyMessageBytes(buf, command.header.orderBy)
 	buf, message.header.queryID = copyMessageBytes(buf, command.header.queryID)
+	if messageTextExtras != nil {
+		buf, messageTextExtras.sendEmpty = copyMessageBytes(buf, commandTextExtras.sendEmpty)
+		buf, messageTextExtras.sendKeys = copyMessageBytes(buf, commandTextExtras.sendKeys)
+		buf, messageTextExtras.sendOOF = copyMessageBytes(buf, commandTextExtras.sendOOF)
+	}
 	buf, message.header.sowKey = copyMessageBytes(buf, command.header.sowKey)
 	buf, message.header.sowKeys = copyMessageBytes(buf, command.header.sowKeys)
 	buf, message.header.subID = copyMessageBytes(buf, command.header.subID)
@@ -457,6 +497,13 @@ func makeAckBatchKey(topic string, subID string) string {
 	return topic + "\x1f" + subID
 }
 
+func commandTextBytes(extras *_HeaderTextExtras, selector func(*_HeaderTextExtras) []byte) []byte {
+	if extras == nil {
+		return nil
+	}
+	return selector(extras)
+}
+
 func (client *Client) maybeAutoAck(message *Message) {
 	if message == nil {
 		return
@@ -466,7 +513,11 @@ func (client *Client) maybeAutoAck(message *Message) {
 	}
 
 	header := messageHeader(message)
-	if header == nil || header.leasePeriod == nil {
+	if header == nil {
+		return
+	}
+	var textExtras = headerTextExtras(header)
+	if textExtras == nil || textExtras.leasePeriod == nil {
 		return
 	}
 	if len(header.topic) == 0 || len(header.bookmark) == 0 {
@@ -622,7 +673,7 @@ func (client *Client) postLogonRecovery() {
 			if pending.command == nil {
 				continue
 			}
-			if _, retryErr := client.ExecuteAsync(pending.command.Clone(), pending.messageHandler); retryErr != nil {
+			if _, retryErr := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); retryErr != nil {
 				client.reportException(retryErr)
 			}
 		}
@@ -702,7 +753,8 @@ func (client *Client) GatherConnectionInfo() ConnectionInfo {
 
 // BookmarkSubscribe executes the exported bookmarksubscribe operation.
 func (client *Client) BookmarkSubscribe(topic string, bookmark string, filter ...string) (*MessageStream, error) {
-	command := NewCommand("subscribe").SetTopic(topic).SetBookmark(bookmark).AddAckType(AckTypeCompleted)
+	command := NewCommand("subscribe").SetTopic(topic).AddAckType(AckTypeCompleted)
+	command.SetBookmark(client.resolveBookmark(command, bookmark))
 	if len(filter) > 0 {
 		command.SetFilter(filter[0])
 	}
@@ -719,7 +771,8 @@ func (client *Client) BookmarkSubscribe(topic string, bookmark string, filter ..
 
 // BookmarkSubscribeAsync performs the asynchronous bookmarksubscribeasync operation.
 func (client *Client) BookmarkSubscribeAsync(messageHandler func(*Message) error, topic string, bookmark string, filter ...string) (string, error) {
-	command := NewCommand("subscribe").SetTopic(topic).SetBookmark(bookmark).AddAckType(AckTypeCompleted)
+	command := NewCommand("subscribe").SetTopic(topic).AddAckType(AckTypeCompleted)
+	command.SetBookmark(client.resolveBookmark(command, bookmark))
 	if len(filter) > 0 {
 		command.SetFilter(filter[0])
 	}
@@ -732,6 +785,32 @@ func (client *Client) BookmarkSubscribeAsync(messageHandler func(*Message) error
 		}
 	}
 	return client.ExecuteAsync(command, messageHandler)
+}
+
+func (client *Client) resolveBookmark(command *Command, bookmark string) string {
+	if bookmark != BookmarksRECENT {
+		return bookmark
+	}
+	if client == nil || command == nil {
+		return bookmark
+	}
+	store := client.BookmarkStore()
+	if store == nil {
+		return bookmark
+	}
+
+	subID, _ := command.SubID()
+	if subID == "" {
+		subID, _ = command.QueryID()
+	}
+	if subID == "" {
+		return bookmark
+	}
+
+	if stored := store.GetMostRecent(subID); stored != "" {
+		return stored
+	}
+	return bookmark
 }
 
 // Ack sends an explicit queue acknowledgement for a topic and bookmark.

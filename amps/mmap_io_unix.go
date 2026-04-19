@@ -12,8 +12,36 @@ import (
 
 var mmapSyncDirectory = syncDirectoryPath
 
+func normalizeMMapPath(path string) string {
+	return filepath.Clean(path)
+}
+
+func openMMapReadFile(path string) (*os.File, error) {
+	// #nosec G304 -- mmap paths are internal store paths normalized before use.
+	return os.Open(path)
+}
+
+func openMMapWriteFile(path string, perm os.FileMode) (*os.File, error) {
+	// #nosec G304 -- mmap paths are internal store paths normalized before use.
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, perm)
+}
+
+func msyncMappedBytes(mapped []byte) syscall.Errno {
+	if len(mapped) == 0 {
+		return 0
+	}
+
+	// #nosec G103 -- msync requires the mapped slice address for the kernel syscall.
+	_, _, errno := syscall.Syscall(syscall.SYS_MSYNC,
+		uintptr(unsafe.Pointer(&mapped[0])),
+		uintptr(len(mapped)),
+		uintptr(syscall.MS_SYNC),
+	)
+	return errno
+}
+
 func mmapReadFile(path string) (_ []byte, err error) {
-	file, err := os.Open(path)
+	file, err := openMMapReadFile(normalizeMMapPath(path))
 	if err != nil {
 		return nil, err
 	}
@@ -62,13 +90,13 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 
 	directory := filepath.Dir(path)
 	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o755); err != nil {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return err
 		}
 	}
 
-	tmpPath := path + ".tmp"
-	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR|os.O_TRUNC, perm)
+	tmpPath := normalizeMMapPath(path + ".tmp")
+	file, err := openMMapWriteFile(tmpPath, perm)
 	if err != nil {
 		return err
 	}
@@ -94,16 +122,11 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 	// Flush dirty pages to the OS page cache before releasing the mapping.
 	// Without this, a crash after Munmap but before file.Sync could leave
 	// the file on disk in an inconsistent state.
-	if len(mapped) > 0 {
-		if _, _, errno := syscall.Syscall(syscall.SYS_MSYNC,
-			uintptr(unsafe.Pointer(&mapped[0])),
-			uintptr(len(mapped)),
-			uintptr(syscall.MS_SYNC)); errno != 0 {
-			_ = syscall.Munmap(mapped)
-			_ = file.Close()
-			_ = os.Remove(tmpPath)
-			return errno
-		}
+	if errno := msyncMappedBytes(mapped); errno != 0 {
+		_ = syscall.Munmap(mapped)
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
+		return errno
 	}
 
 	if err = syscall.Munmap(mapped); err != nil {

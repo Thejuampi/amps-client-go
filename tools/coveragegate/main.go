@@ -15,6 +15,12 @@ type coverage struct {
 	total   int
 }
 
+type coverageBlock struct {
+	fileName   string
+	statements int
+	covered    bool
+}
+
 var pureFiles = []string{
 	"amps/command.go",
 	"amps/header.go",
@@ -44,7 +50,8 @@ var pureFiles = []string{
 }
 
 var pureFileThresholds = map[string]float64{
-	"amps/header.go": 99.5,
+	"amps/header.go":         99.5,
+	"amps/message_stream.go": 99.7,
 }
 
 var ioFiles = []string{
@@ -72,6 +79,7 @@ func parseProfile(path string) (_ map[string]coverage, err error) {
 	}()
 
 	result := map[string]coverage{}
+	blocks := map[string]coverageBlock{}
 	scanner := bufio.NewScanner(file)
 	first := true
 	for scanner.Scan() {
@@ -104,16 +112,29 @@ func parseProfile(path string) (_ map[string]coverage, err error) {
 			continue
 		}
 		fileName := parts[0]
-		entry := result[fileName]
-		entry.total += statements
-		if hitCount > 0 {
-			entry.covered += statements
+		blockKey := fmt.Sprintf("%s|%s|%d", fileName, parts[1], statements)
+		block := blocks[blockKey]
+		if block.fileName == "" {
+			block.fileName = fileName
+			block.statements = statements
 		}
-		result[fileName] = entry
+		if hitCount > 0 {
+			block.covered = true
+		}
+		blocks[blockKey] = block
 	}
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+
+	for _, block := range blocks {
+		entry := result[block.fileName]
+		entry.total += block.statements
+		if block.covered {
+			entry.covered += block.statements
+		}
+		result[block.fileName] = entry
 	}
 
 	return result, nil

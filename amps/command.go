@@ -1,5 +1,7 @@
 package amps
 
+import "strconv"
+
 // CommandAck and related constants define protocol and client behavior values.
 const (
 	CommandAck = iota
@@ -800,121 +802,81 @@ func NewCommand(commandName string) *Command {
 	return &Command{header: header}
 }
 
-func (cmd *Command) Clone() *Command {
-	if cmd == nil {
+func (com *Command) Clone() *Command {
+	if com == nil {
 		return nil
 	}
-	cloned := NewCommand("")
-	if cmd.header == nil {
-		if cmd.data != nil {
-			cloned.data = make([]byte, len(cmd.data))
-			copy(cloned.data, cmd.data)
+	return cloneCommand(com)
+}
+
+func (com *Command) SetLeasePeriod(period uint) *Command {
+	var h = ensureCommandHeader(com)
+	if h == nil {
+		return nil
+	}
+	if extras := ensureHeaderTextExtras(h); extras != nil {
+		extras.leasePeriod = []byte(strconv.FormatUint(uint64(period), 10))
+	}
+	return com
+}
+
+func (com *Command) SetGroupSequenceNumber(seq uint) *Command {
+	var h = ensureCommandHeader(com)
+	if h == nil {
+		return nil
+	}
+	h.groupSequenceNumber = &seq
+	return com
+}
+
+func (com *Command) SetDataOnly(dataOnly bool) *Command {
+	var h = ensureCommandHeader(com)
+	if h == nil {
+		return nil
+	}
+	if extras := ensureHeaderTextExtras(h); extras != nil {
+		if dataOnly {
+			extras.dataOnly = []byte("true")
+		} else {
+			extras.dataOnly = nil
 		}
-		cloned.timeout = cmd.timeout
-		return cloned
 	}
+	return com
+}
 
-	cloned.header.command = cmd.header.command
+func (com *Command) SetSendEmpty(sendEmpty bool) *Command {
+	var h = ensureCommandHeader(com)
+	if h == nil {
+		return nil
+	}
+	if extras := ensureHeaderTextExtras(h); extras != nil {
+		if sendEmpty {
+			extras.sendEmpty = []byte("true")
+		} else {
+			extras.sendEmpty = nil
+		}
+	}
+	return com
+}
 
-	if cmd.header.ackType != nil {
-		v := *cmd.header.ackType
-		cloned.header.ackType = &v
+func (com *Command) SetSkipN(n uint) *Command {
+	var h = ensureCommandHeader(com)
+	if h == nil {
+		return nil
 	}
-	if cmd.header.batchSize != nil {
-		v := *cmd.header.batchSize
-		cloned.header.batchSize = &v
-	}
-	if cmd.header.expiration != nil {
-		v := *cmd.header.expiration
-		cloned.header.expiration = &v
-	}
-	if cmd.header.groupSequenceNumber != nil {
-		v := *cmd.header.groupSequenceNumber
-		cloned.header.groupSequenceNumber = &v
-	}
-	if cmd.header.matches != nil {
-		v := *cmd.header.matches
-		cloned.header.matches = &v
-	}
-	if cmd.header.messageLength != nil {
-		v := *cmd.header.messageLength
-		cloned.header.messageLength = &v
-	}
-	if cmd.header.recordsDeleted != nil {
-		v := *cmd.header.recordsDeleted
-		cloned.header.recordsDeleted = &v
-	}
-	if cmd.header.recordsInserted != nil {
-		v := *cmd.header.recordsInserted
-		cloned.header.recordsInserted = &v
-	}
-	if cmd.header.recordsReturned != nil {
-		v := *cmd.header.recordsReturned
-		cloned.header.recordsReturned = &v
-	}
-	if cmd.header.recordsUpdated != nil {
-		v := *cmd.header.recordsUpdated
-		cloned.header.recordsUpdated = &v
-	}
-	if cmd.header.sequenceID != nil {
-		v := *cmd.header.sequenceID
-		cloned.header.sequenceID = &v
-	}
-	if cmd.header.topN != nil {
-		v := *cmd.header.topN
-		cloned.header.topN = &v
-	}
-	if cmd.header.topicMatches != nil {
-		v := *cmd.header.topicMatches
-		cloned.header.topicMatches = &v
-	}
+	h.skipN = &n
+	return com
+}
 
-	var totalBytes = len(cmd.data) +
-		len(cmd.header.bookmark) +
-		len(cmd.header.commandID) +
-		len(cmd.header.correlationID) +
-		len(cmd.header.filter) +
-		len(cmd.header.options) +
-		len(cmd.header.orderBy) +
-		len(cmd.header.queryID) +
-		len(cmd.header.sowKey) +
-		len(cmd.header.sowKeys) +
-		len(cmd.header.subID) +
-		len(cmd.header.subIDs) +
-		len(cmd.header.topic) +
-		len(cmd.header.userID) +
-		len(cmd.header.password) +
-		len(cmd.header.messageType) +
-		len(cmd.header.timestamp) +
-		len(cmd.header.reason) +
-		len(cmd.header.status) +
-		len(cmd.header.version)
+func (com *Command) SetReplace() *Command {
+	return com.SetOptions(OptionReplace)
+}
 
-	var buf []byte
-	if totalBytes > 0 {
-		buf = make([]byte, totalBytes)
+func (com *Command) SetMessageType(messageType string) *Command {
+	var h = ensureCommandHeader(com)
+	if h == nil {
+		return nil
 	}
-	buf, cloned.data = copyMessageBytes(buf, cmd.data)
-	buf, cloned.header.bookmark = copyMessageBytes(buf, cmd.header.bookmark)
-	buf, cloned.header.commandID = copyMessageBytes(buf, cmd.header.commandID)
-	buf, cloned.header.correlationID = copyMessageBytes(buf, cmd.header.correlationID)
-	buf, cloned.header.filter = copyMessageBytes(buf, cmd.header.filter)
-	buf, cloned.header.options = copyMessageBytes(buf, cmd.header.options)
-	buf, cloned.header.orderBy = copyMessageBytes(buf, cmd.header.orderBy)
-	buf, cloned.header.queryID = copyMessageBytes(buf, cmd.header.queryID)
-	buf, cloned.header.sowKey = copyMessageBytes(buf, cmd.header.sowKey)
-	buf, cloned.header.sowKeys = copyMessageBytes(buf, cmd.header.sowKeys)
-	buf, cloned.header.subID = copyMessageBytes(buf, cmd.header.subID)
-	buf, cloned.header.subIDs = copyMessageBytes(buf, cmd.header.subIDs)
-	buf, cloned.header.topic = copyMessageBytes(buf, cmd.header.topic)
-	buf, cloned.header.userID = copyMessageBytes(buf, cmd.header.userID)
-	buf, cloned.header.password = copyMessageBytes(buf, cmd.header.password)
-	buf, cloned.header.messageType = copyMessageBytes(buf, cmd.header.messageType)
-	buf, cloned.header.timestamp = copyMessageBytes(buf, cmd.header.timestamp)
-	buf, cloned.header.reason = copyMessageBytes(buf, cmd.header.reason)
-	buf, cloned.header.status = copyMessageBytes(buf, cmd.header.status)
-	_, cloned.header.version = copyMessageBytes(buf, cmd.header.version)
-
-	cloned.timeout = cmd.timeout
-	return cloned
+	h.messageType = []byte(messageType)
+	return com
 }

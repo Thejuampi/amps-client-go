@@ -2,14 +2,18 @@ package main
 
 import (
 	"encoding/binary"
+	"io"
+	"io/fs"
 	"log"
+	"math"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // ---------------------------------------------------------------------------
@@ -112,12 +116,31 @@ func (c *sowCache) loadFromDisk() {
 		return
 	}
 
-	sowDir := filepath.Join(c.diskPath, "sow")
-	if _, err := os.Stat(sowDir); os.IsNotExist(err) {
+	root, err := os.OpenRoot(c.diskPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		log.Printf("fakeamps: sow load: open root failed: %v", err)
 		return
 	}
+	defer func() {
+		_ = root.Close()
+	}()
 
-	entries, err := os.ReadDir(sowDir)
+	sowRoot, err := root.OpenRoot("sow")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		log.Printf("fakeamps: sow load: open sow root failed: %v", err)
+		return
+	}
+	defer func() {
+		_ = sowRoot.Close()
+	}()
+
+	entries, err := fs.ReadDir(sowRoot.FS(), ".")
 	if err != nil {
 		log.Printf("fakeamps: sow load: read dir failed: %v", err)
 		return
@@ -127,85 +150,137 @@ func (c *sowCache) loadFromDisk() {
 		if e.IsDir() {
 			continue
 		}
-		topic := e.Name()
-		c.loadTopicFromDisk(topic, filepath.Join(sowDir, topic))
+		c.loadTopicFromDisk(sowRoot, e.Name())
 	}
 }
 
-func (c *sowCache) loadTopicFromDisk(topic, path string) {
-	f, err := os.Open(path)
+func (c *sowCache) loadTopicFromDisk(sowRoot *os.Root, fileName string) {
+	f, err := sowRoot.Open(fileName)
 	if err != nil {
 		return
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			log.Printf("fakeamps: sow load: close failed for %s: %v", path, closeErr)
+			log.Printf("fakeamps: sow load: close failed for %s: %v", fileName, closeErr)
 		}
 	}()
 
-	ts := c.getOrCreateTopic(topic)
-
-	reader := &readerAtWrapper{f: f}
-	var offset int64 = 0
+	var loaded int
 
 	for {
-		// Read header: sowKeyLen(2) + sowKey + seqNum(8) + expiresAt(8) + timestampLen(2) + timestamp + bookmarkLen(2) + bookmark + payloadLen(4) + payload
-		headerBuf := make([]byte, 2+8+8+2+2+4)
-		n, err := reader.ReadAt(headerBuf, offset)
-		if err != nil || n < len(headerBuf) {
+		var topicLenBuf [2]byte
+		if _, err := io.ReadFull(f, topicLenBuf[:]); err != nil {
+			if err != io.EOF {
+				log.Printf("fakeamps: sow load: read topic length failed for %s: %v", fileName, err)
+			}
 			break
 		}
-		pos := 0
-
-		sowKeyLen := binary.BigEndian.Uint16(headerBuf[pos : pos+2])
-		pos += 2
-		sowKeyBytes := make([]byte, sowKeyLen)
-		n, err = reader.ReadAt(sowKeyBytes, offset+int64(pos))
-		if err != nil || n < int(sowKeyLen) {
+		var topicLen = binary.BigEndian.Uint16(topicLenBuf[:])
+		var topicBytes = make([]byte, topicLen)
+		if _, err := io.ReadFull(f, topicBytes); err != nil {
+			log.Printf("fakeamps: sow load: read topic failed for %s: %v", fileName, err)
 			break
 		}
-		sowKey := string(sowKeyBytes)
-		pos += int(sowKeyLen)
+		var topic = string(topicBytes)
 
-		seqNum := binary.BigEndian.Uint64(headerBuf[pos : pos+8])
-		pos += 8
+		var sowKeyLenBuf [2]byte
+		if _, err := io.ReadFull(f, sowKeyLenBuf[:]); err != nil {
+			log.Printf("fakeamps: sow load: read sow key length failed for %s: %v", fileName, err)
+			break
+		}
+		var sowKeyLen = binary.BigEndian.Uint16(sowKeyLenBuf[:])
+		var sowKeyBytes = make([]byte, sowKeyLen)
+		if _, err := io.ReadFull(f, sowKeyBytes); err != nil {
+			log.Printf("fakeamps: sow load: read sow key failed for %s: %v", fileName, err)
+			break
+		}
+		var sowKey = string(sowKeyBytes)
 
-		expiresAtNs := binary.BigEndian.Uint64(headerBuf[pos : pos+8])
-		pos += 8
+		var seqBuf [8]byte
+		if _, err := io.ReadFull(f, seqBuf[:]); err != nil {
+			log.Printf("fakeamps: sow load: read seqNum failed for %s: %v", fileName, err)
+			break
+		}
+		var seqNum = binary.BigEndian.Uint64(seqBuf[:])
+
+		var expiresAtBuf [8]byte
+		if _, err := io.ReadFull(f, expiresAtBuf[:]); err != nil {
+			log.Printf("fakeamps: sow load: read expiresAt failed for %s: %v", fileName, err)
+			break
+		}
+		var expiresAtNs = binary.BigEndian.Uint64(expiresAtBuf[:])
 		var expiresAt time.Time
 		if expiresAtNs > 0 {
+			if expiresAtNs > math.MaxInt64 {
+				log.Printf("fakeamps: sow load: skipping corrupt expiresAt=%d for topic=%s key=%s", expiresAtNs, topic, sowKey)
+				var tsLenBuf [2]byte
+				if _, err := io.ReadFull(f, tsLenBuf[:]); err != nil {
+					break
+				}
+				var tsLen = binary.BigEndian.Uint16(tsLenBuf[:])
+				if _, err := io.CopyN(io.Discard, f, int64(tsLen)); err != nil {
+					break
+				}
+				var bookmarkLenBuf [2]byte
+				if _, err := io.ReadFull(f, bookmarkLenBuf[:]); err != nil {
+					break
+				}
+				var bookmarkLen = binary.BigEndian.Uint16(bookmarkLenBuf[:])
+				if _, err := io.CopyN(io.Discard, f, int64(bookmarkLen)); err != nil {
+					break
+				}
+				var payloadLenBuf [4]byte
+				if _, err := io.ReadFull(f, payloadLenBuf[:]); err != nil {
+					break
+				}
+				var payloadLen = binary.BigEndian.Uint32(payloadLenBuf[:])
+				if _, err := io.CopyN(io.Discard, f, int64(payloadLen)); err != nil {
+					break
+				}
+				continue
+			}
 			expiresAt = time.Unix(0, int64(expiresAtNs))
 		}
 
-		tsLen := binary.BigEndian.Uint16(headerBuf[pos : pos+2])
-		pos += 2
-		tsBytes := make([]byte, tsLen)
-		n, err = reader.ReadAt(tsBytes, offset+int64(pos))
-		if err != nil || n < int(tsLen) {
+		var tsLenBuf [2]byte
+		if _, err := io.ReadFull(f, tsLenBuf[:]); err != nil {
+			log.Printf("fakeamps: sow load: read timestamp length failed for %s: %v", fileName, err)
 			break
 		}
-		timestamp := string(tsBytes)
-		pos += int(tsLen)
-
-		bmLen := binary.BigEndian.Uint16(headerBuf[pos : pos+2])
-		pos += 2
-		bmBytes := make([]byte, bmLen)
-		n, err = reader.ReadAt(bmBytes, offset+int64(pos))
-		if err != nil || n < int(bmLen) {
+		var tsLen = binary.BigEndian.Uint16(tsLenBuf[:])
+		var tsBytes = make([]byte, tsLen)
+		if _, err := io.ReadFull(f, tsBytes); err != nil {
+			log.Printf("fakeamps: sow load: read timestamp failed for %s: %v", fileName, err)
 			break
 		}
-		bookmark := string(bmBytes)
-		pos += int(bmLen)
+		var timestamp = string(tsBytes)
 
-		payloadLen := binary.BigEndian.Uint32(headerBuf[pos : pos+4])
-		pos += 4
-		payload := make([]byte, payloadLen)
-		n, err = reader.ReadAt(payload, offset+int64(pos))
-		if err != nil || n < int(payloadLen) {
+		var bookmarkLenBuf [2]byte
+		if _, err := io.ReadFull(f, bookmarkLenBuf[:]); err != nil {
+			log.Printf("fakeamps: sow load: read bookmark length failed for %s: %v", fileName, err)
+			break
+		}
+		var bookmarkLen = binary.BigEndian.Uint16(bookmarkLenBuf[:])
+		var bookmarkBytes = make([]byte, bookmarkLen)
+		if _, err := io.ReadFull(f, bookmarkBytes); err != nil {
+			log.Printf("fakeamps: sow load: read bookmark failed for %s: %v", fileName, err)
+			break
+		}
+		var bookmark = string(bookmarkBytes)
+
+		var payloadLenBuf [4]byte
+		if _, err := io.ReadFull(f, payloadLenBuf[:]); err != nil {
+			log.Printf("fakeamps: sow load: read payload length failed for %s: %v", fileName, err)
+			break
+		}
+		var payloadLen = binary.BigEndian.Uint32(payloadLenBuf[:])
+		var payload = make([]byte, payloadLen)
+		if _, err := io.ReadFull(f, payload); err != nil {
+			log.Printf("fakeamps: sow load: read payload failed for %s: %v", fileName, err)
 			break
 		}
 
-		record := &sowRecord{
+		var record = &sowRecord{
 			topic:      topic,
 			sowKey:     sowKey,
 			payload:    payload,
@@ -215,14 +290,14 @@ func (c *sowCache) loadTopicFromDisk(topic, path string) {
 			expiresAt:  expiresAt,
 			lastAccess: time.Now(),
 		}
+		var ts = c.getOrCreateTopic(topic)
 		ts.mu.Lock()
 		ts.records[sowKey] = record
 		ts.mu.Unlock()
-
-		offset += int64(2 + int(sowKeyLen) + 8 + 8 + 2 + int(tsLen) + 2 + int(bmLen) + 4 + int(payloadLen))
+		loaded++
 	}
 
-	log.Printf("fakeamps: sow loaded topic=%s count=%d", topic, len(ts.records))
+	log.Printf("fakeamps: sow loaded file=%s count=%d", fileName, loaded)
 }
 
 // readerAtWrapper wraps an os.File to provide ReadAt.
@@ -240,21 +315,43 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 		return
 	}
 
-	sowDir := filepath.Join(c.diskPath, "sow")
-	if err := os.MkdirAll(sowDir, 0755); err != nil {
+	root, err := openFakeampsDiskRoot(c.diskPath)
+	if err != nil {
 		log.Printf("fakeamps: sow save: mkdir failed: %v", err)
 		return
 	}
+	defer func() {
+		_ = root.Close()
+	}()
+	if err := root.MkdirAll("sow", fakeampsDataDirMode); err != nil {
+		log.Printf("fakeamps: sow save: mkdir failed: %v", err)
+		return
+	}
+	sowRoot, err := root.OpenRoot("sow")
+	if err != nil {
+		log.Printf("fakeamps: sow save: open sow root failed: %v", err)
+		return
+	}
+	defer func() {
+		_ = sowRoot.Close()
+	}()
 
-	path := filepath.Join(sowDir, topic)
-	f, err := os.Create(path)
+	var fileName = encodeSOWTopicFilename(topic)
+	if len(records) == 0 {
+		if err := sowRoot.Remove(fileName); err != nil && !os.IsNotExist(err) {
+			log.Printf("fakeamps: sow save: remove failed for topic=%s: %v", topic, err)
+		}
+		return
+	}
+
+	f, err := sowRoot.OpenFile(fileName, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fakeampsDataFileMode)
 	if err != nil {
 		log.Printf("fakeamps: sow save: create failed: %v", err)
 		return
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			log.Printf("fakeamps: sow save: close failed for %s: %v", path, closeErr)
+			log.Printf("fakeamps: sow save: close failed for %s: %v", fileName, closeErr)
 		}
 	}()
 
@@ -264,14 +361,44 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 			continue
 		}
 
-		sowKeyLen := uint16(len(r.sowKey))
-		tsLen := uint16(len(r.timestamp))
-		bmLen := uint16(len(r.bookmark))
-		payloadLen := uint32(len(r.payload))
+		var recordTopic = r.topic
+		if recordTopic == "" {
+			recordTopic = topic
+		}
+		var topicLen, topicLenOK = safecast.Uint16FromIntChecked(len(recordTopic))
+		if !topicLenOK {
+			log.Printf("fakeamps: sow save: topic too large for topic=%s", topic)
+			return
+		}
+		var sowKeyLen, sowKeyLenOK = safecast.Uint16FromIntChecked(len(r.sowKey))
+		if !sowKeyLenOK {
+			log.Printf("fakeamps: sow save: sow key too large for topic=%s", topic)
+			return
+		}
+		var tsLen, tsLenOK = safecast.Uint16FromIntChecked(len(r.timestamp))
+		if !tsLenOK {
+			log.Printf("fakeamps: sow save: timestamp too large for topic=%s", topic)
+			return
+		}
+		var bookmarkLen, bookmarkLenOK = safecast.Uint16FromIntChecked(len(r.bookmark))
+		if !bookmarkLenOK {
+			log.Printf("fakeamps: sow save: bookmark too large for topic=%s", topic)
+			return
+		}
+		var payloadLen, payloadLenOK = safecast.Uint32FromIntChecked(len(r.payload))
+		if !payloadLenOK {
+			log.Printf("fakeamps: sow save: payload too large for topic=%s", topic)
+			return
+		}
 
-		headerLen := 2 + int(sowKeyLen) + 8 + 8 + 2 + int(tsLen) + 2 + int(bmLen) + 4
+		headerLen := 2 + int(topicLen) + 2 + int(sowKeyLen) + 8 + 8 + 2 + int(tsLen) + 2 + int(bookmarkLen) + 4
 		buf := make([]byte, headerLen+int(payloadLen))
 		pos := 0
+
+		binary.BigEndian.PutUint16(buf[pos:pos+2], topicLen)
+		pos += 2
+		copy(buf[pos:pos+int(topicLen)], recordTopic)
+		pos += int(topicLen)
 
 		binary.BigEndian.PutUint16(buf[pos:pos+2], sowKeyLen)
 		pos += 2
@@ -283,7 +410,9 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 
 		var expiresAtNs uint64
 		if !r.expiresAt.IsZero() {
-			expiresAtNs = uint64(r.expiresAt.UnixNano())
+			if value, ok := safecast.Uint64FromInt64Checked(r.expiresAt.UnixNano()); ok {
+				expiresAtNs = value
+			}
 		}
 		binary.BigEndian.PutUint64(buf[pos:pos+8], expiresAtNs)
 		pos += 8
@@ -293,10 +422,10 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 		copy(buf[pos:pos+int(tsLen)], r.timestamp)
 		pos += int(tsLen)
 
-		binary.BigEndian.PutUint16(buf[pos:pos+2], bmLen)
+		binary.BigEndian.PutUint16(buf[pos:pos+2], bookmarkLen)
 		pos += 2
-		copy(buf[pos:pos+int(bmLen)], r.bookmark)
-		pos += int(bmLen)
+		copy(buf[pos:pos+int(bookmarkLen)], r.bookmark)
+		pos += int(bookmarkLen)
 
 		binary.BigEndian.PutUint32(buf[pos:pos+4], payloadLen)
 		pos += 4
@@ -310,6 +439,20 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 	if err := writer.Sync(); err != nil {
 		log.Printf("fakeamps: sow save: sync failed for topic=%s: %v", topic, err)
 	}
+}
+
+func cloneSOWRecords(records map[string]*sowRecord) map[string]*sowRecord {
+	var snapshot = make(map[string]*sowRecord, len(records))
+	for key, record := range records {
+		if record == nil {
+			continue
+		}
+		var payloadCopy = append([]byte(nil), record.payload...)
+		var recordCopy = *record
+		recordCopy.payload = payloadCopy
+		snapshot[key] = &recordCopy
+	}
+	return snapshot
 }
 
 // syncWriter buffers writes and syncs on demand.
@@ -417,6 +560,7 @@ func (c *sowCache) upsertWithEvicted(topic, sowKey string, payload []byte, bookm
 		expires = time.Now().Add(expiration)
 	}
 
+	var snapshot map[string]*sowRecord
 	t.mu.Lock()
 	existing := t.records[sowKey]
 	if existing == nil {
@@ -444,7 +588,13 @@ func (c *sowCache) upsertWithEvicted(topic, sowKey string, payload []byte, bookm
 		}
 		updated = true
 	}
+	if c.diskPath != "" {
+		snapshot = cloneSOWRecords(t.records)
+	}
 	t.mu.Unlock()
+	if snapshot != nil {
+		c.saveTopicToDisk(topic, snapshot)
+	}
 	return
 }
 
@@ -468,6 +618,7 @@ func (c *sowCache) deltaUpsertWithPrevious(topic, sowKey string, deltaPayload []
 		expires = time.Now().Add(expiration)
 	}
 
+	var snapshot map[string]*sowRecord
 	t.mu.Lock()
 	existing := t.records[sowKey]
 	if existing == nil {
@@ -500,7 +651,13 @@ func (c *sowCache) deltaUpsertWithPrevious(topic, sowKey string, deltaPayload []
 		mergedPayload = merged
 		updated = true
 	}
+	if c.diskPath != "" {
+		snapshot = cloneSOWRecords(t.records)
+	}
 	t.mu.Unlock()
+	if snapshot != nil {
+		c.saveTopicToDisk(topic, snapshot)
+	}
 	return
 }
 
@@ -511,12 +668,19 @@ func (c *sowCache) delete(topic, sowKey string) (existed bool) {
 		return false
 	}
 	t := raw.(*topicSOW)
+	var snapshot map[string]*sowRecord
 	t.mu.Lock()
 	if _, exists := t.records[sowKey]; exists {
 		delete(t.records, sowKey)
 		existed = true
 	}
+	if existed && c.diskPath != "" {
+		snapshot = cloneSOWRecords(t.records)
+	}
 	t.mu.Unlock()
+	if snapshot != nil {
+		c.saveTopicToDisk(topic, snapshot)
+	}
 	return
 }
 
@@ -528,6 +692,7 @@ func (c *sowCache) deleteByFilter(topic, filter string) (int, []string) {
 		return 0, nil
 	}
 	t := raw.(*topicSOW)
+	var snapshot map[string]*sowRecord
 	t.mu.Lock()
 	var deleted []string
 	for key, r := range t.records {
@@ -536,7 +701,13 @@ func (c *sowCache) deleteByFilter(topic, filter string) (int, []string) {
 			delete(t.records, key)
 		}
 	}
+	if len(deleted) > 0 && c.diskPath != "" {
+		snapshot = cloneSOWRecords(t.records)
+	}
 	t.mu.Unlock()
+	if snapshot != nil {
+		c.saveTopicToDisk(topic, snapshot)
+	}
 	return len(deleted), deleted
 }
 
@@ -759,16 +930,25 @@ func (c *sowCache) gcExpired() int {
 
 func (c *sowCache) gcExpiredRecords() []sowRecord {
 	var removed []sowRecord
-	c.topics.Range(func(_ interface{}, value interface{}) bool {
+	c.topics.Range(func(key interface{}, value interface{}) bool {
 		var t = value.(*topicSOW)
+		var snapshot map[string]*sowRecord
+		var changed bool
 		t.mu.Lock()
-		for key, record := range t.records {
+		for recordKey, record := range t.records {
 			if record.isExpired() {
 				removed = append(removed, *record)
-				delete(t.records, key)
+				delete(t.records, recordKey)
+				changed = true
 			}
 		}
+		if c.diskPath != "" && changed {
+			snapshot = cloneSOWRecords(t.records)
+		}
 		t.mu.Unlock()
+		if snapshot != nil {
+			c.saveTopicToDisk(key.(string), snapshot)
+		}
 		return true
 	})
 	return removed

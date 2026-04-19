@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- RFC 6455 requires SHA-1 for Sec-WebSocket-Accept.
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 const websocketAcceptGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -171,8 +173,9 @@ func (c *websocketConn) writeDataFrameLocked(opcode byte, p []byte) (int, error)
 	var length = len(p)
 	if length <= 125 {
 		header = []byte{0x80 | opcode, byte(length)}
-	} else if length <= 65535 {
-		header = []byte{0x80 | opcode, 126, byte(length >> 8), byte(length)}
+	} else if extLength, ok := safecast.Uint16FromIntChecked(length); ok {
+		header = []byte{0x80 | opcode, 126, 0x00, 0x00}
+		binary.BigEndian.PutUint16(header[2:], extLength)
 	} else {
 		header = make([]byte, 10)
 		header[0] = 0x80 | opcode
@@ -204,8 +207,11 @@ func (c *websocketConn) writeControlFrame(opcode byte, payload []byte) error {
 	var length = len(payload)
 	if length <= 125 {
 		header = []byte{0x80 | opcode, byte(length)}
+	} else if extLength, ok := safecast.Uint16FromIntChecked(length); ok {
+		header = []byte{0x80 | opcode, 126, 0x00, 0x00}
+		binary.BigEndian.PutUint16(header[2:], extLength)
 	} else {
-		header = []byte{0x80 | opcode, 126, byte(length >> 8), byte(length)}
+		return errors.New("control frame too large")
 	}
 
 	if _, err := c.Conn.Write(header); err != nil {
@@ -361,7 +367,7 @@ func performWebSocketHandshake(conn net.Conn, reader *bufio.Reader) error {
 		return errors.New("missing sec-websocket-key")
 	}
 
-	var acceptRaw = sha1.Sum([]byte(websocketKey + websocketAcceptGUID))
+	var acceptRaw = sha1.Sum([]byte(websocketKey + websocketAcceptGUID)) // #nosec G401 -- RFC 6455 requires SHA-1 for Sec-WebSocket-Accept.
 	var accept = base64.StdEncoding.EncodeToString(acceptRaw[:])
 
 	var response = "HTTP/1.1 101 Switching Protocols\r\n" +

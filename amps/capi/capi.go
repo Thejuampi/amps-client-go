@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Thejuampi/amps-client-go/amps"
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // Result values mirror C-style return codes.
@@ -928,7 +929,11 @@ func TCPSGetSSL(transport Handle) uintptr {
 
 // Now returns Unix timestamp in milliseconds.
 func Now() uint64 {
-	return uint64(time.Now().UnixMilli())
+	var millis = time.Now().UnixMilli()
+	if value, ok := safecast.Uint64FromInt64Checked(millis); ok {
+		return value
+	}
+	return 0
 }
 
 // SSLInit initializes SSL extension.

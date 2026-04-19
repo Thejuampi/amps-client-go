@@ -548,6 +548,25 @@ func TestMessageRouterCoverage(t *testing.T) {
 	}
 }
 
+func TestMessageRouterDeliverDataNilSafety(t *testing.T) {
+	var nilRouter *MessageRouter
+	if delivered := nilRouter.DeliverData(&Message{header: new(_Header)}); delivered != 0 {
+		t.Fatalf("nil router DeliverData = %d, want 0", delivered)
+	}
+
+	var router = &MessageRouter{routes: make(map[string]MessageRoute), key: "route"}
+	if delivered := router.DeliverData(nil); delivered != 0 {
+		t.Fatalf("nil message DeliverData = %d, want 0", delivered)
+	}
+	if delivered := router.DeliverData(&Message{header: &_Header{
+		commandID: []byte("other-command"),
+		queryID:   []byte("other-query"),
+		subID:     []byte("other-sub"),
+	}}); delivered != 0 {
+		t.Fatalf("unmatched DeliverData = %d, want 0", delivered)
+	}
+}
+
 func TestMessageRouterRouteMethodsCoverage(t *testing.T) {
 	route := &MessageRoute{}
 	called := 0

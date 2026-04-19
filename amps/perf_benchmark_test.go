@@ -11,6 +11,8 @@ import (
 func init() {
 }
 
+var benchmarkHeaderResetSink int
+
 func benchmarkFrame(header *_Header, payload []byte) []byte {
 	buf := make([]byte, 256)
 	n := 0
@@ -150,14 +152,16 @@ func BenchmarkHeaderHotWrite(b *testing.B) {
 
 func BenchmarkHeaderHotParse(b *testing.B) {
 	header := &_Header{
-		command:     CommandPublish,
-		commandID:   []byte("cmd-1"),
-		topic:       []byte("orders"),
-		subID:       []byte("sub-1"),
-		queryID:     []byte("qry-1"),
-		options:     []byte("replace"),
-		filter:      []byte("/id > 10"),
-		leasePeriod: []byte("2026-01-01T00:00:00.000000Z"),
+		command:   CommandPublish,
+		commandID: []byte("cmd-1"),
+		topic:     []byte("orders"),
+		subID:     []byte("sub-1"),
+		queryID:   []byte("qry-1"),
+		options:   []byte("replace"),
+		filter:    []byte("/id > 10"),
+		textExtras: &_HeaderTextExtras{
+			leasePeriod: []byte("2026-01-01T00:00:00.000000Z"),
+		},
 	}
 	frame := benchmarkFrame(header, []byte(`{"id":1}`))
 	msg := &Message{header: new(_Header)}
@@ -339,11 +343,13 @@ func BenchmarkHeaderReset(b *testing.B) {
 		expiration: new(uint),
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 
 	for index := 0; index < b.N; index++ {
 		header.reset()
 	}
+	benchmarkHeaderResetSink = header.command
 }
 
 func BenchmarkMessageReset(b *testing.B) {

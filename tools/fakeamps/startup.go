@@ -338,7 +338,7 @@ func configureLoggingTargets(loggingConfig ampsconfig.LoggingConfig) error {
 			if strings.TrimSpace(target.FileName) == "" {
 				return fmt.Errorf("logging target protocol=file requires FileName")
 			}
-			if err := os.MkdirAll(filepath.Dir(target.FileName), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target.FileName), fakeampsLogDirMode); err != nil {
 				return fmt.Errorf("create log directory: %w", err)
 			}
 			var file, err = os.OpenFile(target.FileName, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)

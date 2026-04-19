@@ -79,6 +79,9 @@ func TestNewAdminServerAppliesHeadersAndCipherSuites(t *testing.T) {
 	if server.TLSConfig.MaxVersion != tls.VersionTLS12 {
 		t.Fatalf("server.TLSConfig.MaxVersion = %d, want TLS 1.2 for TLS 1.2-only suites", server.TLSConfig.MaxVersion)
 	}
+	if server.ReadHeaderTimeout <= 0 {
+		t.Fatalf("server.ReadHeaderTimeout = %v, want a defensive timeout", server.ReadHeaderTimeout)
+	}
 }
 
 func TestBuildAdminTLSConfigRejectsTLS13CipherSuites(t *testing.T) {
@@ -88,6 +91,25 @@ func TestBuildAdminTLSConfigRejectsTLS13CipherSuites(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "TLS 1.3") {
 		t.Fatalf("buildAdminTLSConfig error = %v, want TLS 1.3 enforcement error", err)
+	}
+}
+
+func TestBuildAdminTLSConfigRejectsInsecureCipherSuites(t *testing.T) {
+	var insecureSuiteName string
+	for _, suite := range tls.InsecureCipherSuites() {
+		insecureSuiteName = suite.Name
+		break
+	}
+	if insecureSuiteName == "" {
+		t.Fatalf("tls.InsecureCipherSuites returned no suites to validate")
+	}
+
+	_, err := buildAdminTLSConfig([]string{insecureSuiteName})
+	if err == nil {
+		t.Fatalf("buildAdminTLSConfig should reject insecure cipher suites")
+	}
+	if !strings.Contains(err.Error(), "insecure") {
+		t.Fatalf("buildAdminTLSConfig error = %v, want insecure cipher suite error", err)
 	}
 }
 

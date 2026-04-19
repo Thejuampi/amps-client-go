@@ -13,18 +13,24 @@ func TestSOWFramesAreClientParseable(t *testing.T) {
 	oldJournal := journal
 	sow = newSOWCache()
 	journal = newMessageJournal(1000)
-	defer func() {
-		sow = oldSow
-		journal = oldJournal
-	}()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
-	defer listener.Close()
 
 	done := make(chan struct{})
+	defer func() {
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for fakeamps connection handler to exit")
+		}
+		sow = oldSow
+		journal = oldJournal
+	}()
+
 	go func() {
 		defer close(done)
 		conn, acceptErr := listener.Accept()

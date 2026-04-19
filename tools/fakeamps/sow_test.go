@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -173,12 +174,47 @@ func TestDiskSOWPersistenceHelpers(t *testing.T) {
 
 	saver.saveTopicToDisk("orders", records)
 
-	path := filepath.Join(dir, "sow", "orders")
+	path := filepath.Join(dir, "sow", encodeSOWTopicFilename("orders"))
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("expected persisted sow file at %s: %v", path, err)
 	}
 	if info.Size() == 0 {
 		t.Fatalf("expected persisted sow file to be non-empty")
+	}
+}
+
+func TestDiskSOWPersistenceUsesSafeFilenameAndRestrictedPermissions(t *testing.T) {
+	var rootDir = filepath.Join(t.TempDir(), "persist-root")
+	var topic = "../escape"
+	var saver = newDiskSOWCache(rootDir, 0, evictionNone)
+	saver.upsert(topic, "order-1", []byte(`{"id":1}`), "bm1", "20240101T000000000000000", 1, 0)
+
+	var escapedPath = filepath.Join(rootDir, "escape")
+	if _, err := os.Stat(escapedPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no escaped persistence file at %s, err=%v", escapedPath, err)
+	}
+
+	var encodedPath = filepath.Join(rootDir, "sow", encodeSOWTopicFilename(topic))
+	var info, err = os.Stat(encodedPath)
+	if err != nil {
+		t.Fatalf("expected persisted sow file at %s: %v", encodedPath, err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Fatalf("persisted sow file mode = %o, want 0600", info.Mode().Perm())
+	}
+
+	var dirInfo, dirErr = os.Stat(filepath.Dir(encodedPath))
+	if dirErr != nil {
+		t.Fatalf("expected sow directory: %v", dirErr)
+	}
+	if runtime.GOOS != "windows" && dirInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("sow directory mode = %o, want 0700", dirInfo.Mode().Perm())
+	}
+
+	var loaded = newDiskSOWCache(rootDir, 0, evictionNone)
+	var result = loaded.query(topic, "", -1, "")
+	if result.totalCount != 1 {
+		t.Fatalf("expected encoded topic reload, got %d records", result.totalCount)
 	}
 }

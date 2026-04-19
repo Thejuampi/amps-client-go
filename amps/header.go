@@ -19,7 +19,6 @@ type _Header struct {
 	sowKey              []byte
 	messageLength       *uint
 	messageType         []byte
-	leasePeriod         []byte
 	matches             *uint
 	options             []byte
 	orderBy             []byte
@@ -43,6 +42,12 @@ type _Header struct {
 	version             []byte
 	correlationID       []byte
 
+	skipN           *uint
+	maximumMessages *uint
+	timeoutInterval *uint
+	gracePeriod     *uint
+	textExtras      *_HeaderTextExtras
+
 	ackTypeValue             int
 	batchSizeValue           uint
 	expirationValue          uint
@@ -60,6 +65,41 @@ type _Header struct {
 	strictParityEscapeState uint8
 }
 
+type _HeaderTextExtras struct {
+	leasePeriod []byte
+	dataOnly    []byte
+	sendEmpty   []byte
+	sendKeys    []byte
+	sendOOF     []byte
+}
+
+func headerTextExtras(header *_Header) *_HeaderTextExtras {
+	if header == nil {
+		return nil
+	}
+	return header.textExtras
+}
+
+func ensureHeaderTextExtras(header *_Header) *_HeaderTextExtras {
+	if header == nil {
+		return nil
+	}
+	if header.textExtras == nil {
+		header.textExtras = new(_HeaderTextExtras)
+	}
+	return header.textExtras
+}
+
+func headerHasTextExtras(header *_Header) bool {
+	var extras = headerTextExtras(header)
+	return extras != nil &&
+		(extras.leasePeriod != nil ||
+			extras.dataOnly != nil ||
+			extras.sendEmpty != nil ||
+			extras.sendKeys != nil ||
+			extras.sendOOF != nil)
+}
+
 func newHeader() *_Header {
 	var header = new(_Header)
 	header.command = CommandUnknown
@@ -67,12 +107,15 @@ func newHeader() *_Header {
 }
 
 func (header *_Header) reset() {
-	// Bulk zero: compiles to a single runtime.memclr rather than 25+ individual
-	// store instructions, measurably faster on the message-receive hot path.
-	// CommandUnknown is not zero (it is the last iota in its block), so restore
-	// it explicitly after the zero — one store vs 25+ is still a significant win.
+	// Keep the receive-path header compact: bulk-zero the hot struct, then reset
+	// the rarely used text extras only when they were actually allocated.
+	var textExtras = header.textExtras
 	*header = _Header{}
 	header.command = CommandUnknown
+	header.textExtras = textExtras
+	if textExtras != nil {
+		*textExtras = _HeaderTextExtras{}
+	}
 }
 
 func (header *_Header) parseField(key []byte, value []byte) {
@@ -121,7 +164,9 @@ func (header *_Header) parseField(key []byte, value []byte) {
 				}
 			}
 		case 'l':
-			header.leasePeriod = value
+			if extras := ensureHeaderTextExtras(header); extras != nil {
+				extras.leasePeriod = value
+			}
 		case 'm':
 			header.messageType = value
 		case 't':
@@ -161,6 +206,11 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			header.status = value
 		case bytesEqualString(key, "filter"):
 			header.filter = value
+		case bytesEqualString(key, "skip_n"):
+			if parsed, ok := parseUintValue(value); ok {
+				v := parsed
+				header.skipN = &v
+			}
 		}
 	case 7:
 		switch key[0] {
@@ -204,14 +254,66 @@ func (header *_Header) parseField(key []byte, value []byte) {
 				}
 			}
 		case 's':
-			if bytesEqualString(key, "sow_keys") {
+			switch {
+			case bytesEqualString(key, "sow_keys"):
 				header.sowKeys = value
+			case bytesEqualString(key, "send_empty"):
+				if extras := ensureHeaderTextExtras(header); extras != nil {
+					extras.sendEmpty = value
+				}
+			case bytesEqualString(key, "send_keys"):
+				if extras := ensureHeaderTextExtras(header); extras != nil {
+					extras.sendKeys = value
+				}
+			case bytesEqualString(key, "send_oof"):
+				if extras := ensureHeaderTextExtras(header); extras != nil {
+					extras.sendOOF = value
+				}
 			}
 		case 't':
-			if bytesEqualString(key, "topic_matches") {
+			switch {
+			case bytesEqualString(key, "topic_matches"):
 				if topicMatches, ok := parseUint32Value(value); ok {
 					header.topicMatchesValue = topicMatches
 					header.topicMatches = &header.topicMatchesValue
+				}
+			case bytesEqualString(key, "timeout_interval"):
+				if parsed, ok := parseUintValue(value); ok {
+					v := parsed
+					header.timeoutInterval = &v
+				}
+			}
+		case 'd':
+			if bytesEqualString(key, "data_only") {
+				if extras := ensureHeaderTextExtras(header); extras != nil {
+					extras.dataOnly = value
+				}
+			}
+		case 'g':
+			switch {
+			case bytesEqualString(key, "group_sequence_number"), bytesEqualString(key, "gseq"):
+				if parsed, ok := parseUintValue(value); ok {
+					header.groupSequenceNumberValue = parsed
+					header.groupSequenceNumber = &header.groupSequenceNumberValue
+				}
+			case bytesEqualString(key, "grace_period"):
+				if parsed, ok := parseUintValue(value); ok {
+					v := parsed
+					header.gracePeriod = &v
+				}
+			}
+		case 'l':
+			if bytesEqualString(key, "lease_period") {
+				if extras := ensureHeaderTextExtras(header); extras != nil {
+					extras.leasePeriod = value
+				}
+			}
+		case 'm':
+			switch {
+			case bytesEqualString(key, "maximum_messages"), bytesEqualString(key, "max_msgs"):
+				if parsed, ok := parseUintValue(value); ok {
+					v := parsed
+					header.maximumMessages = &v
 				}
 			}
 		}
@@ -441,7 +543,7 @@ func (header *_Header) writeSimplePublishFastPath(buffer *bytes.Buffer) bool {
 	if header.command != CommandPublish || header.commandID == nil || header.topic == nil {
 		return false
 	}
-	if header.ackType != nil || header.bookmark != nil || header.batchSize != nil || header.correlationID != nil || header.clientName != nil || header.expiration != nil || header.filter != nil || header.groupSequenceNumber != nil || header.sowKey != nil || header.messageLength != nil || header.messageType != nil || header.leasePeriod != nil || header.matches != nil || header.options != nil || header.orderBy != nil || header.queryID != nil || header.reason != nil || header.recordsDeleted != nil || header.recordsInserted != nil || header.recordsReturned != nil || header.recordsUpdated != nil || header.sequenceID != nil || header.subIDs != nil || header.sowKeys != nil || header.status != nil || header.subID != nil || header.topN != nil || header.topicMatches != nil || header.timestamp != nil || header.userID != nil || header.password != nil || header.version != nil {
+	if header.ackType != nil || header.bookmark != nil || header.batchSize != nil || header.correlationID != nil || header.clientName != nil || header.expiration != nil || header.filter != nil || header.groupSequenceNumber != nil || header.sowKey != nil || header.messageLength != nil || header.messageType != nil || header.matches != nil || header.options != nil || header.orderBy != nil || header.queryID != nil || header.reason != nil || header.recordsDeleted != nil || header.recordsInserted != nil || header.recordsReturned != nil || header.recordsUpdated != nil || header.sequenceID != nil || header.subIDs != nil || header.sowKeys != nil || header.status != nil || header.subID != nil || header.topN != nil || header.topicMatches != nil || header.timestamp != nil || header.userID != nil || header.password != nil || header.version != nil || header.skipN != nil || header.maximumMessages != nil || header.timeoutInterval != nil || header.gracePeriod != nil || headerHasTextExtras(header) {
 		return false
 	}
 
@@ -470,6 +572,7 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 	if header.writeSimplePublishFastPath(buffer) {
 		return nil
 	}
+	var textExtras = headerTextExtras(header)
 
 	_ = buffer.WriteByte('{')
 
@@ -565,6 +668,36 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 	}
 	if header.messageType != nil {
 		writeStringField("mt", header.messageType)
+	}
+	if textExtras != nil && textExtras.dataOnly != nil {
+		writeStringField("data_only", textExtras.dataOnly)
+	}
+	if textExtras != nil && textExtras.sendEmpty != nil {
+		writeStringField("send_empty", textExtras.sendEmpty)
+	}
+	if textExtras != nil && textExtras.sendKeys != nil {
+		writeStringField("send_keys", textExtras.sendKeys)
+	}
+	if textExtras != nil && textExtras.sendOOF != nil {
+		writeStringField("send_oof", textExtras.sendOOF)
+	}
+	if textExtras != nil && textExtras.leasePeriod != nil {
+		writeStringField("lease_period", textExtras.leasePeriod)
+	}
+	if header.groupSequenceNumber != nil {
+		writeNumberField("group_sequence_number", uint64(*header.groupSequenceNumber))
+	}
+	if header.skipN != nil {
+		writeNumberField("skip_n", uint64(*header.skipN))
+	}
+	if header.maximumMessages != nil {
+		writeNumberField("maximum_messages", uint64(*header.maximumMessages))
+	}
+	if header.timeoutInterval != nil {
+		writeNumberField("timeout_interval", uint64(*header.timeoutInterval))
+	}
+	if header.gracePeriod != nil {
+		writeNumberField("grace_period", uint64(*header.gracePeriod))
 	}
 
 	if buffer.Len() == 1 {

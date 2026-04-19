@@ -31,12 +31,12 @@ Credentialed URI:
 ```go
 client := amps.NewClient("app")
 if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
-	return err
+ return err
 }
 defer client.Close()
 
 if err := client.Logon(); err != nil {
-	return err
+ return err
 }
 ```
 
@@ -44,8 +44,8 @@ if err := client.Logon(); err != nil {
 
 ```go
 _, err := client.SubscribeAsync(func(msg *amps.Message) error {
-	_ = msg
-	return nil
+ _ = msg
+ return nil
 }, "orders")
 ```
 
@@ -53,7 +53,7 @@ _, err := client.SubscribeAsync(func(msg *amps.Message) error {
 
 ```go
 if err := client.Publish("orders", `{"id": 1}`); err != nil {
-	return err
+ return err
 }
 ```
 

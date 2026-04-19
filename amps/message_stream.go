@@ -1,10 +1,13 @@
 package amps
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // Constants in this block define protocol and client behavior values.
@@ -18,6 +21,8 @@ const (
 	messageStreamStateComplete     = 0x02
 )
 
+const maxMessageStreamTimeoutMillis = uint64(math.MaxInt64 / int64(time.Millisecond))
+
 // MessageStream stores exported state used by AMPS client APIs.
 type MessageStream struct {
 	client        *Client
@@ -27,11 +32,10 @@ type MessageStream struct {
 	current       *Message
 	sowKeyMap     map[string]*Message
 
-	state            int32
-	depth            uint64
-	timeout          uint64
-	timedOut         atomic.Bool
-	isConflatingFlag atomic.Bool
+	state    int32
+	depth    uint64
+	timeout  uint64
+	timedOut atomic.Bool
 
 	queue *_MessageQueue
 
@@ -93,7 +97,6 @@ func (ms *MessageStream) resetForConfiguration() {
 	}
 	ms.lock.Lock()
 	ms.sowKeyMap = nil
-	ms.isConflatingFlag.Store(false)
 	ms.lock.Unlock()
 }
 
@@ -208,14 +211,29 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.current != nil
 	}
 
-	if ms.timeout == 0 {
-		if message, ok := ms.queue.waitDequeue(); ok {
-			ms.setCurrentFromQueue(message)
-		}
-		return ms.current != nil
+	if ms.timeout != 0 {
+		return ms.waitForNextWithTimeout()
 	}
+	message, ok := ms.queue.waitDequeue()
+	if !ok {
+		return false
+	}
+	ms.setCurrentFromQueue(message)
+	return true
+}
 
-	if message, ok := ms.queue.waitDequeueTimeout(time.Millisecond * time.Duration(ms.timeout)); ok { // #nosec G115 -- timeout is caller-provided stream config
+func (ms *MessageStream) waitForNextWithTimeout() bool {
+	var timeoutMillis = min(ms.timeout, maxMessageStreamTimeoutMillis)
+	var timeoutDuration = time.Millisecond * time.Duration(safecast.Int64FromUint64Saturating(timeoutMillis))
+	return ms.handleWaitDequeueTimeoutResult(
+		ms.queue.waitDequeueTimeout(
+			timeoutDuration,
+		),
+	)
+}
+
+func (ms *MessageStream) handleWaitDequeueTimeoutResult(message *Message, ok bool) bool {
+	if ok {
 		ms.setCurrentFromQueue(message)
 		return true
 	}
@@ -305,12 +323,13 @@ func (ms *MessageStream) Conflate() {
 
 	if ms.sowKeyMap == nil {
 		ms.sowKeyMap = make(map[string]*Message)
-		ms.isConflatingFlag.Store(true)
 	}
 }
 
 func (ms *MessageStream) isConflating() bool {
-	return ms.isConflatingFlag.Load() && atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+	return ms.sowKeyMap != nil && atomic.LoadInt32(&ms.state) == messageStreamStateSubscribed
 }
 
 // Close is an alias for Disconnect.
@@ -441,7 +460,11 @@ func (ms *MessageStream) setState(state int32) {
 }
 
 func newMessageStream(client *Client) *MessageStream {
-	return &MessageStream{state: messageStreamStateUnset, client: client, queue: newQueue(256)}
+	stream := &MessageStream{}
+	stream.state = messageStreamStateUnset
+	stream.client = client
+	stream.queue = newQueue(256)
+	return stream
 }
 
 type _MessageQueue struct {
@@ -451,20 +474,18 @@ type _MessageQueue struct {
 	last     uint64
 	ring     []*Message
 	closed   bool
-	waiters  uint64
 
 	lock       sync.Mutex
 	notEmptyCh chan struct{}
-	closedCh   chan struct{}
 	notFull    *sync.Cond
+	waiters    uint64
 }
 
 func newQueue(initialSize uint64) *_MessageQueue {
 	queue := &_MessageQueue{
 		capacity:   initialSize,
 		ring:       make([]*Message, initialSize),
-		notEmptyCh: make(chan struct{}, 1),
-		closedCh:   make(chan struct{}),
+		notEmptyCh: make(chan struct{}),
 	}
 	queue.notFull = sync.NewCond(&queue.lock)
 	return queue
@@ -474,20 +495,21 @@ func (queue *_MessageQueue) notifyNotEmptyLocked() {
 	if queue.waiters == 0 {
 		return
 	}
-	select {
-	case queue.notEmptyCh <- struct{}{}:
-	default:
-	}
+	close(queue.notEmptyCh)
+	queue.notEmptyCh = make(chan struct{})
 }
 
-func (queue *_MessageQueue) clearNotEmptySignalLocked() {
-	if queue.waiters == 0 {
-		return
+func (queue *_MessageQueue) beginWaitLocked() chan struct{} {
+	queue.waiters++
+	return queue.notEmptyCh
+}
+
+func (queue *_MessageQueue) endWait() {
+	queue.lock.Lock()
+	if queue.waiters > 0 {
+		queue.waiters--
 	}
-	select {
-	case <-queue.notEmptyCh:
-	default:
-	}
+	queue.lock.Unlock()
 }
 
 func (queue *_MessageQueue) length() uint64 {
@@ -518,15 +540,12 @@ func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
 		queue.resize()
 	}
 
-	var wasEmpty = queue._length == 0
 	if queue._length != 0 {
 		queue.last = (queue.last + 1) % queue.capacity
 	}
 	queue.ring[queue.last] = message
 	queue._length++
-	if wasEmpty {
-		queue.notifyNotEmptyLocked()
-	}
+	queue.notifyNotEmptyLocked()
 }
 
 func (queue *_MessageQueue) dequeueLocked() *Message {
@@ -536,11 +555,9 @@ func (queue *_MessageQueue) dequeueLocked() *Message {
 
 	if queue._length > 0 {
 		queue.first = (queue.first + 1) % queue.capacity
-		queue.notifyNotEmptyLocked()
 	} else {
 		queue.first = 0
 		queue.last = 0
-		queue.clearNotEmptySignalLocked()
 	}
 
 	queue.notFull.Signal()
@@ -582,19 +599,10 @@ func (queue *_MessageQueue) waitDequeue() (*Message, bool) {
 			queue.lock.Unlock()
 			return nil, false
 		}
-		queue.waiters++
-		waitCh := queue.notEmptyCh
-		closedCh := queue.closedCh
+		waitCh := queue.beginWaitLocked()
 		queue.lock.Unlock()
-
-		select {
-		case <-waitCh:
-		case <-closedCh:
-		}
-
-		queue.lock.Lock()
-		queue.waiters--
-		queue.lock.Unlock()
+		<-waitCh
+		queue.endWait()
 	}
 }
 
@@ -624,28 +632,16 @@ func (queue *_MessageQueue) waitDequeueTimeout(timeout time.Duration) (*Message,
 			queue.lock.Unlock()
 			return nil, false
 		}
-		queue.waiters++
-		waitCh := queue.notEmptyCh
-		closedCh := queue.closedCh
+		waitCh := queue.beginWaitLocked()
 		queue.lock.Unlock()
 
 		select {
 		case <-waitCh:
-		case <-closedCh:
-			queue.lock.Lock()
-			queue.waiters--
-			queue.lock.Unlock()
-			return nil, false
+			queue.endWait()
 		case <-timer.C:
-			queue.lock.Lock()
-			queue.waiters--
-			queue.lock.Unlock()
+			queue.endWait()
 			return nil, false
 		}
-
-		queue.lock.Lock()
-		queue.waiters--
-		queue.lock.Unlock()
 	}
 }
 
@@ -656,24 +652,16 @@ func (queue *_MessageQueue) clear() {
 	queue.first = 0
 	queue.last = 0
 	queue._length = 0
-	if queue.closed {
-		queue.closedCh = make(chan struct{})
-	}
 	queue.closed = false
-	queue.clearNotEmptySignalLocked()
 
-	for i := range queue.ring {
-		queue.ring[i] = nil
-	}
+	queue.ring = make([]*Message, queue.capacity)
 	queue.notFull.Broadcast()
 }
 
 func (queue *_MessageQueue) close() {
 	queue.lock.Lock()
-	if !queue.closed {
-		queue.closed = true
-		close(queue.closedCh)
-	}
+	queue.closed = true
+	queue.notifyNotEmptyLocked()
 	queue.notFull.Broadcast()
 	queue.lock.Unlock()
 }

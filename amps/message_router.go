@@ -271,20 +271,17 @@ func (msgRouter *MessageRouter) DeliverAck(ackMessage *Message, ackType int) int
 
 // DeliverData executes the exported deliverdata operation.
 func (msgRouter *MessageRouter) DeliverData(dataMessage *Message) int {
-	messagesDelivered := 0
+	if msgRouter == nil || dataMessage == nil {
+		return 0
+	}
+
 	msgCommandID, _ := dataMessage.CommandID()
 	msgQueryID, _ := dataMessage.QueryID()
 	msgSubID, _ := dataMessage.SubID()
-	if messagesDelivered == 0 && msgRouter.key == msgQueryID {
-		messagesDelivered += msgRouter.DeliverDataWithID(dataMessage, msgRouter.key)
+	if msgRouter.key == msgCommandID || msgRouter.key == msgQueryID || msgRouter.key == msgSubID {
+		return msgRouter.DeliverDataWithID(dataMessage, msgRouter.key)
 	}
-	if messagesDelivered == 0 && msgRouter.key == msgCommandID {
-		messagesDelivered += msgRouter.DeliverDataWithID(dataMessage, msgRouter.key)
-	}
-	if messagesDelivered == 0 && msgRouter.key == msgSubID {
-		messagesDelivered += msgRouter.DeliverDataWithID(dataMessage, msgRouter.key)
-	}
-	return messagesDelivered
+	return 0
 }
 
 // DeliverDataWithID executes the exported deliverdatawithid operation.

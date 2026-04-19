@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 // ---------------------------------------------------------------------------
@@ -281,8 +283,9 @@ func handleAdminJournal(w http.ResponseWriter, r *http.Request) {
 	journal.mu.RLock()
 	high := globalBookmarkSeq.Load()
 	low := uint64(0)
-	if high > uint64(journal.count) {
-		low = high - uint64(journal.count)
+	var journalCount, ok = safecast.Uint64FromIntChecked(journal.count)
+	if ok && high > journalCount {
+		low = high - journalCount
 	}
 	jsonResponse(w, map[string]interface{}{
 		"enabled":   true,

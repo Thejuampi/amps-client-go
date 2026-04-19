@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -256,7 +257,7 @@ func TestApplyRuntimeConfigConfiguresExtendedOptions(t *testing.T) {
 
 func TestConfigureLoggingTargetsWritesToConfiguredFile(t *testing.T) {
 	var tempDir = t.TempDir()
-	var logPath = filepath.Join(tempDir, "fakeamps.log")
+	var logPath = filepath.Join(tempDir, "logs", "fakeamps.log")
 	var originalOutput = log.Writer()
 	defer log.SetOutput(originalOutput)
 	defer closeConfiguredLogOutputs()
@@ -282,6 +283,13 @@ func TestConfigureLoggingTargetsWritesToConfiguredFile(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "config-driven log entry") {
 		t.Fatalf("log file content = %q, want written log entry", string(content))
+	}
+	var dirInfo, statErr = os.Stat(filepath.Dir(logPath))
+	if statErr != nil {
+		t.Fatalf("Stat(log dir): %v", statErr)
+	}
+	if runtime.GOOS != "windows" && dirInfo.Mode().Perm() != 0o750 {
+		t.Fatalf("log directory mode = %o, want 0750", dirInfo.Mode().Perm())
 	}
 }
 

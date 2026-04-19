@@ -5,11 +5,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1152,6 +1154,35 @@ func TestMonitoringServiceLoginValidationAndHistoryErrors(t *testing.T) {
 	}
 }
 
+func TestMonitoringServiceLogoutPreservesSecureCookieSettings(t *testing.T) {
+	var service = newMonitoringService(monitoringServiceOptions{
+		Admin: ampsconfig.AdminConfig{
+			SessionOptions: []string{"Secure=true", "SameSite=Strict"},
+		},
+	})
+	service.sessions["session-1"] = adminSession{ID: "session-1"}
+
+	var request = httptest.NewRequest(http.MethodPost, "/amps/session/logout", nil)
+	request.AddCookie(&http.Cookie{
+		Name:  adminSessionCookieName,
+		Value: "session-1",
+	})
+	var response = httptest.NewRecorder()
+
+	service.handleSessionLogout(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("POST /amps/session/logout status = %d, want 200", response.Code)
+	}
+
+	var cookies = response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("logout response cookies = %d, want 1", len(cookies))
+	}
+	if !cookies[0].Secure || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge != -1 {
+		t.Fatalf("logout cookie = %+v, want secure strict deletion cookie", cookies[0])
+	}
+}
+
 func TestMonitoringServiceProxyEndpointsAndSOWClearAll(t *testing.T) {
 	monitoringClients.Reset()
 	defer monitoringClients.Reset()
@@ -1892,6 +1923,40 @@ func TestNotifyWorkspaceRemovalsDoesNotFanoutOOFWhenFanoutDisabled(t *testing.T)
 	}
 }
 
+func TestMonitoringInstanceCountsSaturatesAcceptedConnections(t *testing.T) {
+	var previous = globalConnectionsAccepted.Load()
+	globalConnectionsAccepted.Store(math.MaxUint64)
+	defer globalConnectionsAccepted.Store(previous)
+
+	var service = newMonitoringService(monitoringServiceOptions{})
+	var counts = service.instanceCounts()
+	if counts["connections_accepted"] != math.MaxInt64 {
+		t.Fatalf("connections_accepted = %d, want MaxInt64 saturation", counts["connections_accepted"])
+	}
+}
+
+func TestClearSOWTopicRecordsPersistsDiskRemoval(t *testing.T) {
+	var oldSOW = sow
+	var rootDir = filepath.Join(t.TempDir(), "sow-root")
+	sow = newDiskSOWCache(rootDir, 0, evictionNone)
+	defer func() {
+		sow = oldSOW
+	}()
+
+	sow.upsert("orders", "k1", []byte(`{"id":1}`), "bm1", "ts1", 1, 0)
+
+	var cleared, _, ok = clearSOWTopicRecords("orders", "clear")
+	if !ok || cleared != 1 {
+		t.Fatalf("clearSOWTopicRecords() = (%d, ok=%v), want cleared=1 ok=true", cleared, ok)
+	}
+
+	var reloaded = newDiskSOWCache(rootDir, 0, evictionNone)
+	var result = reloaded.query("orders", "", -1, "")
+	if result.totalCount != 0 {
+		t.Fatalf("expected disk-backed clear to remove persisted records, got %d", result.totalCount)
+	}
+}
+
 func newSessionClient(t *testing.T) *http.Client {
 	t.Helper()
 
@@ -1941,7 +2006,7 @@ func dialAdminWebSocket(t *testing.T, baseURL string, path string, headers map[s
 	request.WriteString("Upgrade: websocket\r\n")
 	request.WriteString("Connection: Upgrade\r\n")
 	request.WriteString("Sec-WebSocket-Version: 13\r\n")
-	request.WriteString("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n")
+	request.WriteString("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n") // gitleaks:allow
 	for key, value := range headers {
 		request.WriteString(key + ": " + value + "\r\n")
 	}

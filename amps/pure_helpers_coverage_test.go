@@ -24,12 +24,13 @@ func (valueListener) ConnectionStateChanged(ConnectionState) {}
 
 func TestErrorHelpersCoverage(t *testing.T) {
 	reasonCases := map[string]string{
-		"bad filter":    "BadFilterError",
-		"invalid topic": "InvalidTopicError",
-		"not entitled":  "NotEntitledError",
-		"auth failure":  "AuthenticationError",
-		"bad regex":     "BadRegexTopicError",
-		"other":         "UnknownError",
+		"bad filter":     "BadFilterError",
+		"invalid topic":  "InvalidTopicError",
+		"not entitled":   "NotEntitledError",
+		"auth failure":   "AuthenticationError",
+		"bad regex":      "BadRegexTopicError",
+		"already exists": "AlreadyExistsError",
+		"other":          "UnknownError",
 	}
 	for reason, expected := range reasonCases {
 		if got := reasonToError(reason); !strings.Contains(got.Error(), expected) {
@@ -55,6 +56,10 @@ func TestErrorHelpersCoverage(t *testing.T) {
 		SubidInUseError:                "SubidInUseError",
 		SubscriptionAlreadyExistsError: "SubscriptionAlreadyExistsError",
 		TimedOutError:                  "TimedOutError",
+		SlowClientError:                "SlowClientError",
+		ServerShuttingDownError:        "ServerShuttingDownError",
+		TransportDisabledError:         "TransportDisabledError",
+		AlreadyExistsError:             "AlreadyExistsError",
 		MessageHandlerError:            "MessageHandlerError",
 		UnknownError:                   "UnknownError",
 	}
@@ -127,10 +132,27 @@ func TestStoreCodecCoverage(t *testing.T) {
 		SetSubIDs("sub,sub2").
 		SetTopic("orders").
 		SetTopN(5).
+		SetLeasePeriod(33).
+		SetGroupSequenceNumber(7).
+		SetDataOnly(true).
+		SetSendEmpty(true).
+		SetSkipN(4).
+		SetMessageType("json").
 		SetTimeout(2000).
 		SetData([]byte("payload"))
+	ensureHeaderTextExtras(command.header).sendKeys = []byte("true")
+	ensureHeaderTextExtras(command.header).sendOOF = []byte("true")
+	command.header.maximumMessages = func() *uint { v := uint(6); return &v }()
+	command.header.timeoutInterval = func() *uint { v := uint(7); return &v }()
+	command.header.gracePeriod = func() *uint { v := uint(8); return &v }()
 
 	snapshot := snapshotFromCommand(command)
+	if snapshot.LeasePeriod != "33" || snapshot.MessageType != "json" || snapshot.DataOnly != "true" || snapshot.SendEmpty != "true" || snapshot.SendKeys != "true" || snapshot.SendOOF != "true" {
+		t.Fatalf("unexpected extended snapshot fields: %+v", snapshot)
+	}
+	if snapshot.GroupSequence == nil || *snapshot.GroupSequence != 7 || snapshot.SkipN == nil || *snapshot.SkipN != 4 || snapshot.MaximumMsgs == nil || *snapshot.MaximumMsgs != 6 || snapshot.TimeoutIntvl == nil || *snapshot.TimeoutIntvl != 7 || snapshot.GracePeriod == nil || *snapshot.GracePeriod != 8 {
+		t.Fatalf("unexpected extended numeric snapshot fields: %+v", snapshot)
+	}
 	restored := commandFromSnapshot(snapshot)
 	if restored == nil {
 		t.Fatalf("expected restored command")
@@ -140,6 +162,37 @@ func TestStoreCodecCoverage(t *testing.T) {
 	}
 	if got, _ := restored.Topic(); got != "orders" {
 		t.Fatalf("unexpected restored topic: %q", got)
+	}
+	restoredMessage := restored.GetMessage()
+	if value, ok := restoredMessage.LeasePeriodUint(); !ok || value != 33 {
+		t.Fatalf("unexpected restored lease period: %d ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.DataOnly(); !ok || !value {
+		t.Fatalf("unexpected restored data_only: %v ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.SendEmpty(); !ok || !value {
+		t.Fatalf("unexpected restored send_empty: %v ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.SendKeys(); !ok || !value {
+		t.Fatalf("unexpected restored send_keys: %v ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.SendOOF(); !ok || !value {
+		t.Fatalf("unexpected restored send_oof: %v ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.SkipN(); !ok || value != 4 {
+		t.Fatalf("unexpected restored skip_n: %d ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.MaximumMessages(); !ok || value != 6 {
+		t.Fatalf("unexpected restored maximum_messages: %d ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.TimeoutInterval(); !ok || value != 7 {
+		t.Fatalf("unexpected restored timeout_interval: %d ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.GracePeriod(); !ok || value != 8 {
+		t.Fatalf("unexpected restored grace_period: %d ok=%v", value, ok)
+	}
+	if value, ok := restoredMessage.MessageLength(); ok || value != 0 {
+		t.Fatalf("unexpected restored message length: %d ok=%v", value, ok)
 	}
 
 	clone := cloneCommand(command)
@@ -167,6 +220,12 @@ func TestStoreCodecCoverage(t *testing.T) {
 	empty := snapshotFromCommand(nil)
 	if empty.Command != "" || empty.Timeout != 0 {
 		t.Fatalf("unexpected nil snapshot: %+v", empty)
+	}
+
+	zeroHeader := &Command{data: []byte("raw"), timeout: 9}
+	zeroSnapshot := snapshotFromCommand(zeroHeader)
+	if zeroSnapshot.Command != "" || zeroSnapshot.CommandEnum != nil || zeroSnapshot.Timeout != 9 || string(zeroSnapshot.Data) != "raw" {
+		t.Fatalf("unexpected zero-header snapshot: %+v", zeroSnapshot)
 	}
 }
 
@@ -229,12 +288,13 @@ func TestParityTypesHelpersCoverage(t *testing.T) {
 	parsed, _ := url.Parse("tcp://127.0.0.1:9007/amps/json")
 	client.url = parsed
 	client.serverVersion = "5.3.5.1"
+	client.replicationGroup = "rg-a"
 	client.connection = newTestConn()
 	state.lock.Lock()
-	state.uri = "tcp://127.0.0.1:9007/amps/json"
+	state.uri = ""
 	state.lock.Unlock()
 	info := client.buildConnectionInfo()
-	if info["uri"] == "" || info["scheme"] != "tcp" || info["server_version_number"] != "5030501" {
+	if info["uri"] != parsed.String() || info["scheme"] != "tcp" || info["server_version_number"] != "5030501" || info["replication_group"] != "rg-a" {
 		t.Fatalf("unexpected connection info: %+v", info)
 	}
 	if emptyInfo := (*Client)(nil).buildConnectionInfo(); len(emptyInfo) != 0 {

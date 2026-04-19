@@ -48,6 +48,7 @@ func readPayloadInputs(stdin io.Reader, inlineData string, filePath string, deli
 	var data []byte
 	var err error
 	if filePath != "" {
+		// #nosec G304 -- payload file path is an explicit CLI input.
 		data, err = os.ReadFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("read input file: %w", err)

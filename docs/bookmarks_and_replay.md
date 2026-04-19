@@ -8,9 +8,9 @@ Covers bookmark resume, duplicate handling, and publish replay behavior.
 
 | Method | Purpose |
 |---|---|
-| `BookmarkSubscribe(...)` | Sync bookmark-based subscribe.
-| `BookmarkSubscribeAsync(...)` | Async bookmark-based subscribe.
-| `SetBookmarkStore(...)` / `BookmarkStore()` | Attach bookmark persistence and dedupe policy.
+| `BookmarkSubscribe(...)` | Sync bookmark-based subscribe. |
+| `BookmarkSubscribeAsync(...)` | Async bookmark-based subscribe. |
+| `SetBookmarkStore(...)` / `BookmarkStore()` | Attach bookmark persistence and dedupe policy. |
 
 Bookmark constants:
 
@@ -71,16 +71,16 @@ client.SetBookmarkStore(amps.NewFileBookmarkStore("state/bookmarks.json"))
 
 stream, err := client.BookmarkSubscribe("orders", amps.BOOKMARK_RECENT())
 if err != nil {
-	panic(err)
+ panic(err)
 }
 defer stream.Close()
 
 for stream.HasNext() {
-	msg := stream.Next()
-	if msg == nil {
-		break
-	}
-	// process message and optional explicit discard policy
+ msg := stream.Next()
+ if msg == nil {
+  break
+ }
+ // process message and optional explicit discard policy
 }
 ```
 

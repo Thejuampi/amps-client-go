@@ -227,19 +227,25 @@ func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 	}
 
 	store.lock.RLock()
+	defer store.lock.RUnlock()
+
 	records := store.records[subID]
 	if records == nil {
-		store.lock.RUnlock()
 		return false
 	}
+
 	record := records[bookmark]
 	if record == nil {
-		store.lock.RUnlock()
 		return false
 	}
-	var discarded = record.Discarded || record.SeqNo <= store.discardedUpTo[subID] || record.Count > 1
-	store.lock.RUnlock()
-	return discarded
+
+	if record.Discarded {
+		return true
+	}
+	if record.SeqNo <= store.discardedUpTo[subID] {
+		return true
+	}
+	return record.Count > 1
 }
 
 // Purge executes the exported purge operation.
@@ -255,6 +261,7 @@ func (store *MemoryBookmarkStore) Purge(subID ...string) {
 		store.records = make(map[string]map[string]*bookmarkRecord)
 		store.mostRecent = make(map[string]string)
 		store.discardedUpTo = make(map[string]uint64)
+		store.dirty = make(map[string]bool)
 		store.nextSeqNo = 1
 		return
 	}
@@ -263,6 +270,7 @@ func (store *MemoryBookmarkStore) Purge(subID ...string) {
 		delete(store.records, value)
 		delete(store.mostRecent, value)
 		delete(store.discardedUpTo, value)
+		delete(store.dirty, value)
 	}
 }
 
@@ -306,6 +314,7 @@ func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) strin
 		record = &bookmarkRecord{SeqNo: store.nextSeqNo, Count: 1, Discarded: true}
 		records[bookmark] = record
 		store.nextSeqNo++
+		store.dirty[subID] = true
 	} else {
 		record.Discarded = true
 	}
@@ -313,7 +322,6 @@ func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) strin
 	if record.SeqNo > store.discardedUpTo[subID] {
 		store.discardedUpTo[subID] = record.SeqNo
 	}
-	store.mostRecent[subID] = store.computeMostRecentLocked(subID)
 	return bookmark
 }
 
@@ -325,6 +333,26 @@ func (store *MemoryBookmarkStore) SetServerVersion(version string) {
 	store.lock.Lock()
 	store.serverVersion = version
 	store.lock.Unlock()
+}
+
+// ServerVersion returns the stored server version used for bookmark format compatibility.
+func (store *MemoryBookmarkStore) ServerVersion() string {
+	if store == nil {
+		return ""
+	}
+	store.lock.RLock()
+	defer store.lock.RUnlock()
+	return store.serverVersion
+}
+
+// SupportsTimestampBookmarks returns true if the server version supports timestamp bookmark format.
+func (store *MemoryBookmarkStore) SupportsTimestampBookmarks() bool {
+	if store == nil {
+		return false
+	}
+	store.lock.RLock()
+	defer store.lock.RUnlock()
+	return ConvertVersionToNumber(store.serverVersion) >= ConvertVersionToNumber("5.0")
 }
 
 func (store *MemoryBookmarkStore) LogWithError(message *Message) (uint64, error) {
@@ -629,7 +657,7 @@ func (store *FileBookmarkStore) applyUpsertLocked(subID string, bookmark string,
 	records := store.ensureSubID(subID)
 	copied := record
 	records[bookmark] = &copied
-	store.mostRecent[subID] = store.computeMostRecentLocked(subID)
+	store.dirty[subID] = true
 	if copied.SeqNo > store.discardedUpTo[subID] && copied.Discarded {
 		store.discardedUpTo[subID] = copied.SeqNo
 	}
@@ -657,6 +685,7 @@ func (store *FileBookmarkStore) applyWalRecordLocked(record bookmarkWalRecord) {
 			store.records = make(map[string]map[string]*bookmarkRecord)
 			store.mostRecent = make(map[string]string)
 			store.discardedUpTo = make(map[string]uint64)
+			store.dirty = make(map[string]bool)
 			store.nextSeqNo = 1
 			store.sequenceExhausted = false
 			return
@@ -665,6 +694,7 @@ func (store *FileBookmarkStore) applyWalRecordLocked(record bookmarkWalRecord) {
 			delete(store.records, subID)
 			delete(store.mostRecent, subID)
 			delete(store.discardedUpTo, subID)
+			delete(store.dirty, subID)
 		}
 	case "server_version":
 		store.serverVersion = record.ServerVersion
@@ -970,12 +1000,91 @@ func NewMMapBookmarkStore(path string) *MMapBookmarkStore {
 	return &MMapBookmarkStore{FileBookmarkStore: NewFileBookmarkStoreWithOptions(path, options)}
 }
 
-// RingBookmarkStore stores replay or bookmark state for recovery-oriented workflows.
+// RingBookmarkStore stores replay or bookmark state with a bounded ring size.
+// When the ring capacity is exceeded for a subscription, the oldest records
+// are evicted to keep memory bounded.
 type RingBookmarkStore struct {
 	*MemoryBookmarkStore
+	ringSize uint
 }
 
-// NewRingBookmarkStore returns a new RingBookmarkStore.
+// NewRingBookmarkStore returns a new RingBookmarkStore with default ring size 10000.
 func NewRingBookmarkStore() *RingBookmarkStore {
-	return &RingBookmarkStore{MemoryBookmarkStore: NewMemoryBookmarkStore()}
+	return NewRingBookmarkStoreWithSize(10000)
+}
+
+// NewRingBookmarkStoreWithSize returns a new RingBookmarkStore with the given ring capacity per subscription.
+func NewRingBookmarkStoreWithSize(ringSize uint) *RingBookmarkStore {
+	return &RingBookmarkStore{
+		MemoryBookmarkStore: NewMemoryBookmarkStore(),
+		ringSize:            ringSize,
+	}
+}
+
+// RingSize returns the configured ring capacity.
+func (store *RingBookmarkStore) RingSize() uint {
+	if store == nil {
+		return 0
+	}
+	return store.ringSize
+}
+
+// Log delegates to the underlying MemoryBookmarkStore and then evicts
+// oldest records if the ring capacity is exceeded.
+func (store *RingBookmarkStore) Log(message *Message) uint64 {
+	if store == nil || message == nil {
+		return 0
+	}
+	seqNo := store.MemoryBookmarkStore.Log(message)
+	if store.ringSize > 0 {
+		store.evictOldest(message)
+	}
+	return seqNo
+}
+
+func (store *RingBookmarkStore) evictOldest(message *Message) {
+	subID, hasSubID := message.SubID()
+	if !hasSubID || subID == "" {
+		subID, hasSubID = message.QueryID()
+	}
+	if !hasSubID || subID == "" {
+		return
+	}
+
+	store.MemoryBookmarkStore.lock.Lock()
+	defer store.MemoryBookmarkStore.lock.Unlock()
+	records := store.MemoryBookmarkStore.records[subID]
+	if records == nil || uint(len(records)) <= store.ringSize {
+		return
+	}
+
+	var oldestKey string
+	var oldestSeq uint64
+	first := true
+	for key, rec := range records {
+		if rec == nil || !rec.Discarded {
+			continue
+		}
+		if first || rec.SeqNo < oldestSeq {
+			oldestKey = key
+			oldestSeq = rec.SeqNo
+			first = false
+		}
+	}
+	if oldestKey == "" {
+		first = true
+		for key, rec := range records {
+			if rec == nil {
+				continue
+			}
+			if first || rec.SeqNo < oldestSeq {
+				oldestKey = key
+				oldestSeq = rec.SeqNo
+				first = false
+			}
+		}
+	}
+	if oldestKey != "" {
+		delete(records, oldestKey)
+	}
 }

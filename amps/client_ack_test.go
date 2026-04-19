@@ -9,11 +9,13 @@ import (
 func makeAutoAckMessage(bookmark string) *Message {
 	return &Message{
 		header: &_Header{
-			command:     CommandPublish,
-			topic:       []byte("queue://orders"),
-			subID:       []byte("sub-ack"),
-			leasePeriod: []byte("2026-01-01T00:00:00.000000Z"),
-			bookmark:    []byte(bookmark),
+			command:  CommandPublish,
+			topic:    []byte("queue://orders"),
+			subID:    []byte("sub-ack"),
+			bookmark: []byte(bookmark),
+			textExtras: &_HeaderTextExtras{
+				leasePeriod: []byte("2026-01-01T00:00:00.000000Z"),
+			},
 		},
 	}
 }

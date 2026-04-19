@@ -8,27 +8,27 @@ Covers `HAClient` behavior for reconnect, logon retry loop, chooser strategy, an
 
 | API | Purpose |
 |---|---|
-| `NewHAClient(...)` | Create HA wrapper around `Client`.
-| `CreateMemoryBackedHAClient(...)` | HA with memory publish/bookmark stores.
-| `CreateFileBackedHAClient(...)` | HA with file-backed publish/bookmark stores.
+| `NewHAClient(...)` | Create HA wrapper around `Client`. |
+| `CreateMemoryBackedHAClient(...)` | HA with memory publish/bookmark stores. |
+| `CreateFileBackedHAClient(...)` | HA with file-backed publish/bookmark stores. |
 
 ## Core Lifecycle
 
 | Method | Behavior |
 |---|---|
-| `ConnectAndLogon()` | Repeatedly selects URI, connects, logs on, applies delay strategy between failures.
-| `Disconnect()` | Stops reconnect loop and disconnects wrapped client.
-| `Disconnected()` | Reports wrapped client connection state.
+| `ConnectAndLogon()` | Repeatedly selects URI, connects, logs on, applies delay strategy between failures. |
+| `Disconnect()` | Stops reconnect loop and disconnects wrapped client. |
+| `Disconnected()` | Reports wrapped client connection state. |
 
 ## Reconnect Controls
 
 | Method | Notes |
 |---|---|
-| `SetTimeout(...)` / `Timeout()` | Global deadline for connect/logon retry loop.
-| `SetReconnectDelay(...)` / `ReconnectDelay()` | Fixed-delay policy.
-| `SetReconnectDelayStrategy(...)` / `ReconnectDelayStrategy()` | Strategy-based delay policy.
-| `SetServerChooser(...)` / `ServerChooser()` | URI selection policy and failure reporting.
-| `SetLogonOptions(...)` / `LogonOptions()` | Logon params reused for retries.
+| `SetTimeout(...)` / `Timeout()` | Global deadline for connect/logon retry loop. |
+| `SetReconnectDelay(...)` / `ReconnectDelay()` | Fixed-delay policy. |
+| `SetReconnectDelayStrategy(...)` / `ReconnectDelayStrategy()` | Strategy-based delay policy. |
+| `SetServerChooser(...)` / `ServerChooser()` | URI selection policy and failure reporting. |
+| `SetLogonOptions(...)` / `LogonOptions()` | Logon params reused for retries. |
 
 ## Recovery Model
 
@@ -63,16 +63,16 @@ Inspect:
 ```go
 ha := amps.NewHAClient("ha-example")
 ha.SetServerChooser(
-	amps.NewDefaultServerChooser(
-		"tcp://amps-a:9000/amps/json",
-		"tcp://amps-b:9000/amps/json",
-	),
+ amps.NewDefaultServerChooser(
+  "tcp://amps-a:9000/amps/json",
+  "tcp://amps-b:9000/amps/json",
+ ),
 ).SetReconnectDelayStrategy(
-	amps.NewExponentialDelayStrategy(200*time.Millisecond, 5*time.Second, 2.0),
+ amps.NewExponentialDelayStrategy(200*time.Millisecond, 5*time.Second, 2.0),
 ).SetTimeout(30 * time.Second)
 
 if err := ha.ConnectAndLogon(); err != nil {
-	panic(err)
+ panic(err)
 }
 defer ha.Disconnect()
 ```

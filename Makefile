@@ -6,16 +6,17 @@ STATICCHECK_VERSION ?= v0.7.0
 INEFFASSIGN_VERSION ?= v0.2.0
 ERRCHECK_VERSION ?= v1.10.0
 GOVULNCHECK_VERSION ?= v1.1.4
+GITLEAKS_VERSION ?= v8.30.1
+GOSEC_VERSION ?= v2.22.4
 COVERPROFILE ?= $(abspath coverage.out)
-RELEASE_VERSION ?=
-RELEASE_FLAGS ?=
-GOFER_LDFLAGS ?= -ldflags "-X github.com/Thejuampi/amps-client-go/internal/gofercli.version=$(VERSION)"
+MARKDOWNLINT ?= npx --yes markdownlint-cli2
+MARKDOWNLINT_REPORT ?= $(abspath markdownlint-report.txt)
+GITLEAKS_REPORT ?= $(abspath gitleaks-report.sarif)
+GOSEC_REPORT ?= $(abspath gosec-report.sarif)
 
 ifeq ($(OS),Windows_NT)
-POWERSHELL ?= powershell
 PARITY_CHECK_IF_AVAILABLE = @if exist ..\amps-c++-client-5.3.5.1-Windows ( $(MAKE) parity-check ) else ( echo Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found. )
 else
-POWERSHELL ?= pwsh
 PARITY_CHECK_IF_AVAILABLE = @if [ -d ../amps-c++-client-5.3.5.1-Windows ]; then \
 	$(MAKE) parity-check; \
 else \
@@ -23,12 +24,11 @@ else \
 fi
 endif
 
-.PHONY: help build gofer test test-race integration-test integration-fakeamps install fmt vet static-scan vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted release-local release-dry-run
+.PHONY: help build test test-race integration-test integration-fakeamps install fmt vet static-scan security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted
 
 help:
 	@echo Available targets:
 	@echo   make build            Build all packages
-	@echo   make gofer            Build gofer binary with version ldflags
 	@echo   make test             Run unit tests
 	@echo   make test-race        Run tests with race detector
 	@echo   make integration-test Run integration tests only (-run Integration)
@@ -37,21 +37,25 @@ help:
 	@echo   make fmt              Format Go source files
 	@echo   make vet              Run go vet
 	@echo   make static-scan      Run blocking static analysis (vet, staticcheck, ineffassign, errcheck)
-	@echo   make vuln-scan        Run advisory vulnerability scan
+	@echo   make security-scan    Run blocking security scans (gosec, govulncheck, gitleaks)
+	@echo   make gosec-scan       Run blocking gosec security analysis
+	@echo   make gosec-report     Write gosec SARIF output to $(GOSEC_REPORT)
+	@echo   make secret-scan      Run secret scanning with gitleaks
+	@echo   make secret-report    Write gitleaks SARIF output to $(GITLEAKS_REPORT)
+	@echo   make scan             Run the full blocking code scanning suite
+	@echo   make markdown-scan    Run markdownlint using .markdownlint-cli2.jsonc
+	@echo   make markdown-report  Write markdownlint output to $(MARKDOWNLINT_REPORT)
+	@echo   make markdown-fix     Auto-fix markdownlint issues where possible
+	@echo   make vuln-scan        Run blocking vulnerability scan on the supported Go release line
 	@echo   make tidy             Run go mod tidy
 	@echo   make clean            Clean Go build/test caches
 	@echo   make parity-check     Validate C++->Go parity manifest mappings
 	@echo   make coverage-check   Run ./amps/... coverage gate checks
 	@echo   make perf-check       Run hot-path benchmark regression gate
-	@echo   make release          Run release verification pipeline only
-	@echo   make release-local    Run the local scripted release flow (optional RELEASE_VERSION/RELEASE_FLAGS)
-	@echo   make release-dry-run  Run scripted release validation and restore version files (requires RELEASE_VERSION=X.Y.Z)
+	@echo   make release          Run release verification pipeline
 
 build:
 	$(GO) build $(GOFLAGS) $(PKG)
-
-gofer:
-	$(GO) build $(GOFLAGS) $(GOFER_LDFLAGS) ./cmd/gofer
 
 test:
 	$(GO) test $(GOFLAGS) $(PKG) -skip Integration
@@ -80,8 +84,33 @@ static-scan:
 	$(GO) run github.com/gordonklaus/ineffassign@$(INEFFASSIGN_VERSION) $(PKG)
 	$(GO) run github.com/kisielk/errcheck@$(ERRCHECK_VERSION) -ignoretests $(PKG)
 
+security-scan: gosec-scan vuln-scan secret-scan
+
+gosec-scan:
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
+
+gosec-report:
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -fmt sarif -out $(GOSEC_REPORT) ./...
+
+secret-scan:
+	$(GO) run github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION) dir . --no-banner --redact --exit-code 1
+
+secret-report:
+	$(GO) run github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION) dir . --no-banner --redact --report-format sarif --report-path $(GITLEAKS_REPORT)
+
+scan: static-scan security-scan
+
+markdown-scan:
+	$(MARKDOWNLINT)
+
+markdown-report:
+	$(MARKDOWNLINT) > $(MARKDOWNLINT_REPORT) 2>&1
+
+markdown-fix:
+	$(MARKDOWNLINT) --fix
+
 vuln-scan:
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
+	$(GO) run ./tools/withtoolchain -toolchain go1.25.9+auto -- run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
 
 tidy:
 	$(GO) mod tidy
@@ -103,15 +132,8 @@ coverage-check:
 perf-check:
 	$(GO) run ./tools/perfgate -baseline tools/perf_baseline.json
 
-release: static-scan perf-check test test-race build integration-fakeamps parity-check coverage-check
+release: scan perf-check test test-race build integration-fakeamps parity-check coverage-check
 	@echo Release checks passed for $(VERSION).
 
-release-hosted: static-scan test test-race build integration-fakeamps parity-check-if-available coverage-check
+release-hosted: scan perf-check test test-race build integration-fakeamps parity-check-if-available coverage-check
 	@echo Hosted release checks passed for $(VERSION).
-
-release-local:
-	$(POWERSHELL) -ExecutionPolicy Bypass -File .\release.local.ps1 $(if $(RELEASE_VERSION),-Version $(RELEASE_VERSION),) $(RELEASE_FLAGS)
-
-release-dry-run:
-	$(if $(strip $(RELEASE_VERSION)),,$(error RELEASE_VERSION is required, e.g. make release-dry-run RELEASE_VERSION=0.8.10))
-	$(POWERSHELL) -ExecutionPolicy Bypass -File .\release.local.ps1 -Version $(RELEASE_VERSION) -Yes -DryRun

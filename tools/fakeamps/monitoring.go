@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- RFC 6455 requires SHA-1 for Sec-WebSocket-Accept.
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Thejuampi/amps-client-go/internal/ampsconfig"
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 const adminSessionCookieName = "fakeamps_admin_session"
@@ -475,6 +476,13 @@ func (service *monitoringService) sessionCookie(sessionID string, expiresAt time
 	return cookie
 }
 
+func (service *monitoringService) expiredSessionCookie() *http.Cookie {
+	var cookie = service.sessionCookie("", time.Unix(0, 0))
+	cookie.Value = ""
+	cookie.MaxAge = -1
+	return cookie
+}
+
 func (service *monitoringService) handleSessionLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -487,13 +495,7 @@ func (service *monitoringService) handleSessionLogout(w http.ResponseWriter, r *
 		service.mu.Unlock()
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     adminSessionCookieName,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		MaxAge:   -1,
-	})
+	http.SetCookie(w, service.expiredSessionCookie())
 	jsonResponse(w, map[string]string{"status": "logged_out"})
 }
 
@@ -845,7 +847,7 @@ func (service *monitoringService) handleSQLWebSocket(w http.ResponseWriter, r *h
 		return
 	}
 
-	var acceptRaw = sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + websocketAcceptGUID))
+	var acceptRaw = sha1.Sum([]byte(r.Header.Get("Sec-WebSocket-Key") + websocketAcceptGUID)) // #nosec G401 -- RFC 6455 requires SHA-1 for Sec-WebSocket-Accept.
 	var accept = base64.StdEncoding.EncodeToString(acceptRaw[:])
 
 	_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
@@ -1191,7 +1193,7 @@ func (service *monitoringService) instanceCounts() map[string]int64 {
 	}
 
 	return map[string]int64{
-		"connections_accepted": int64(globalConnectionsAccepted.Load()),
+		"connections_accepted": safecast.Int64FromUint64Saturating(globalConnectionsAccepted.Load()),
 		"connections_current":  globalConnectionsCurrent.Load(),
 		"subscriptions":        subscriptions,
 		"sow_records":          sowRecords,
@@ -1391,6 +1393,7 @@ func clearAllSOWRecords(reason string) (int, []workspaceRemovedRecord) {
 			continue
 		}
 		var current = raw.(*topicSOW)
+		var snapshot map[string]*sowRecord
 		current.mu.Lock()
 		cleared += len(current.records)
 		for _, record := range current.records {
@@ -1402,7 +1405,13 @@ func clearAllSOWRecords(reason string) (int, []workspaceRemovedRecord) {
 			})
 		}
 		current.records = make(map[string]*sowRecord)
+		if sow.diskPath != "" {
+			snapshot = cloneSOWRecords(current.records)
+		}
 		current.mu.Unlock()
+		if snapshot != nil {
+			sow.saveTopicToDisk(topic, snapshot)
+		}
 	}
 	return cleared, removed
 }
@@ -1418,6 +1427,7 @@ func clearSOWTopicRecords(topic string, reason string) (int, []workspaceRemovedR
 	}
 
 	var current = raw.(*topicSOW)
+	var snapshot map[string]*sowRecord
 	current.mu.Lock()
 	var cleared = len(current.records)
 	var removed = make([]workspaceRemovedRecord, 0, len(current.records))
@@ -1430,7 +1440,13 @@ func clearSOWTopicRecords(topic string, reason string) (int, []workspaceRemovedR
 		})
 	}
 	current.records = make(map[string]*sowRecord)
+	if sow.diskPath != "" {
+		snapshot = cloneSOWRecords(current.records)
+	}
 	current.mu.Unlock()
+	if snapshot != nil {
+		sow.saveTopicToDisk(topic, snapshot)
+	}
 	return cleared, removed, true
 }
 
@@ -1500,9 +1516,10 @@ func newAdminHTTPServer(addr string, handler http.Handler, adminConfig ampsconfi
 	}
 
 	return &http.Server{
-		Addr:      addr,
-		Handler:   applyAdminHeaders(handler, adminConfig.Headers),
-		TLSConfig: tlsConfig,
+		Addr:              addr,
+		Handler:           applyAdminHeaders(handler, adminConfig.Headers),
+		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: 5 * time.Second,
 	}, nil
 }
 
@@ -1548,14 +1565,19 @@ func buildAdminTLSConfig(cipherNames []string) (*tls.Config, error) {
 	for _, suite := range tls.CipherSuites() {
 		suiteByName[suite.Name] = suite
 	}
+	var insecureSuiteByName = make(map[string]struct{})
 	for _, suite := range tls.InsecureCipherSuites() {
-		suiteByName[suite.Name] = suite
+		insecureSuiteByName[suite.Name] = struct{}{}
 	}
 
-	var config = &tls.Config{}
+	var config = &tls.Config{MinVersion: tls.VersionTLS12}
 	for _, name := range cipherNames {
-		var suite, ok = suiteByName[strings.TrimSpace(name)]
+		var suiteName = strings.TrimSpace(name)
+		var suite, ok = suiteByName[suiteName]
 		if !ok {
+			if _, insecure := insecureSuiteByName[suiteName]; insecure {
+				return nil, fmt.Errorf("insecure admin cipher %q is not allowed", name)
+			}
 			return nil, fmt.Errorf("unsupported admin cipher %q", name)
 		}
 
