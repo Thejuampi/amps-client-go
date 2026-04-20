@@ -18885,8 +18885,6 @@ Selecting the `clients` resource will list all connected clients by name. Select
 
 ### config_path (instance statistics)
 
-### config\_path (instance statistics)
-
 Filesystem location of the configuration file.
 
 **Admin Path**: /amps/instance/config\_path
@@ -18898,8 +18896,6 @@ Selecting this will display the current AMPS configuration file. To keep the pat
 **Admin Path**: /amps/instance/config.xml
 
 ### conflated_topics (instance statistics)
-
-### conflated\_topics (instance statistics)
 
 Selecting the `conflated_topics` resource will display a list of the conflated topics in the instance.
 
@@ -19080,10 +19076,6 @@ The `paginations` element provides information about currently-active paginated 
 
 ### message_types (instance statistics)
 
-### message\_types (instance statistics)
-
-Information regarding the message types used by AMPS are maintained in the `message_types` resource. AMPS can track the following information for all message types loaded into the instance.
-
 | Metric | Description | Type |
 | --- | --- | --- |
 | `module` | The name of the module that implements the message type. | fixed |
@@ -19100,10 +19092,6 @@ Name of the AMPS Instance.
 **Admin Path**: /amps/instance/name
 
 ### name_hash (instance statistics)
-
-### name\_hash (instance statistics)
-
-The hashed value of the AMPS Instance name.
 
 **Admin Path**: /amps/instance/name\_hash
 
@@ -19383,10 +19371,6 @@ All times used for the report generation and presentation are stored and returne
 
 ### transaction_log (instance statistics)
 
-### transaction\_log (instance statistics)
-
-Clicking the `transaction_log` link will display the statistics that AMPS gathers for the transaction log, if one is configured.
-
 | Metric | Description | Type |
 | --- | --- | --- |
 | `journals` | A list of all journal file names. | snapshot |
@@ -19461,10 +19445,6 @@ This format is explained in the table below:
 **Admin Path**: /amps/instance/uptime
 
 ### user_id (instance statistics)
-
-### user\_id (instance statistics)
-
-The username for the owner for the `ampServer` process.
 
 **Admin Path**: /amps/instance/user\_id
 
@@ -19720,8 +19700,6 @@ The table below lists the commands used to send messages to AMPS.
 
 ### delta_publish command
 
-### delta\_publish command
-
 The `delta_publish` command is a way of publishing an incremental update to a record. If a client uses `delta_publish` to publish an update, AMPS first extracts the key fields from the record and does a look up for the record in the SOW. AMPS will then apply the update to the SOW record overwriting any non-key field that has a value in the update and appending to the message any new fields that were not previously in the SOW message.
 
 If `delta_publish` is used on a record that does not currently exist in the SOW or if it is used on a topic that does not have a SOW topic store defined, then `delta_publish` will behave like a standard `publish` command.
@@ -19825,8 +19803,6 @@ For details on the differences between these commands, see the *AMPS User Guide*
 | `sow_and_delta_subscribe` | Query a snapshot of the values within a topic in the SOW and begin a subscription atomically at the point of query. If the topic is in the SOW, and it is possible to construct a partial message, receive *only* fields that have changed (fields that identify the message are also included by default). |
 
 ### delta_subscribe command
-
-### delta\_subscribe command
 
 The `delta_subscribe` command is like the `subscribe` command except that subscriptions placed through `delta_subscribe` will receive only messages that have changed between the SOW record and the new update.
 
@@ -19976,8 +19952,6 @@ The ordering of records returned by a SOW query is undefined unless the `OrderBy
 
 ### sow_and_delta_subscribe command
 
-### sow\_and\_delta\_subscribe command
-
 A `sow_and_delta_subscribe` command is used to combine the functionality of commands `sow` and a `delta_subscribe` in a single command.
 
 The `sow_and_delta_subscribe` command is used: (a) to query the contents of a SOW topic (this is the `sow` command); and (b) to place a subscription such that any messages matching the subscribed SOW topic and query filter will be published to the AMPS client (this is the `delta_subscribe` command). As with the `delta_subscribe` command, `publish` messages representing updates to SOW records will contain only the information that has changed.
@@ -20077,8 +20051,6 @@ The total number of records returned to the client, which can be limited by the 
 Errors for a `sow_and_delta_subscribe` query are either returned in the `Status` field if an `AckType` has been defined, or the errors may be inserted into the AMPS log.
 
 ### sow_and_subscribe command
-
-### sow\_and\_subscribe command
 
 A `sow_and_subscribe` command is used to combine the functionality of `sow` and a `subscribe` command in a single command.
 
@@ -21087,8 +21059,6 @@ The `sow` message contains data. The data for the message consists of up to `bat
 | `msg_len` | The length of the next SOW message in the data portion of this message. |
 
 ### group_begin / group_end: Result Set Delimiters
-
-### group\_begin / group\_end: Result Set Delimiters
 
 This section describes the query delimiters that indicate where the results of a query begin and end.
 
