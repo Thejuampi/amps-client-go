@@ -14,7 +14,7 @@ go run ./tools/paritycheck -manifest tools/parity_manifest.json
 
 Current gate result (manifest in this repository revision):
 
-- `PARITY_ENTRIES=253`
+- `PARITY_ENTRIES=261`
 - `MISSING_HEADER_SYMBOLS=0`
 - `MISSING_GO_SYMBOLS=0`
 
@@ -41,6 +41,7 @@ Current gate result (manifest in this repository revision):
 - Compatibility entrypoints are additive.
 - Deprecated C++ APIs are excluded from required parity scope.
 - C API thread counters map to cumulative receive-lifecycle counters (`create`/`join-like wait`/`detach-like stop`) rather than raw OS thread primitives.
+- `Options` helpers from `Message.hpp` map onto `Command` option helpers in Go, including `send_keys`, `fully_durable`, `max_backlog`, and `bookmark_not_found`.
 
 ## Related Documentation
 

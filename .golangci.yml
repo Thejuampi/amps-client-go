@@ -1,0 +1,48 @@
+run:
+  timeout: 5m
+  tests: false
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: tools/fakeamps/admin\.go
+      linters:
+        - errchkjson
+    - path: tools/fakeamps/metrics_history\.go
+      linters:
+        - errchkjson
+    - path: tools/fakeamps/monitoring\.go
+      linters:
+        - errchkjson
+    - path: tools/fakeamps/workspace_registry\.go
+      linters:
+        - errchkjson
+    - path: tools/perfreport/main\.go
+      linters:
+        - errchkjson
+
+linters:
+  disable-all: true
+  enable:
+    - asasalint
+    - bidichk
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - gocheckcompilerdirectives
+    - govet
+    - makezero
+    - nilerr
+    - nilnesserr
+    - rowserrcheck
+    - sqlclosecheck
+    - wastedassign
+
+linters-settings:
+  govet:
+    enable:
+      - shadow
+      - unusedwrite

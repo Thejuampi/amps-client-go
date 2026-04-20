@@ -14,13 +14,18 @@ Integration tests:
 
 ```bash
 make static-scan
+make leak-check
+make fuzz-smoke
 make test-race
 make test
 make integration-test
+make integration-live-smoke
+make stress-check
 make parity-check
 make coverage-check
 make perf-check
 make vuln-scan
+make preprod-check
 make release
 ```
 
@@ -31,14 +36,24 @@ go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks=SA* ./...
 go run github.com/gordonklaus/ineffassign@v0.2.0 ./...
 go run github.com/kisielk/errcheck@v1.10.0 -ignoretests ./...
+go run ./tools/patterncheck ./...
+go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run --config .golangci.yml ./...
+go test -count=1 ./amps
+go test -count=1 ./tools/fakeamps -run '^(TestStartLeaseWatcher|TestStopLeaseWatcherStopsBackgroundLoop)$$'
+go test ./amps -run=^$$ -fuzz=FuzzParseHeader -fuzztime=5s
+go test ./amps -run=^$$ -fuzz=FuzzParseBookmarkToken -fuzztime=5s
+go test ./amps -run=^$$ -fuzz=FuzzParseSocketOptions -fuzztime=5s
+go test ./amps -run=^$$ -fuzz=FuzzCompositeMessageParser -fuzztime=5s
 go test -race ./... -skip Integration
 go test ./... -skip Integration
 go test ./... -run Integration
+go test -count=1 ./amps -run '^(TestIntegrationConnectLogonPublishSubscribe|TestIntegrationSOWAndSowAndSubscribeLifecycle|TestIntegrationQueueAutoAckBatching|TestIntegrationBookmarkResumeAcrossReconnect|TestIntegrationHAConnectAndLogonWithFailoverChooser)$$'
+go test -race -shuffle=on -count=20 ./... -skip Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
 go run ./tools/perfgate -baseline tools/perf_baseline.json
-go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.25.9+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
 Windows pre-commit or pre-release parity with the CI static-analysis host:
@@ -55,12 +70,47 @@ Blocking static-analysis policy:
 - `staticcheck` correctness checks only (`SA*`)
 - `ineffassign` for ineffectual assignments
 - `errcheck` on non-test packages
+- `patterncheck` for repo-specific transport and goroutine bug patterns
+- `golangci-lint` with an expanded bug-focused ruleset from `.golangci.yml`
 
 This gate is exposed locally via `make static-scan` and is required in CI and release validation.
 
 `make static-scan` follows the host OS build tags. On Windows, run `.\tools\static-scan-linux.ps1` before commit or release prep when you need parity with the Ubuntu CI job, especially after touching files guarded by `//go:build !windows` or other non-Windows paths.
 
 Race coverage is enforced separately with `make test-race` in CI and release validation.
+
+The expanded `golangci-lint` lane currently focuses on:
+
+- aliasing and unicode hazards (`asasalint`, `bidichk`)
+- resource leaks and close discipline (`bodyclose`, `rowserrcheck`, `sqlclosecheck`)
+- loop-variable and zero-length allocation traps (`copyloopvar`, `makezero`)
+- unsafe or unchecked JSON encoding paths (`errchkjson`)
+- wrapped-error handling mistakes (`errorlint`)
+- compiler directive mistakes (`gocheckcompilerdirectives`)
+- `govet` analyzers, including `shadow` and `unusedwrite`
+- nil/error contract mistakes (`nilerr`, `nilnesserr`)
+- suspicious assignments (`wastedassign`)
+- duration arithmetic mistakes (`durationcheck`)
+
+`errchkjson` stays enabled with narrow path exclusions for a small set of helper-heavy files where the current upstream analyzer reports false positives. The rest of the repository remains covered by the check.
+
+## Pre-Production Gates
+
+Pre-production validation adds heavier checks that are useful before a cut or deploy:
+
+- `make leak-check` for goroutine leak detection with `go.uber.org/goleak`
+- `make fuzz-smoke` for short parser fuzzing runs
+- `make stress-check` for repeated shuffled race execution
+- `make preprod-check` to run scan + leak + fuzz + stress + coverage + perf together
+- `make integration-live-smoke` to run the live-broker smoke subset when `AMPS_TEST_*` is configured
+
+`make release` now flows through the pre-production gate before the existing unit, race, build, fake broker, and parity steps.
+
+## CI and Release Automation
+
+- `ci.yml` runs Ubuntu analysis, a cross-platform Go test/build matrix, and a main-branch pre-prod smoke job.
+- `nightly-analysis.yml` runs the heavier `make preprod-check` lane on a schedule and optionally exercises a live AMPS broker.
+- `release.yml` runs `make release-hosted` with the expanded pre-production gate and an optional live-broker smoke before publishing.
 
 The repository also runs a separate GitHub CodeQL workflow with `security-and-quality` queries for deeper code scanning on pull requests, pushes to `main`, and a weekly schedule.
 
@@ -120,17 +170,21 @@ Required output:
 
 1. Confirm no exported API signature regressions.
 2. Run `make static-scan`. On Windows, also run `.\tools\static-scan-linux.ps1` before commit when you need CI-equivalent Linux static analysis.
-3. Run `make test-race`.
-4. Run full unit suite.
-5. Run parity check and verify `OPEN_GAPS=0`.
-6. Run coverage gate for `./amps/...`.
-7. Run performance gate against locked baseline.
-8. Run integration suite with target endpoint if available.
-9. Validate handler order expectations.
-10. Validate retry and replay behaviors under disconnect.
-11. Validate queue auto-ack batching and timeout behavior.
-12. Update parity matrix and relevant workflow docs.
-13. Confirm support matrix statements still match observed behavior.
+3. Run `make leak-check`.
+4. Run `make fuzz-smoke` for parser- or protocol-heavy changes.
+5. Run `make test-race`.
+6. Run full unit suite.
+7. Run parity check and verify `OPEN_GAPS=0`.
+8. Run coverage gate for `./amps/...`.
+9. Run performance gate against locked baseline.
+10. Run `make stress-check` for concurrency, reconnect, queueing, or HA-sensitive changes.
+11. Run integration suite with target endpoint if available.
+12. Run `make integration-live-smoke` when a real AMPS environment is configured.
+13. Validate handler order expectations.
+14. Validate retry and replay behaviors under disconnect.
+15. Validate queue auto-ack batching and timeout behavior.
+16. Update parity matrix and relevant workflow docs.
+17. Confirm support matrix statements still match observed behavior.
 
 ## Link and Documentation Integrity
 

@@ -13,7 +13,7 @@ permissions:
   security-events: write
 
 jobs:
-  validate:
+  analysis:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -42,23 +42,20 @@ jobs:
         with:
           sarif_file: gosec-report.sarif
 
-      - name: Code scanning
+      - name: Blocking scans
         run: make scan
 
-      - name: Unit tests
-        run: go test ./... -skip Integration
+      - name: Leak check
+        run: make leak-check
 
-      - name: Race tests
-        run: make test-race
-
-      - name: Build
-        run: go build ./...
+      - name: Fuzz smoke
+        run: make fuzz-smoke FUZZTIME=1s
 
       - name: Parity check (if C++ headers are available)
         shell: bash
         run: |
           if [ -d "../amps-c++-client-5.3.5.1-Windows" ]; then
-            go run ./tools/paritycheck -manifest tools/parity_manifest.json
+            go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
           else
             echo "Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found on runner."
           fi
@@ -68,3 +65,71 @@ jobs:
 
       - name: Coverage gate
         run: go run ./tools/coveragegate -profile coverage.out
+
+  test-matrix:
+    name: Test Matrix (${{ matrix.os }}, Go ${{ matrix.go-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            go-version: "1.25.9"
+            race: true
+          - os: ubuntu-latest
+            go-version: "stable"
+            race: false
+          - os: windows-latest
+            go-version: "1.25.9"
+            race: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          check-latest: true
+
+      - name: Unit tests
+        run: go test ./... -skip Integration
+
+      - name: Race tests
+        if: matrix.race
+        run: make test-race
+
+      - name: Build
+        run: go build ./...
+
+  preprod-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - analysis
+      - test-matrix
+    runs-on: ubuntu-latest
+    env:
+      AMPS_TEST_URI: ${{ secrets.AMPS_TEST_URI }}
+      AMPS_TEST_FAILOVER_URIS: ${{ secrets.AMPS_TEST_FAILOVER_URIS }}
+      AMPS_TEST_PROTOCOL: ${{ secrets.AMPS_TEST_PROTOCOL }}
+      AMPS_TEST_USER: ${{ secrets.AMPS_TEST_USER }}
+      AMPS_TEST_PASSWORD: ${{ secrets.AMPS_TEST_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Stress check
+        run: make stress-check STRESS_COUNT=2
+
+      - name: Performance gate
+        run: make perf-check
+
+      - name: Live broker smoke
+        if: env.AMPS_TEST_URI != ''
+        run: make integration-live-smoke

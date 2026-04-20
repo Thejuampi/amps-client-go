@@ -1,0 +1,36 @@
+name: Nightly Analysis
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  preprod:
+    runs-on: ubuntu-latest
+    env:
+      AMPS_TEST_URI: ${{ secrets.AMPS_TEST_URI }}
+      AMPS_TEST_FAILOVER_URIS: ${{ secrets.AMPS_TEST_FAILOVER_URIS }}
+      AMPS_TEST_PROTOCOL: ${{ secrets.AMPS_TEST_PROTOCOL }}
+      AMPS_TEST_USER: ${{ secrets.AMPS_TEST_USER }}
+      AMPS_TEST_PASSWORD: ${{ secrets.AMPS_TEST_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Expanded pre-production checks
+        run: make preprod-check FUZZTIME=3s STRESS_COUNT=5
+
+      - name: Live broker smoke
+        if: env.AMPS_TEST_URI != ''
+        run: make integration-live-smoke

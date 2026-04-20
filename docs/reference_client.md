@@ -17,12 +17,20 @@
 | `Logon(optionalParams...)` | Start authenticated session | Connected | Returns auth or timeout errors. |
 | `Disconnect()` | Disconnect and stop routes | Any | Resets connection state; may return `DisconnectedError` when already disconnected. |
 | `Close()` | Alias to disconnect | Any | Same as `Disconnect`. |
+| `SetCompression(enabled)` | Configure default zlib transport compression | Before `Connect` recommended | Applies to `tcp`/`tcps` when the URI omits compression. |
 | `SetTLSConfig(config)` | Configure TLS parameters | Before `Connect` | Misconfiguration fails on connect. |
 | `SetHeartbeat(interval, timeout...)` | Configure heartbeat behavior | Connected/logged on | Depends on endpoint heartbeat support. |
 | `ServerVersion()` | Get server version from logon ack | Logged on recommended | Empty if unavailable. |
 | `URI()` | Get configured URI | Any | None. |
 | `GetConnectionInfo()` / `GatherConnectionInfo()` | Best-effort connection metadata | Any | Values depend on current transport state. |
 | `String()` | Debug summary | Any | Derived from connection info. |
+
+Connection URI notes:
+
+- `compression=zlib` is supported on `tcp://` and `tcps://` only.
+- `SetCompression(true)` enables the same zlib transport by default when the URI does not already specify compression.
+- Explicit URI compression wins over the client default.
+- Compression is rejected for `ws://`, `wss://`, and `unix://`.
 
 ## Command Execution
 
@@ -51,9 +59,12 @@
 | Symbol | Purpose | Required State | Side Effects / Errors |
 |---|---|---|---|
 | `Subscribe(topic, filter...)` / `SubscribeAsync(handler, topic, filter...)` | Stream subscribe | Connected/logged on | Returns sub ID and route. |
+| `SubscribeWithMaxBacklog(topic, maxBacklog, filter...)` / `SubscribeAsyncWithMaxBacklog(...)` | Queue subscribe with explicit backlog request | Connected/logged on | Uses the `max_backlog` option helper. |
 | `DeltaSubscribe(...)` / `DeltaSubscribeAsync(...)` | Delta stream subscribe | Connected/logged on | Endpoint delta support required. |
 | `Sow(topic, filter...)` / `SowAsync(...)` | Snapshot query | Connected/logged on | Terminates on query completion. |
 | `SowAndSubscribe(...)` / `SowAndSubscribeAsync(...)` | Snapshot + live subscribe | Connected/logged on | Requires explicit unsubscribe. |
+| `SOWHistoricalQueryAndSubscribe(topic, bookmark, filter, topN)` | Replay from bookmark and remain subscribed | Connected/logged on | Uses `sow_and_subscribe` with bookmark replay semantics. |
+| `SOWPaginatedQueryAndSubscribe(topic, filter, topN, skipN)` | Paged snapshot + live subscribe | Connected/logged on | Uses `top_n` and `skip_n` on `sow_and_subscribe`. |
 | `SowAndDeltaSubscribe(...)` / `SowAndDeltaSubscribeAsync(...)` | Snapshot + live delta subscribe | Connected/logged on | Delta behavior depends on endpoint. |
 | `BookmarkSubscribe(topic, bookmark, filter...)` / `BookmarkSubscribeAsync(...)` | Bookmark-based subscribe | Connected/logged on | Bookmark semantics require endpoint support. |
 | `Unsubscribe(subID...)` | Unsubscribe by ID or all | Connected | `all` when omitted. |

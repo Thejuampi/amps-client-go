@@ -35,8 +35,8 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	}
 	directory := filepath.Dir(path)
 	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return err
+		if mkdirErr := os.MkdirAll(directory, 0o700); mkdirErr != nil {
+			return mkdirErr
 		}
 	}
 	tmpPath := path + ".tmp"
@@ -70,8 +70,8 @@ func Append(path string, data []byte, syncWrite bool) (err error) {
 	}
 	directory := filepath.Dir(path)
 	if directory != "" && directory != "." {
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return err
+		if mkdirErr := os.MkdirAll(directory, 0o700); mkdirErr != nil {
+			return mkdirErr
 		}
 	}
 	_, statErr := os.Stat(path)

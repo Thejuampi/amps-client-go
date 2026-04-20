@@ -34,7 +34,26 @@ func TestRepoRootFromFindsAncestorGoMod(t *testing.T) {
 }
 
 func TestRepoRootFromErrorsWithoutGoMod(t *testing.T) {
-	var _, err = repoRootFrom(t.TempDir())
+	var cwd, err = os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+
+	var isolatedRoot, mkErr = os.MkdirTemp(filepath.VolumeName(cwd)+string(os.PathSeparator), "fakeampsgate-noroot-*")
+	if mkErr != nil {
+		t.Fatalf("mkdir temp: %v", mkErr)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(isolatedRoot)
+	})
+
+	var nested = filepath.Join(isolatedRoot, "a", "b")
+	err = os.MkdirAll(nested, 0755)
+	if err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+
+	_, err = repoRootFrom(nested)
 	if err == nil {
 		t.Fatalf("expected missing go.mod error")
 	}

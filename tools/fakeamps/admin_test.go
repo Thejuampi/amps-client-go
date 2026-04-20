@@ -124,6 +124,18 @@ func TestJSONResponse(t *testing.T) {
 	}
 }
 
+func TestJSONResponseMarshalFailure(t *testing.T) {
+	var response = httptest.NewRecorder()
+	jsonResponse(response, map[string]interface{}{"bad": make(chan int)})
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("jsonResponse marshal failure status = %d, want 500", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), "failed to encode JSON response") {
+		t.Fatalf("jsonResponse marshal failure body = %q, want fallback error", response.Body.String())
+	}
+}
+
 func TestHandleAdminStatusAndStats(t *testing.T) {
 	oldEffectiveConfig := effectiveConfig
 	effectiveConfig = &ampsconfig.ExpandedConfig{

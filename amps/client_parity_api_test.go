@@ -179,6 +179,10 @@ func TestClientParityAdditionalWrappers(t *testing.T) {
 	if client.RawConnection() != conn {
 		t.Fatalf("unexpected raw connection")
 	}
+	client.connection = newCompressedNetConn(conn)
+	if client.RawConnection() != conn {
+		t.Fatalf("expected compressed raw connection to unwrap underlying socket")
+	}
 
 	started := 0
 	stopped := 0

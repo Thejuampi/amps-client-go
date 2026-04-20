@@ -12,7 +12,7 @@ Parity target:
 Symbol gate baseline:
 
 - manifest file: `tools/parity_manifest.json`
-- current mapped symbols: `253`
+- current mapped symbols: `261`
 - required gate: `MISSING_HEADER_SYMBOLS=0` and `MISSING_GO_SYMBOLS=0`
 
 Behavior gate baseline:
@@ -56,11 +56,14 @@ Performance regression gate:
 | Connection and session lifecycle | Supported | `NewClient`, `Connect`, `Logon`, `Disconnect`, `Close` |
 | Publish and delta publish | Supported | `Publish`, `PublishBytes`, `DeltaPublish`, `DeltaPublishBytes` |
 | Streaming subscribe flows | Supported | `Subscribe*`, `DeltaSubscribe*`, `Unsubscribe` |
-| SOW query flows | Supported | `Sow*`, `SowAndSubscribe*`, `SowAndDeltaSubscribe*`, `SowDelete*` |
+| SOW query flows | Supported | `Sow*`, `SowAndSubscribe*`, `SowAndDeltaSubscribe*`, `SOWHistoricalQueryAndSubscribe`, `SOWPaginatedQueryAndSubscribe`, `SowDelete*` |
 | Queue acknowledgement controls | Supported | `Ack`, `AckMessage`, `SetAutoAck`, `SetAckBatchSize`, `SetAckTimeout`, `FlushAcks` |
+| Queue backlog requests | Supported | `SetMaxBacklog`, `SubscribeWithMaxBacklog`, `SubscribeAsyncWithMaxBacklog` |
 | Bookmark resume and duplicate detection | Supported | `BookmarkSubscribe*`, bookmark constants/helpers, `BookmarkStore` implementations |
+| Bookmark replay controls | Supported | `SetBookmarkNotFound*`, `SetFullyDurable`, `FullyDurableSubscribe` |
 | Publish replay and persistence tracking | Supported | `PublishStore` implementations, `PublishFlush` |
 | Retry and reconnect recovery | Supported | `SetRetryOnDisconnect`, `HAClient.ConnectAndLogon`, chooser/strategy controls |
+| Transport compression on TCP/TLS | Supported | `SetCompression`, `compression=zlib` on `tcp`/`tcps` URIs |
 | Kerberos compatibility auth (best effort, pure Go) | Supported with limits | `amps/auth/kerberos.NewAuthenticator`, additive capability/challenge interfaces |
 | Transport and routing hooks | Supported | transport filter, receive-start callback, global handlers, listener APIs |
 | C compatibility layer | Supported | `amps/capi` client/message handle APIs, TLS/zlib compatibility entrypoints |
@@ -77,9 +80,10 @@ Performance regression gate:
 
 - Endpoint compatibility depends on AMPS server capability and entitlement.
 - Delta and bookmark semantics require server-side support.
+- Connection compression is zlib-only and supported on `tcp` and `tcps`. It is intentionally unsupported on `ws`, `wss`, and `unix`.
 - File-backed publish and bookmark stores use Go-native checkpoint/WAL persistence; binary compatibility with non-Go client store files is not required.
 - HTTP preflight headers apply only to HTTP upgrade transports.
-- Callbacks may run from receive/recovery paths and should be thread-safe.
+- Callbacks may run from receive or recovery paths and should be thread-safe.
 - Kerberos integration is pure-Go best-effort and intentionally avoids CGO SSPI/GSSAPI bindings.
 
 ## Known Unsupported or Intentional Differences
@@ -87,7 +91,8 @@ Performance regression gate:
 - `HAClient.SetDisconnectHandler(...)` intentionally returns a usage error; HA reconnect logic owns disconnect handling.
 - Persistence is behaviorally compatible but not binary-file compatible with C++ store file formats.
 - C-compatible thread counters are lifecycle-compatible counters, but callback `threadID` values are Go-generated identifiers rather than OS thread IDs.
-- Kerberos authenticators report capabilities and limitations at runtime; OS-native ticket acquisition must be supplied by caller callbacks/env/static token.
+- Kerberos authenticators report capabilities and limitations at runtime; OS-native ticket acquisition must be supplied by caller callbacks, environment, or a static token.
+- Generic option strings remain supported, but first-class helpers now exist for `send_keys`, `fully_durable`, `max_backlog`, and `bookmark_not_found`.
 
 ## Validation References
 

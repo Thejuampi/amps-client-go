@@ -32,6 +32,11 @@ jobs:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
       RELEASE_TAG: v${{ github.event.inputs.version }}
       RELEASE_DRY_RUN: ${{ github.event.inputs.dry_run }}
+      AMPS_TEST_URI: ${{ secrets.AMPS_TEST_URI }}
+      AMPS_TEST_FAILOVER_URIS: ${{ secrets.AMPS_TEST_FAILOVER_URIS }}
+      AMPS_TEST_PROTOCOL: ${{ secrets.AMPS_TEST_PROTOCOL }}
+      AMPS_TEST_USER: ${{ secrets.AMPS_TEST_USER }}
+      AMPS_TEST_PASSWORD: ${{ secrets.AMPS_TEST_PASSWORD }}
     steps:
       - name: Checkout
         shell: bash
@@ -110,7 +115,11 @@ jobs:
           fi
 
       - name: Release gates
-        run: make release-hosted
+        run: make release-hosted FUZZTIME=2s STRESS_COUNT=3
+
+      - name: Live broker smoke
+        if: env.AMPS_TEST_URI != ''
+        run: make integration-live-smoke
 
       - name: Commit release bump
         if: env.RELEASE_DRY_RUN != 'true'

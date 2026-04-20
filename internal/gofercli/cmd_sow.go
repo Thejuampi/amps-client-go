@@ -50,8 +50,8 @@ func (app *App) runSOW(args []string) error {
 		switch commandType {
 		case amps.CommandSOW:
 			count++
-			if err := app.emitMessage(message, config.Format, copier); err != nil {
-				signalError(failures, err)
+			if emitErr := app.emitMessage(message, config.Format, copier); emitErr != nil {
+				signalError(failures, emitErr)
 				signalDone(done)
 			}
 		case amps.CommandGroupEnd:

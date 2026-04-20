@@ -206,6 +206,34 @@ func (client *Client) SOWPaginatedQuery(topic string, filter string, topN uint, 
 	return client.Execute(command)
 }
 
+func (client *Client) SOWHistoricalQueryAndSubscribe(topic string, bookmark string, filter string, topN uint) (*MessageStream, error) {
+	command := NewCommand("sow_and_subscribe").SetTopic(topic)
+	if bookmark != "" {
+		command.SetBookmark(bookmark)
+	}
+	if filter != "" {
+		command.SetFilter(filter)
+	}
+	if topN > 0 {
+		command.SetTopN(topN)
+	}
+	return client.Execute(command)
+}
+
+func (client *Client) SOWPaginatedQueryAndSubscribe(topic string, filter string, topN uint, skipN uint) (*MessageStream, error) {
+	command := NewCommand("sow_and_subscribe").SetTopic(topic)
+	if filter != "" {
+		command.SetFilter(filter)
+	}
+	if topN > 0 {
+		command.SetTopN(topN)
+	}
+	if skipN > 0 {
+		command.SetSkipN(skipN)
+	}
+	return client.Execute(command)
+}
+
 // --- LOW-12: Queue convenience ---
 
 func (client *Client) QueueCancel(topic string, subID string) error {
@@ -223,10 +251,25 @@ func (client *Client) QueueExpire(topic string, bookmark string) error {
 }
 
 func (client *Client) QueueSetMaxBacklog(topic string, maxBacklog uint) error {
-	command := NewCommand("subscribe").SetTopic(topic)
-	command.SetOptions(fmt.Sprintf("max_backlog=%d", maxBacklog))
+	command := NewCommand("subscribe").SetTopic(topic).SetMaxBacklog(maxBacklog)
 	_, err := client.ExecuteAsync(command, func(m *Message) error { return nil })
 	return err
+}
+
+func (client *Client) SubscribeWithMaxBacklog(topic string, maxBacklog uint, filter ...string) (*MessageStream, error) {
+	command := NewCommand("subscribe").SetTopic(topic).SetMaxBacklog(maxBacklog)
+	if len(filter) > 0 {
+		command.SetFilter(filter[0])
+	}
+	return client.Execute(command)
+}
+
+func (client *Client) SubscribeAsyncWithMaxBacklog(messageHandler func(*Message) error, topic string, maxBacklog uint, filter ...string) (string, error) {
+	command := NewCommand("subscribe").SetTopic(topic).SetMaxBacklog(maxBacklog)
+	if len(filter) > 0 {
+		command.SetFilter(filter[0])
+	}
+	return client.ExecuteAsync(command, messageHandler)
 }
 
 // --- LOW-17: Monitoring topics convenience ---
@@ -310,13 +353,17 @@ func (client *Client) BookmarkSubscribeWithOptions(topic string, bookmark string
 }
 
 func (client *Client) FullyDurableSubscribe(topic string, bookmark string, filter ...string) (*MessageStream, error) {
-	return client.BookmarkSubscribeWithOptions(topic, bookmark, []string{OptionFullyDurable}, filter...)
+	command := NewCommand("subscribe").SetTopic(topic).SetBookmark(bookmark).AddAckType(AckTypeCompleted)
+	command.SetFullyDurable(true)
+	if len(filter) > 0 {
+		command.SetFilter(filter[0])
+	}
+	return client.Execute(command)
 }
 
-// --- LOW-5: TCP compression placeholder ---
-// Compression support requires protocol-level framing changes.
-// This provides the configuration hook; actual compression logic
-// needs to be implemented in the transport layer.
+// --- LOW-5: TCP/TLS compression configuration ---
+// Compression is applied at connect time for tcp/tcps URIs when enabled
+// either through SetCompression(true) or an explicit URI option.
 
 func (client *Client) SetCompression(enabled bool) *Client {
 	if client == nil {

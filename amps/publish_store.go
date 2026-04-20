@@ -109,7 +109,7 @@ func (store *MemoryPublishStore) Store(command *Command) (uint64, error) {
 	defer store.lock.Unlock()
 	var wasEmpty = len(store.entries) == 0
 
-	sequence := uint64(0)
+	var sequence uint64
 	if command.header != nil && command.header.sequenceID != nil && *command.header.sequenceID > 0 {
 		sequence = *command.header.sequenceID
 	} else {

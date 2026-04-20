@@ -3,6 +3,7 @@ package amps
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,19 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+type trackingReadCloser struct {
+	closed bool
+}
+
+func (reader *trackingReadCloser) Read(buffer []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (reader *trackingReadCloser) Close() error {
+	reader.closed = true
+	return nil
+}
 
 func websocketTestURL(serverURL string, scheme string) *url.URL {
 	parsedURL, _ := url.Parse(serverURL)
@@ -126,5 +140,16 @@ func TestDialWebSocketWSSCoverage(t *testing.T) {
 
 	if !strings.HasPrefix(websocketTestURL(server.URL, "wss").String(), "wss://") {
 		t.Fatalf("expected WSS URL prefix")
+	}
+}
+
+func TestCloseHTTPResponseBodyCoverage(t *testing.T) {
+	closeHTTPResponseBody(nil)
+	closeHTTPResponseBody(&http.Response{})
+
+	body := &trackingReadCloser{}
+	closeHTTPResponseBody(&http.Response{Body: body})
+	if !body.closed {
+		t.Fatalf("expected response body to be closed")
 	}
 }

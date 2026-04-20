@@ -69,6 +69,10 @@ var (
 
 	queuePendingMu sync.Mutex
 	queuePending   = make(map[string][]*queuePendingMessage) // topic -> pending queue messages
+
+	leaseWatcherMu   sync.Mutex
+	leaseWatcherStop chan struct{}
+	leaseWatcherDone chan struct{}
 )
 
 func addQueueLease(topic, subID, sowKey, bookmark string, payload []byte, timestamp, messageType string, leasePeriod time.Duration) {
@@ -446,15 +450,53 @@ func selectQueueRedeliveryTarget(lease *queueLease) *subscription {
 	return nil
 }
 
+func stopLeaseWatcherLocked() {
+	if leaseWatcherStop == nil {
+		return
+	}
+	close(leaseWatcherStop)
+	done := leaseWatcherDone
+	leaseWatcherStop = nil
+	leaseWatcherDone = nil
+	leaseWatcherMu.Unlock()
+	<-done
+	leaseWatcherMu.Lock()
+}
+
 // StartLeaseWatcher starts a background goroutine to check for expired leases.
-func StartLeaseWatcher(interval time.Duration) {
+func StartLeaseWatcher(interval time.Duration) func() {
+	leaseWatcherMu.Lock()
+	defer leaseWatcherMu.Unlock()
+
+	stopLeaseWatcherLocked()
+
+	leaseWatcherStop = make(chan struct{})
+	leaseWatcherDone = make(chan struct{})
+	stopCh := leaseWatcherStop
+	doneCh := leaseWatcherDone
+
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			requeueExpiredLeases()
+		defer close(doneCh)
+		for {
+			select {
+			case <-ticker.C:
+				requeueExpiredLeases()
+			case <-stopCh:
+				return
+			}
 		}
 	}()
+
+	return StopLeaseWatcher
+}
+
+// StopLeaseWatcher stops the lease watcher if it is running.
+func StopLeaseWatcher() {
+	leaseWatcherMu.Lock()
+	defer leaseWatcherMu.Unlock()
+	stopLeaseWatcherLocked()
 }
 
 // ---------------------------------------------------------------------------

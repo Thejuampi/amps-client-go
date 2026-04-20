@@ -131,6 +131,7 @@ type socketOptions struct {
 	sendBufferSet    bool
 	receiveBuffer    int
 	receiveBufferSet bool
+	compression      string
 }
 
 type socketConfigurator interface {
@@ -170,6 +171,13 @@ func parseSocketOptions(values url.Values) (socketOptions, error) {
 			}
 			options.receiveBuffer = parsed
 			options.receiveBufferSet = true
+		case "compression":
+			switch strings.TrimSpace(value) {
+			case "zlib":
+				options.compression = "zlib"
+			default:
+				return socketOptions{}, fmt.Errorf("unsupported compression value %q", value)
+			}
 		default:
 			return socketOptions{}, fmt.Errorf("unsupported URI option %q", key)
 		}
@@ -1603,11 +1611,32 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		return NewError(InvalidURIError, err)
 	}
 	state := ensureClientState(client)
+	var defaultCompressionEnabled bool
 	if state != nil {
 		state.lock.Lock()
 		state.uri = uri
 		state.manualDisconnect = false
+		defaultCompressionEnabled = state.compressionEnabled
 		state.lock.Unlock()
+	}
+	var connectionCompression = socketOptions.compression
+	if connectionCompression == "" && defaultCompressionEnabled {
+		connectionCompression = "zlib"
+	}
+	switch parsedURI.Scheme {
+	case "tcp", "tcps":
+	case "ws", "wss":
+		if connectionCompression != "" {
+			return NewError(InvalidURIError, "compression is not supported for websocket transports")
+		}
+	case "unix":
+		if connectionCompression != "" {
+			return NewError(InvalidURIError, "compression is not supported for unix transports")
+		}
+	default:
+		if connectionCompression != "" {
+			return NewError(InvalidURIError, "compression is supported only for tcp and tcps transports")
+		}
 	}
 
 	var path = strings.TrimPrefix(parsedURI.Path, "/")
@@ -1690,6 +1719,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		}
 		client.connection = connection
 	}
+
 	if err := applySocketOptions(client.connection, socketOptions); err != nil {
 		_ = client.connection.Close()
 		client.connection = nil
@@ -1727,6 +1757,9 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 				return NewError(ProtocolError, "invalid HTTP preflight response")
 			}
 		}
+	}
+	if connectionCompression == "zlib" {
+		client.connection = newCompressedNetConn(client.connection)
 	}
 
 	client.resetDisconnectSignal()
@@ -2722,7 +2755,10 @@ func (client *Client) Disconnect() (err error) {
 		state.lock.Unlock()
 	}
 
-	if client.connected.Load() && client.connection != nil {
+	client.connectionStateLock.Lock()
+	var hasActiveConnection = client.connected.Load() && client.connection != nil
+	client.connectionStateLock.Unlock()
+	if hasActiveConnection {
 		heartbeatStop := NewCommand("heartbeat")
 		heartbeatStop.header.options = []byte("stop")
 		_ = client.send(heartbeatStop)
@@ -2788,7 +2824,7 @@ func NewClient(clientName ...string) *Client {
 		clientNameInternal = clientName[0]
 	} else {
 		randomBytes := make([]byte, 8)
-		randomValue := uint64(0)
+		var randomValue uint64
 		if _, err := cryptorand.Read(randomBytes); err != nil {
 			randomValue = uint64(time.Now().UnixNano()) // #nosec G115 -- unix nanoseconds are non-negative on supported platforms
 		} else {

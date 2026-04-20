@@ -460,7 +460,7 @@ func parseCBenchSample(output string) map[string]float64 {
 	return result
 }
 
-func writeJSON(path string, value any) error {
+func writeJSON[T any](path string, value T) error {
 	var bytes, err = json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err

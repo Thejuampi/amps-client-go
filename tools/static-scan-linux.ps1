@@ -64,6 +64,7 @@ if (-not (Test-Path $makefilePath)) {
 $staticcheckVersion = Get-MakeVariable -Path $makefilePath -Name "STATICCHECK_VERSION"
 $ineffassignVersion = Get-MakeVariable -Path $makefilePath -Name "INEFFASSIGN_VERSION"
 $errcheckVersion = Get-MakeVariable -Path $makefilePath -Name "ERRCHECK_VERSION"
+$golangciLintVersion = Get-MakeVariable -Path $makefilePath -Name "GOLANGCI_LINT_VERSION"
 $toolExtension = ""
 if ($env:OS -eq "Windows_NT") {
 	$toolExtension = ".exe"
@@ -73,6 +74,7 @@ $toolBin = Join-Path ([System.IO.Path]::GetTempPath()) "amps-static-scan-linux-t
 $staticcheckPath = Join-Path $toolBin ("staticcheck" + $toolExtension)
 $ineffassignPath = Join-Path $toolBin ("ineffassign" + $toolExtension)
 $errcheckPath = Join-Path $toolBin ("errcheck" + $toolExtension)
+$golangciLintPath = Join-Path $toolBin ("golangci-lint" + $toolExtension)
 
 $oldGOBIN = $env:GOBIN
 $oldGOOS = $env:GOOS
@@ -88,6 +90,7 @@ try {
 	Run-External "go" @("install", "honnef.co/go/tools/cmd/staticcheck@$staticcheckVersion")
 	Run-External "go" @("install", "github.com/gordonklaus/ineffassign@$ineffassignVersion")
 	Run-External "go" @("install", "github.com/kisielk/errcheck@$errcheckVersion")
+	Run-External "go" @("install", "github.com/golangci/golangci-lint/cmd/golangci-lint@$golangciLintVersion")
 
 	Step "Running Linux-target static analysis"
 	$env:GOOS = "linux"
@@ -97,6 +100,8 @@ try {
 	Run-External $staticcheckPath @("-checks=SA*", "./...")
 	Run-External $ineffassignPath @("./...")
 	Run-External $errcheckPath @("-ignoretests", "./...")
+	Run-External "go" @("run", "./tools/patterncheck", "./...")
+	Run-External $golangciLintPath @("run", "--config", ".golangci.yml", "./...")
 
 	Step "Linux-target static analysis passed"
 }

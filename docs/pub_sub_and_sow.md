@@ -8,6 +8,8 @@ This document covers stream and query entrypoints:
 - `DeltaSubscribe*`
 - `Sow*`
 - `SowAndSubscribe*`
+- `SOWHistoricalQueryAndSubscribe`
+- `SOWPaginatedQueryAndSubscribe`
 - `SowAndDeltaSubscribe*`
 - `Unsubscribe`
 - `SowDelete*`
@@ -23,6 +25,7 @@ This document covers stream and query entrypoints:
 | Method | Pattern | Notes |
 |---|---|---|
 | `Subscribe(...)` / `SubscribeAsync(...)` | Continuous stream | Optional content filter. |
+| `SubscribeWithMaxBacklog(...)` / `SubscribeAsyncWithMaxBacklog(...)` | Queue stream with explicit backlog request | Preferred helper for `max_backlog` queue subscriptions. |
 | `DeltaSubscribe(...)` / `DeltaSubscribeAsync(...)` | Delta stream | Endpoint SOW/delta behavior applies. |
 | `Unsubscribe(subID ...string)` | Stream termination | `all` when omitted. |
 
@@ -32,6 +35,8 @@ This document covers stream and query entrypoints:
 |---|---|---|
 | `Sow(...)` / `SowAsync(...)` | Snapshot query | Group end/completed ack. |
 | `SowAndSubscribe(...)` / `SowAndSubscribeAsync(...)` | Snapshot + stream | Remains active until unsubscribe. |
+| `SOWHistoricalQueryAndSubscribe(...)` | Bookmark replay + live stream | Remains active until unsubscribe. |
+| `SOWPaginatedQueryAndSubscribe(...)` | Paged snapshot + live stream | Remains active until unsubscribe. |
 | `SowAndDeltaSubscribe(...)` / `SowAndDeltaSubscribeAsync(...)` | Snapshot + delta stream | Remains active until unsubscribe. |
 | `SowDelete(...)` / `SowDeleteByData(...)` / `SowDeleteByKeys(...)` | Mutation + stats ack | Stats ack consumed by helper. |
 
@@ -52,17 +57,29 @@ For queue-specific ack semantics, see [Queue Ack Semantics](queue_ack_semantics.
 `Subscribe*`:
 
 - Continuous stream until `Unsubscribe`.
-- Initial command ack indicates route setup success/failure.
+- Initial command ack indicates route setup success or failure.
+- Queue consumers can request backlog using `SubscribeWithMaxBacklog(...)` or `SetMaxBacklog(...)`.
 
 `Sow*`:
 
 - Finite query stream.
-- Terminates on group-end/completed ack.
+- Terminates on group-end or completed ack.
 
 `SowAndSubscribe*` / `SowAndDeltaSubscribe*`:
 
 - SOW snapshot first, then live stream continuation.
 - Requires explicit unsubscribe for termination.
+
+`SOWHistoricalQueryAndSubscribe(...)`:
+
+- Uses `sow_and_subscribe` plus an explicit bookmark.
+- Intended for replay-then-live workflows.
+- Combine with `SetBookmarkNotFound*` or `FullyDurableSubscribe(...)` when bookmark semantics matter.
+
+`SOWPaginatedQueryAndSubscribe(...)`:
+
+- Uses `sow_and_subscribe` plus `top_n` and `skip_n`.
+- Useful for bounded bootstrap before the live stream continues.
 
 ## Stream Management Controls
 
@@ -75,14 +92,14 @@ Synchronous variants return `MessageStream` with these controls:
 
 ## Failure Modes
 
-- Entitlement errors -> command failure ack / returned error.
-- Invalid topic/filter -> command failure ack / returned error.
+- Entitlement errors -> command failure ack or returned error.
+- Invalid topic/filter -> command failure ack or returned error.
 - Connection loss -> disconnect flow; resubscribe depends on manager and retry settings.
 
 Recovery path:
 
 1. Validate session state with `GetConnectionInfo()`.
-2. Reconnect/logon as needed.
+2. Reconnect and logon as needed.
 3. Re-execute subscription or query.
 4. Re-verify route handler registration.
 
@@ -91,20 +108,20 @@ Recovery path:
 ```go
 stream, err := client.SowAndSubscribe("orders", "/status = 'open'")
 if err != nil {
- panic(err)
+	panic(err)
 }
 defer stream.Close()
 
 for stream.HasNext() {
- msg := stream.Next()
- if msg == nil {
-  break
- }
- // process snapshot or live update
+	msg := stream.Next()
+	if msg == nil {
+		break
+	}
+	// process snapshot or live update
 }
 
 if err := client.Unsubscribe(); err != nil {
- panic(err)
+	panic(err)
 }
 ```
 

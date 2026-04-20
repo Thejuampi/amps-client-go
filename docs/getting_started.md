@@ -20,6 +20,10 @@ Credentialed URI:
 
 - `tcp://user:password@host:port/amps/json`
 
+Compressed URI:
+
+- `tcp://host:port/amps/json?compression=zlib`
+
 ## Minimal Lifecycle
 
 1. Construct client.
@@ -30,13 +34,15 @@ Credentialed URI:
 
 ```go
 client := amps.NewClient("app")
+client.SetCompression(true)
+
 if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
- return err
+	return err
 }
 defer client.Close()
 
 if err := client.Logon(); err != nil {
- return err
+	return err
 }
 ```
 
@@ -44,16 +50,36 @@ if err := client.Logon(); err != nil {
 
 ```go
 _, err := client.SubscribeAsync(func(msg *amps.Message) error {
- _ = msg
- return nil
+	_ = msg
+	return nil
 }, "orders")
+```
+
+## Queue Backlog Example
+
+```go
+stream, err := client.SubscribeWithMaxBacklog("queue://orders", 8)
+if err != nil {
+	return err
+}
+defer stream.Close()
+```
+
+## Bookmark Replay Options
+
+```go
+command := amps.NewCommand("subscribe").
+	SetTopic("orders").
+	SetBookmark("1|1|").
+	SetFullyDurable(true).
+	SetBookmarkNotFoundFail()
 ```
 
 ## First Publish
 
 ```go
 if err := client.Publish("orders", `{"id": 1}`); err != nil {
- return err
+	return err
 }
 ```
 

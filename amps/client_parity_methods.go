@@ -1313,6 +1313,9 @@ func (client *Client) RawConnection() net.Conn {
 	}
 	client.connectionStateLock.Lock()
 	defer client.connectionStateLock.Unlock()
+	if wrapped, ok := client.connection.(interface{ NetConn() net.Conn }); ok {
+		return wrapped.NetConn()
+	}
 	return client.connection
 }
 

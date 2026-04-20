@@ -7,6 +7,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -186,7 +187,7 @@ func main() {
 		log.Fatalf("fakeamps: %v", err)
 	}
 	if modeErr := handleConfigModes(startup); modeErr != nil {
-		if modeErr == errStartupHandled {
+		if errors.Is(modeErr, errStartupHandled) {
 			return
 		}
 		log.Fatalf("fakeamps: %v", modeErr)

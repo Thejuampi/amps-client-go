@@ -22,6 +22,22 @@ Without these fields, auto-ack does not emit `ack` commands.
 | `AckMessage(message)` | Message containing topic/bookmark | Extracts and sends ack. |
 | `FlushAcks()` | None | Flushes buffered auto-acks by topic/subID batch key. |
 
+## Queue Backlog Controls
+
+Queue consumers that want more than one in-flight message should request a backlog explicitly.
+
+| API | Purpose |
+|---|---|
+| `SetMaxBacklog(n)` | Set `max_backlog=n` on a command. |
+| `QueueSetMaxBacklog(topic, n)` | Existing helper that sends a queue subscribe with backlog. |
+| `SubscribeWithMaxBacklog(...)` / `SubscribeAsyncWithMaxBacklog(...)` | Preferred convenience APIs for backlog-aware queue subscriptions. |
+
+Notes:
+
+- `SetMaxBacklog(0)` preserves an explicit `max_backlog=0` request.
+- The server may grant a smaller effective backlog than requested.
+- `max_backlog` is meaningful for queue-like subscriptions, not ordinary pub/sub topics.
+
 ## Auto-Ack Controls
 
 | Method | Purpose | Default |
@@ -51,15 +67,15 @@ Flush payload uses comma-separated bookmark values.
 
 ## Failure and Recovery
 
-- Failed ack send returns error from `FlushAcks()`/`Ack(...)`.
+- Failed ack send returns error from `FlushAcks()` or `Ack(...)`.
 - On disconnect, pending ack batches are cleared.
-- Auto-ack should be combined with retry/failover strategy where queue processing guarantees are required.
+- Auto-ack should be combined with retry or failover strategy where queue processing guarantees are required.
 
 Recovery path:
 
 1. Reconnect and logon.
 2. Re-establish queue subscription.
-3. Confirm auto-ack controls are still configured.
+3. Confirm auto-ack and backlog controls are still configured.
 4. Flush pending acknowledgements explicitly where required by runbook.
 
 ## Operational Tuning
@@ -72,19 +88,19 @@ Recovery path:
 
 ```go
 client.SetAutoAck(true).
- SetAckBatchSize(50).
- SetAckTimeout(500 * time.Millisecond)
+	SetAckBatchSize(50).
+	SetAckTimeout(500 * time.Millisecond)
 
-_, err := client.SubscribeAsync(func(msg *amps.Message) error {
- // process queue item; ack is deferred to auto-ack policy
- return nil
-}, "queue://orders")
+_, err := client.SubscribeAsyncWithMaxBacklog(func(msg *amps.Message) error {
+	// process queue item; ack is deferred to auto-ack policy
+	return nil
+}, "queue://orders", 8)
 if err != nil {
- panic(err)
+	panic(err)
 }
 
 if err := client.FlushAcks(); err != nil {
- panic(err)
+	panic(err)
 }
 ```
 

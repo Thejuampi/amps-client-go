@@ -9,8 +9,17 @@ Covers low-level hooks for transport, message routing fallback, and connection-s
 | API | Purpose |
 |---|---|
 | `RawConnection()` | Access underlying `net.Conn`. |
-| `SetTransportFilter(filter)` | Intercept inbound/outbound frames. |
+| `SetCompression(enabled)` | Configure default zlib transport compression for `tcp`/`tcps`. |
+| `SetTransportFilter(filter)` | Intercept inbound or outbound frames. |
 | `SetReceiveRoutineStartedCallback(callback)` | Callback when receive loop starts. |
+
+Compression contract:
+
+- Supported value: `compression=zlib`.
+- Supported schemes: `tcp://` and `tcps://`.
+- Unsupported schemes: `ws://`, `wss://`, `unix://`.
+- `SetCompression(true)` is a client default. `?compression=zlib` on the URI takes precedence.
+- Transport filters operate on normal AMPS frames after decompression on inbound and before compression on outbound.
 
 Transport filter contract:
 
@@ -62,19 +71,21 @@ State enum is defined in [Reference: Types and Handlers](reference_types_and_han
 | `SetHTTPPreflightHeaders(headers)` | Replace preflight header set. |
 | `ClearHTTPPreflightHeaders()` | Clear preflight headers. |
 
-## Example: Transport Filter and State Listener
+## Example: Compression, Filter, and State Listener
 
 ```go
-client.SetTransportFilter(func(direction amps.TransportFilterDirection, payload []byte) []byte {
- // preserve framing; optionally inspect bytes
- return payload
-}).SetReceiveRoutineStartedCallback(func() {
- // record receive loop startup
-})
+client.SetCompression(true).
+	SetTransportFilter(func(direction amps.TransportFilterDirection, payload []byte) []byte {
+		// preserve framing; optionally inspect bytes
+		return payload
+	}).
+	SetReceiveRoutineStartedCallback(func() {
+		// record receive loop startup
+	})
 
 client.AddConnectionStateListener(amps.ConnectionStateListenerFunc(func(state amps.ConnectionState) {
- // emit metrics or logs
- _ = state
+	// emit metrics or logs
+	_ = state
 }))
 ```
 

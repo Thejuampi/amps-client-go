@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 func TestQueueLeaseFunctions(t *testing.T) {
@@ -186,11 +188,23 @@ func TestRequeueExpiredLeasesRemovesExpired(t *testing.T) {
 
 func TestStartLeaseWatcher(t *testing.T) {
 	addQueueLease("orders", "sub1", "watch-key", "bm1", []byte(`{"id":1}`), "ts1", "json", 10*time.Millisecond)
-	StartLeaseWatcher(5 * time.Millisecond)
+	stopWatcher := StartLeaseWatcher(5 * time.Millisecond)
+	defer stopWatcher()
 	time.Sleep(30 * time.Millisecond)
 	if getQueueLease("watch-key") != nil {
 		t.Fatal("expected watcher to clear expired lease")
 	}
+}
+
+func TestStopLeaseWatcherStopsBackgroundLoop(t *testing.T) {
+	stopWatcher := StartLeaseWatcher(5 * time.Millisecond)
+	stopWatcher()
+
+	goleak.VerifyNone(t,
+		goleak.IgnoreCurrent(),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).readLoop"),
+		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+	)
 }
 
 func TestHandleQueueAckByBookmarkRemovesLease(t *testing.T) {

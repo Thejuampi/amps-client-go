@@ -471,7 +471,6 @@ func handleConnection(conn net.Conn) {
 					kv{k: "query_id", v: queryID}))
 			}
 
-			recordCount := 0
 			totalCount := 0
 			if sow != nil {
 				result := querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
@@ -481,7 +480,7 @@ func handleConnection(conn net.Conn) {
 				// Apply aggregation if requested.
 				if aggQ != nil && aggQ.hasAgg {
 					aggResults := executeAggQuery(aggQ, result.records)
-					recordCount = len(aggResults)
+					recordCount := len(aggResults)
 					if recordCount > 0 {
 						writer.send(buildGroupBegin(buf, queryID))
 						for i, payload := range aggResults {
@@ -493,7 +492,7 @@ func handleConnection(conn net.Conn) {
 						writer.send(buildGroupEnd(buf, queryID))
 					}
 				} else {
-					recordCount = len(result.records)
+					recordCount := len(result.records)
 					if recordCount > 0 {
 						writer.send(buildGroupBegin(buf, queryID))
 						for _, r := range result.records {
@@ -591,7 +590,6 @@ func handleConnection(conn net.Conn) {
 			}
 
 			// Send SOW snapshot.
-			recordCount := 0
 			totalCount := 0
 			if sow != nil {
 				result := querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
@@ -600,7 +598,7 @@ func handleConnection(conn net.Conn) {
 
 				if aggQ != nil && aggQ.hasAgg {
 					aggResults := executeAggQuery(aggQ, result.records)
-					recordCount = len(aggResults)
+					recordCount := len(aggResults)
 					if recordCount > 0 {
 						writer.send(buildGroupBegin(buf, queryID))
 						for i, payload := range aggResults {
@@ -612,7 +610,7 @@ func handleConnection(conn net.Conn) {
 						writer.send(buildGroupEnd(buf, queryID))
 					}
 				} else {
-					recordCount = len(result.records)
+					recordCount := len(result.records)
 					if recordCount > 0 {
 						writer.send(buildGroupBegin(buf, queryID))
 						for _, r := range result.records {

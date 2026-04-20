@@ -24,7 +24,7 @@ Covers `HAClient` behavior for reconnect, logon retry loop, chooser strategy, an
 
 | Method | Notes |
 |---|---|
-| `SetTimeout(...)` / `Timeout()` | Global deadline for connect/logon retry loop. |
+| `SetTimeout(...)` / `Timeout()` | Global deadline for connect and logon retry loop. |
 | `SetReconnectDelay(...)` / `ReconnectDelay()` | Fixed-delay policy. |
 | `SetReconnectDelayStrategy(...)` / `ReconnectDelayStrategy()` | Strategy-based delay policy. |
 | `SetServerChooser(...)` / `ServerChooser()` | URI selection policy and failure reporting. |
@@ -34,20 +34,26 @@ Covers `HAClient` behavior for reconnect, logon retry loop, chooser strategy, an
 
 After reconnect and logon:
 
-- Publish replay executes when publish store exists.
-- Resubscribe executes via subscription manager.
+- Publish replay executes when a publish store exists.
+- Resubscribe executes via the subscription manager.
 - Connection-state listeners receive state events.
+- Compression settings on the wrapped `Client` are reused for reconnect attempts.
 
 ## Failure Behavior
 
 - URI selection failure returns a `ConnectionError`.
 - Retry loop termination obeys `SetTimeout` when configured.
-- Delay strategy errors abort reconnect loop immediately.
+- Delay strategy errors abort the reconnect loop immediately.
 - Per-attempt failures are reported to `ServerChooser.ReportFailure(...)`.
 
 ## Constraints
 
-`HAClient.SetDisconnectHandler(...)` intentionally returns usage error. Disconnect behavior is HA-managed.
+`HAClient.SetDisconnectHandler(...)` intentionally returns a usage error. Disconnect behavior is HA-managed.
+
+Transport notes:
+
+- HA connect and logon uses the wrapped `Client.Connect(...)` path.
+- `SetCompression(true)` on `ha.Client()` applies to `tcp` and `tcps` reconnect attempts unless the selected URI already specifies `compression=zlib`.
 
 ## Failure Triage
 
@@ -62,17 +68,18 @@ Inspect:
 
 ```go
 ha := amps.NewHAClient("ha-example")
+ha.Client().SetCompression(true)
 ha.SetServerChooser(
- amps.NewDefaultServerChooser(
-  "tcp://amps-a:9000/amps/json",
-  "tcp://amps-b:9000/amps/json",
- ),
+	amps.NewDefaultServerChooser(
+		"tcp://amps-a:9000/amps/json?compression=zlib",
+		"tcp://amps-b:9000/amps/json?compression=zlib",
+	),
 ).SetReconnectDelayStrategy(
- amps.NewExponentialDelayStrategy(200*time.Millisecond, 5*time.Second, 2.0),
+	amps.NewExponentialDelayStrategy(200*time.Millisecond, 5*time.Second, 2.0),
 ).SetTimeout(30 * time.Second)
 
 if err := ha.ConnectAndLogon(); err != nil {
- panic(err)
+	panic(err)
 }
 defer ha.Disconnect()
 ```

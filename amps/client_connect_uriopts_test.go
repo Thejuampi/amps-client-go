@@ -14,6 +14,7 @@ func TestParseSocketOptionsRecognizesSupportedKeys(t *testing.T) {
 		"tcp_nodelay": {"true"},
 		"tcp_sndbuf":  {"8192"},
 		"tcp_rcvbuf":  {"4096"},
+		"compression": {"zlib"},
 	}
 
 	options, err := parseSocketOptions(values)
@@ -28,6 +29,9 @@ func TestParseSocketOptionsRecognizesSupportedKeys(t *testing.T) {
 	}
 	if !options.receiveBufferSet || options.receiveBuffer != 4096 {
 		t.Fatalf("receiveBuffer = %d, want 4096", options.receiveBuffer)
+	}
+	if options.compression != "zlib" {
+		t.Fatalf("compression = %q, want zlib", options.compression)
 	}
 }
 
@@ -47,6 +51,11 @@ func TestParseSocketOptionsRejectsInvalidValues(t *testing.T) {
 	_, err = parseSocketOptions(url.Values{"tcp_sndbuf": {"bad"}})
 	if err == nil {
 		t.Fatalf("parseSocketOptions should reject invalid integer values")
+	}
+
+	_, err = parseSocketOptions(url.Values{"compression": {"snappy"}})
+	if err == nil {
+		t.Fatalf("parseSocketOptions should reject unsupported compression values")
 	}
 }
 
@@ -89,5 +98,26 @@ func TestConnectAcceptsSupportedURIOptions(t *testing.T) {
 	case <-accepted:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("listener did not observe the connection")
+	}
+}
+
+func TestConnectRejectsCompressionOnNonTCPTransportSchemes(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	client := NewClient("uriopts-compression-nontcp")
+	uri := fmt.Sprintf("http://%s/amps?compression=zlib", listener.Addr().String())
+	err = client.Connect(uri)
+	if err == nil {
+		t.Fatalf("expected Connect to reject compression on non-tcp transport schemes")
+	}
+	if !strings.Contains(err.Error(), "InvalidURIError") {
+		t.Fatalf("Connect error = %q, want InvalidURIError", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "compression") {
+		t.Fatalf("Connect error = %q, want compression-related failure", err)
 	}
 }

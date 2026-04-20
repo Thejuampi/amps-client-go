@@ -12,6 +12,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func closeHTTPResponseBody(response *http.Response) {
+	if response == nil || response.Body == nil {
+		return
+	}
+	_ = response.Body.Close()
+}
+
 func (client *Client) dialWebSocket(ctx context.Context, parsedURI *url.URL) (net.Conn, error) {
 	var targetURL = "ws://" + parsedURI.Host + parsedURI.Path
 	if parsedURI.Scheme == "wss" {
@@ -50,8 +57,9 @@ func (client *Client) dialWebSocket(ctx context.Context, parsedURI *url.URL) (ne
 		state.lock.Unlock()
 	}
 
-	wsConn, _, err := dialer.DialContext(ctx, targetURL, requestHeader)
+	wsConn, response, err := dialer.DialContext(ctx, targetURL, requestHeader)
 	if err != nil {
+		closeHTTPResponseBody(response)
 		return nil, err
 	}
 

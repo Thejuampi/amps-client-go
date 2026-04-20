@@ -164,6 +164,14 @@ func TestConvenienceHelpersCoverage(t *testing.T) {
 		{name: "queue-cancel", run: func(c *Client) error { return c.QueueCancel("orders", "sub-1") }},
 		{name: "queue-expire", run: func(c *Client) error { return c.QueueExpire("orders", "1|1|") }},
 		{name: "queue-backlog", run: func(c *Client) error { return c.QueueSetMaxBacklog("orders", 25) }},
+		{name: "subscribe-backlog", run: func(c *Client) error {
+			_, err := c.SubscribeWithMaxBacklog("orders", 25, "/id > 10")
+			return err
+		}},
+		{name: "subscribe-backlog-async", run: func(c *Client) error {
+			_, err := c.SubscribeAsyncWithMaxBacklog(func(*Message) error { return nil }, "orders", 25, "/id > 10")
+			return err
+		}},
 		{name: "monitor-sow", run: func(c *Client) error { _, err := c.MonitorSOWStats(func(*Message) error { return nil }); return err }},
 		{name: "monitor-client", run: func(c *Client) error {
 			_, err := c.MonitorClientStatus(func(*Message) error { return nil })
@@ -186,12 +194,154 @@ func TestConvenienceHelpersCoverage(t *testing.T) {
 			_, err := c.FullyDurableSubscribe("orders", BookmarksRECENT, "/id > 10")
 			return err
 		}},
+		{name: "historical-and-subscribe", run: func(c *Client) error {
+			_, err := c.SOWHistoricalQueryAndSubscribe("orders", "1|1|", "/id > 10", 5)
+			return err
+		}},
+		{name: "paginated-and-subscribe", run: func(c *Client) error {
+			_, err := c.SOWPaginatedQueryAndSubscribe("orders", "/id > 10", 5, 2)
+			return err
+		}},
 	}
 	for _, tc := range convenienceCases {
 		if err := tc.run(client); err == nil {
 			t.Fatalf("expected disconnected error for %s convenience helper", tc.name)
 		}
 	}
+}
+
+func TestConvenienceHelpersBuildExpectedCommandShapes(t *testing.T) {
+	t.Run("subscribe-async-max-backlog", func(t *testing.T) {
+		client := NewClient("subscribe-backlog-shape")
+		conn := newTestConn()
+		client.connected.Store(true)
+		client.connection = conn
+
+		type subscribeResult struct {
+			routeID string
+			err     error
+		}
+		resultCh := make(chan subscribeResult, 1)
+		go func() {
+			routeID, err := client.SubscribeAsyncWithMaxBacklog(func(*Message) error { return nil }, "orders", 7, "/id > 10")
+			resultCh <- subscribeResult{routeID: routeID, err: err}
+		}()
+
+		routeID, handler := waitForAnyRouteHandler(t, client)
+		ack := AckTypeProcessed
+		_ = handler(&Message{header: &_Header{
+			command: CommandAck,
+			ackType: &ack,
+			status:  []byte("success"),
+		}})
+
+		subscribeOutcome := <-resultCh
+		if subscribeOutcome.err != nil {
+			t.Fatalf("SubscribeAsyncWithMaxBacklog returned error: %v", subscribeOutcome.err)
+		}
+		if subscribeOutcome.routeID != routeID {
+			t.Fatalf("routeID=%q want %q", subscribeOutcome.routeID, routeID)
+		}
+
+		payload := conn.WrittenPayload()
+		if !strings.Contains(payload, `"c":"subscribe"`) {
+			t.Fatalf("expected subscribe command, got %q", payload)
+		}
+		if !strings.Contains(payload, `"opts":"max_backlog=7"`) {
+			t.Fatalf("expected max_backlog option, got %q", payload)
+		}
+		if !strings.Contains(payload, `"filter":"/id > 10"`) {
+			t.Fatalf("expected filter in payload, got %q", payload)
+		}
+	})
+
+	t.Run("historical-query-and-subscribe", func(t *testing.T) {
+		client := NewClient("historical-subscribe-shape")
+		conn := newTestConn()
+		client.connected.Store(true)
+		client.connection = conn
+
+		type streamResult struct {
+			stream *MessageStream
+			err    error
+		}
+		resultCh := make(chan streamResult, 1)
+		go func() {
+			stream, err := client.SOWHistoricalQueryAndSubscribe("orders", "1|2|", "/id > 10", 5)
+			resultCh <- streamResult{stream: stream, err: err}
+		}()
+
+		_, handler := waitForAnyRouteHandler(t, client)
+		ack := AckTypeProcessed
+		_ = handler(&Message{header: &_Header{
+			command: CommandAck,
+			ackType: &ack,
+			status:  []byte("success"),
+		}})
+
+		historicalOutcome := <-resultCh
+		if historicalOutcome.err != nil || historicalOutcome.stream == nil {
+			t.Fatalf("SOWHistoricalQueryAndSubscribe stream=%v err=%v", historicalOutcome.stream, historicalOutcome.err)
+		}
+		if err := historicalOutcome.stream.Close(); err != nil {
+			t.Fatalf("Close() returned error: %v", err)
+		}
+
+		payload := conn.WrittenPayload()
+		if !strings.Contains(payload, `"c":"sow_and_subscribe"`) {
+			t.Fatalf("expected sow_and_subscribe command, got %q", payload)
+		}
+		if !strings.Contains(payload, `"bm":"1|2|"`) {
+			t.Fatalf("expected bookmark in payload, got %q", payload)
+		}
+		if !strings.Contains(payload, `"top_n":5`) {
+			t.Fatalf("expected top_n in payload, got %q", payload)
+		}
+	})
+
+	t.Run("paginated-query-and-subscribe", func(t *testing.T) {
+		client := NewClient("paginated-subscribe-shape")
+		conn := newTestConn()
+		client.connected.Store(true)
+		client.connection = conn
+
+		type paginatedResult struct {
+			stream *MessageStream
+			err    error
+		}
+		resultCh := make(chan paginatedResult, 1)
+		go func() {
+			stream, err := client.SOWPaginatedQueryAndSubscribe("orders", "/id > 10", 5, 2)
+			resultCh <- paginatedResult{stream: stream, err: err}
+		}()
+
+		_, handler := waitForAnyRouteHandler(t, client)
+		ack := AckTypeProcessed
+		_ = handler(&Message{header: &_Header{
+			command: CommandAck,
+			ackType: &ack,
+			status:  []byte("success"),
+		}})
+
+		paginatedOutcome := <-resultCh
+		if paginatedOutcome.err != nil || paginatedOutcome.stream == nil {
+			t.Fatalf("SOWPaginatedQueryAndSubscribe stream=%v err=%v", paginatedOutcome.stream, paginatedOutcome.err)
+		}
+		if err := paginatedOutcome.stream.Close(); err != nil {
+			t.Fatalf("Close() returned error: %v", err)
+		}
+
+		payload := conn.WrittenPayload()
+		if !strings.Contains(payload, `"c":"sow_and_subscribe"`) {
+			t.Fatalf("expected sow_and_subscribe command, got %q", payload)
+		}
+		if !strings.Contains(payload, `"top_n":5`) {
+			t.Fatalf("expected top_n in payload, got %q", payload)
+		}
+		if !strings.Contains(payload, `"skip_n":2`) {
+			t.Fatalf("expected skip_n in payload, got %q", payload)
+		}
+	})
 }
 
 func TestMessageTypeBuildersCoverage(t *testing.T) {

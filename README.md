@@ -25,7 +25,7 @@ Version: `0.8.17`
 AMPS is one of the fastest message brokers on the planet. Building a client worthy of that speed — in Go, without CGO — was the goal. This project delivers:
 
 - 🏎️ **Faster than C on the hot path** — Go client outperforms the official C library on header parsing and SOW batch processing at p95/p99  
-- 🔬 **253 parity-mapped symbols** — full `Client` and `HAClient` API surface, tested against C++ 5.3.5.1 behavior  
+- 🔬 **261 parity-mapped symbols** — full `Client` and `HAClient` API surface, tested against C++ 5.3.5.1 behavior  
 - 🛡️ **Production-grade quality gates** — 90%+ coverage, zero open parity gaps, enforced regression budgets on every PR  
 - ⚡ **Zero-allocation critical paths** — header parse, uint decode, timeout poll, and string conversion all run at 0 allocs/op  
 - 🔄 **HA failover built in** — reconnect strategies, bookmark replay, publish stores, and server chooser with no manual plumbing  
@@ -87,7 +87,7 @@ This isn't a minimal SDK. It's a full-surface client with behavior parity across
 
 | Dimension | Status |
 |:---|:---|
-| Parity symbols mapped | **253** (zero gaps) |
+| Parity symbols mapped | **261** (zero gaps) |
 | Behavior gaps open | **0** |
 | Coverage gate (aggregate) | **≥ 90%** |
 | Coverage gate (pure-functional) | **100%** |
@@ -101,9 +101,12 @@ This isn't a minimal SDK. It's a full-surface client with behavior parity across
 | Pub/sub and delta publish | `Publish`, `DeltaPublish`, `Subscribe*`, `DeltaSubscribe*` |
 | SOW queries | `Sow*`, `SowAndSubscribe*`, `SowAndDeltaSubscribe*`, `SowDelete*` |
 | Queue acknowledgement | `Ack`, `SetAutoAck`, `SetAckBatchSize`, `SetAckTimeout`, `FlushAcks` |
+| Queue backlog requests | `SetMaxBacklog`, `SubscribeWithMaxBacklog`, `SubscribeAsyncWithMaxBacklog` |
 | Bookmark replay | `BookmarkSubscribe*`, `BookmarkStore` implementations |
+| Bookmark replay controls | `SetBookmarkNotFound*`, `SetFullyDurable`, `SOWHistoricalQueryAndSubscribe` |
 | Publish persistence | `PublishStore` implementations, `PublishFlush` |
 | HA failover & reconnect | `HAClient.ConnectAndLogon`, server chooser, delay strategies |
+| TCP/TLS transport compression | `SetCompression`, `compression=zlib` on `tcp`/`tcps` URIs |
 | Kerberos auth (pure Go) | `amps/auth/kerberos.NewAuthenticator` |
 | Transport hooks | Transport filter, receive-start callback, global handlers |
 
@@ -199,14 +202,22 @@ func main() {
 ```bash
 make build
 make static-scan
+make leak-check
+make fuzz-smoke
 make test-race
 make test
 make integration-test
+make integration-live-smoke
+make stress-check
 make parity-check
 make coverage-check
+make perf-check
 make vuln-scan
+make preprod-check
 make release
 ```
+
+`make static-scan` now combines `go vet`, `staticcheck`, `ineffassign`, `errcheck`, the repo-specific `patterncheck` analyzer, and an expanded bug-focused `golangci-lint` lane.
 
 <details>
 <summary>Equivalent direct commands</summary>
@@ -216,20 +227,33 @@ go vet ./...
 go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 -checks=SA* ./...
 go run github.com/gordonklaus/ineffassign@v0.2.0 ./...
 go run github.com/kisielk/errcheck@v1.10.0 -ignoretests ./...
+go run ./tools/patterncheck ./...
+go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run --config .golangci.yml ./...
+go test -count=1 ./amps
+go test -count=1 ./tools/fakeamps -run '^(TestStartLeaseWatcher|TestStopLeaseWatcherStopsBackgroundLoop)$$'
+go test ./amps -run=^$$ -fuzz=FuzzParseHeader -fuzztime=5s
+go test ./amps -run=^$$ -fuzz=FuzzParseBookmarkToken -fuzztime=5s
+go test ./amps -run=^$$ -fuzz=FuzzParseSocketOptions -fuzztime=5s
+go test ./amps -run=^$$ -fuzz=FuzzCompositeMessageParser -fuzztime=5s
 go test -race ./... -skip Integration
+go test ./... -skip Integration
+go test ./... -run Integration
+go test -count=1 ./amps -run '^(TestIntegrationConnectLogonPublishSubscribe|TestIntegrationSOWAndSowAndSubscribeLifecycle|TestIntegrationQueueAutoAckBatching|TestIntegrationBookmarkResumeAcrossReconnect|TestIntegrationHAConnectAndLogonWithFailoverChooser)$$'
+go test -race -shuffle=on -count=20 ./... -skip Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
-go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/perfgate -baseline tools/perf_baseline.json
+go run ./tools/withtoolchain -toolchain go1.25.9+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
-Static analysis is enforced in CI with `make static-scan`, which now includes `errcheck` on non-test packages in addition to vet, staticcheck correctness checks, and ineffassign.
+Static analysis is enforced in CI with `make static-scan`, which includes vet, staticcheck correctness checks, ineffassign, errcheck on non-test packages, `patterncheck`, and an expanded `golangci-lint` lane for bug detectors such as aliasing hazards, unicode traps, resource leaks, loop-variable mistakes, compiler-directive misuse, shadowed variables, unused writes, nil/error contract mistakes, suspicious assignments, and duration arithmetic errors.
 
-Race coverage is enforced with `make test-race` in CI and release validation.
+Leak detection, fuzz smoke, and repeated shuffled race stress runs are exposed separately through `make leak-check`, `make fuzz-smoke`, and `make stress-check`, and combined in `make preprod-check`.
 
 `make vuln-scan` runs `govulncheck` as an advisory scan. Standard-library findings depend on the Go patch version in use, so the workflow records those results without making them a required merge blocker.
 
-GitHub CodeQL runs a separate `security-and-quality` code-scanning workflow on pull requests and scheduled scans.
+GitHub Actions now enforce an Ubuntu analysis job, a cross-platform test matrix, and a scheduled nightly pre-production workflow, with optional live AMPS smoke coverage whenever `AMPS_TEST_*` secrets are configured.
 
 Coverage gating is expected before merge for `./amps/...`: aggregate `>=90.0%`, pure-functional files `100.0%`, and I/O/stateful files `>=80.0%` as enforced by `tools/coveragegate/main.go`.
 

@@ -1,6 +1,9 @@
 package amps
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // CommandAck and related constants define protocol and client behavior values.
 const (
@@ -593,6 +596,132 @@ func assignStringBytes(destination *[]byte, value string) {
 	*destination = append((*destination)[:0], value...)
 }
 
+type commandOptionToken struct {
+	key      string
+	value    string
+	hasValue bool
+}
+
+func parseCommandOptions(options string) []commandOptionToken {
+	if options == "" {
+		return nil
+	}
+
+	var rawTokens = splitCommandOptions(options)
+	var tokens = make([]commandOptionToken, 0, len(rawTokens))
+	for _, rawToken := range rawTokens {
+		if key, value, found := strings.Cut(rawToken, "="); found {
+			tokens = append(tokens, commandOptionToken{
+				key:      key,
+				value:    value,
+				hasValue: true,
+			})
+			continue
+		}
+		tokens = append(tokens, commandOptionToken{key: rawToken})
+	}
+	return tokens
+}
+
+func splitCommandOptions(options string) []string {
+	if options == "" {
+		return nil
+	}
+
+	var tokens []string
+	var bracketDepth int
+	var tokenStart int
+	for index, r := range options {
+		switch r {
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case ',':
+			if bracketDepth == 0 {
+				token := strings.TrimSpace(options[tokenStart:index])
+				if token != "" {
+					tokens = append(tokens, token)
+				}
+				tokenStart = index + 1
+			}
+		}
+	}
+
+	token := strings.TrimSpace(options[tokenStart:])
+	if token != "" {
+		tokens = append(tokens, token)
+	}
+	return tokens
+}
+
+func writeCommandOptions(tokens []commandOptionToken) string {
+	if len(tokens) == 0 {
+		return ""
+	}
+
+	var buffer []byte
+	for _, token := range tokens {
+		if token.key == "" {
+			continue
+		}
+		if len(buffer) > 0 {
+			buffer = append(buffer, ',')
+		}
+		buffer = append(buffer, token.key...)
+		if token.hasValue {
+			buffer = append(buffer, '=')
+			buffer = append(buffer, token.value...)
+		}
+	}
+	return string(buffer)
+}
+
+func getCommandOption(options string, key string) (string, bool) {
+	for _, token := range parseCommandOptions(options) {
+		if token.key != key {
+			continue
+		}
+		if token.hasValue {
+			return token.value, true
+		}
+		return "", true
+	}
+	return "", false
+}
+
+func setCommandFlagOption(options string, key string, enabled bool) string {
+	var tokens = parseCommandOptions(options)
+	var kept = make([]commandOptionToken, 0, len(tokens)+1)
+	for _, token := range tokens {
+		if token.key == key {
+			continue
+		}
+		kept = append(kept, token)
+	}
+	if enabled {
+		kept = append(kept, commandOptionToken{key: key})
+	}
+	return writeCommandOptions(kept)
+}
+
+func setCommandValueOption(options string, key string, value string) string {
+	var tokens = parseCommandOptions(options)
+	var kept = make([]commandOptionToken, 0, len(tokens)+1)
+	for _, token := range tokens {
+		if token.key == key {
+			continue
+		}
+		kept = append(kept, token)
+	}
+	if value != "" {
+		kept = append(kept, commandOptionToken{key: key, value: value, hasValue: true})
+	}
+	return writeCommandOptions(kept)
+}
+
 // SetBookmark sets bookmark on the receiver.
 func (com *Command) SetBookmark(bookmark string) *Command {
 	var header = ensureCommandHeader(com)
@@ -692,6 +821,97 @@ func (com *Command) SetOptions(options string) *Command {
 	assignStringBytes(&header.options, options)
 	header.strictParityEscapeState = 0
 	return com
+}
+
+func (com *Command) SendKeys() (bool, bool) {
+	options, hasOptions := com.Options()
+	if !hasOptions {
+		return false, false
+	}
+	_, hasOption := getCommandOption(options, OptionSendKeys)
+	return hasOption, hasOption
+}
+
+func (com *Command) SetSendKeys(enabled bool) *Command {
+	if com == nil {
+		return nil
+	}
+	options, _ := com.Options()
+	return com.SetOptions(setCommandFlagOption(options, OptionSendKeys, enabled))
+}
+
+func (com *Command) FullyDurable() (bool, bool) {
+	options, hasOptions := com.Options()
+	if !hasOptions {
+		return false, false
+	}
+	_, hasOption := getCommandOption(options, OptionFullyDurable)
+	return hasOption, hasOption
+}
+
+func (com *Command) SetFullyDurable(enabled bool) *Command {
+	if com == nil {
+		return nil
+	}
+	options, _ := com.Options()
+	return com.SetOptions(setCommandFlagOption(options, OptionFullyDurable, enabled))
+}
+
+func (com *Command) MaxBacklog() (uint, bool) {
+	options, hasOptions := com.Options()
+	if !hasOptions {
+		return 0, false
+	}
+	value, hasValue := getCommandOption(options, "max_backlog")
+	if !hasValue {
+		return 0, false
+	}
+	parsed, ok := parseUintValue([]byte(value))
+	if !ok {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func (com *Command) SetMaxBacklog(maxBacklog uint) *Command {
+	if com == nil {
+		return nil
+	}
+	options, _ := com.Options()
+	return com.SetOptions(setCommandValueOption(options, "max_backlog", strconv.FormatUint(uint64(maxBacklog), 10)))
+}
+
+func (com *Command) BookmarkNotFound() (string, bool) {
+	options, hasOptions := com.Options()
+	if !hasOptions {
+		return "", false
+	}
+	return getCommandOption(options, "bookmark_not_found")
+}
+
+func (com *Command) SetBookmarkNotFound(action string) *Command {
+	if com == nil {
+		return nil
+	}
+	options, _ := com.Options()
+	switch action {
+	case "", "now", "epoch", "fail":
+		return com.SetOptions(setCommandValueOption(options, "bookmark_not_found", action))
+	default:
+		return com
+	}
+}
+
+func (com *Command) SetBookmarkNotFoundNow() *Command {
+	return com.SetBookmarkNotFound("now")
+}
+
+func (com *Command) SetBookmarkNotFoundEpoch() *Command {
+	return com.SetBookmarkNotFound("epoch")
+}
+
+func (com *Command) SetBookmarkNotFoundFail() *Command {
+	return com.SetBookmarkNotFound("fail")
 }
 
 // SetOrderBy sets order by on the receiver.

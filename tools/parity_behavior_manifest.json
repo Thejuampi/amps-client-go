@@ -23,6 +23,13 @@
       "status": "closed"
     },
     {
+      "id": "transport-compression-parity",
+      "domain": "transport",
+      "description": "tcp/tcps URI compression=zlib and Client.SetCompression(true) enable compressed transport for regular and HA clients while rejecting unsupported transports.",
+      "pass_criteria": "go test -count=1 ./amps/... passes transport compression coverage and parity docs describe the tcp/tcps-only contract.",
+      "status": "closed"
+    },
+    {
       "id": "wal-checkpoint-durability",
       "domain": "durability",
       "description": "File-backed stores use append/checkpoint persistence with crash-safe recovery semantics.",

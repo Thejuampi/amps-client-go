@@ -2,7 +2,6 @@ package amps
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -50,20 +49,18 @@ func (b *JSONMessageBuilder) Bytes() []byte {
 	if len(b.fields) == 0 {
 		return []byte("{}")
 	}
-	var buf strings.Builder
-	buf.WriteByte('{')
+	var buf = make([]byte, 0, len(b.fields)*16)
+	buf = append(buf, '{')
 	for i, f := range b.fields {
 		if i > 0 {
-			buf.WriteByte(',')
+			buf = append(buf, ',')
 		}
-		keyBytes, _ := json.Marshal(f.key)
-		buf.Write(keyBytes)
-		buf.WriteByte(':')
-		valBytes, _ := json.Marshal(f.val)
-		buf.Write(valBytes)
+		buf = strconv.AppendQuote(buf, f.key)
+		buf = append(buf, ':')
+		buf = strconv.AppendQuote(buf, f.val)
 	}
-	buf.WriteByte('}')
-	return []byte(buf.String())
+	buf = append(buf, '}')
+	return buf
 }
 
 // NewJSONBuilder returns a new JSONMessageBuilder.

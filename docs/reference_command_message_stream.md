@@ -11,6 +11,7 @@ Common getters:
 - `AckType`, `BatchSize`, `Bookmark`, `Command`, `CommandID`, `CorrelationID`, `Data`
 - `Expiration`, `Filter`, `Options`, `OrderBy`, `QueryID`, `SequenceID`
 - `SowKey`, `SowKeys`, `SubID`, `SubIDs`, `TopN`, `Topic`
+- `SendKeys`, `FullyDurable`, `MaxBacklog`, `BookmarkNotFound`
 
 Common setters:
 
@@ -18,11 +19,16 @@ Common setters:
 - `SetCorrelationID`, `SetData`, `SetExpiration`, `SetFilter`, `SetOptions`, `SetOrderBy`
 - `SetQueryID`, `SetSequenceID`, `SetSowKey`, `SetSowKeys`, `SetSubID`, `SetSubIDs`
 - `SetTopN`, `SetTopic`
+- `SetSendKeys`, `SetFullyDurable`, `SetMaxBacklog`, `SetBookmarkNotFound`
+- `SetBookmarkNotFoundNow`, `SetBookmarkNotFoundEpoch`, `SetBookmarkNotFoundFail`
 
 Notes:
 
 - Setters are chainable.
 - Command IDs are assigned by `Client.ExecuteAsync` when omitted.
+- `SetOptions(...)` remains the underlying escape hatch; the option helpers normalize the same `opts` field.
+- `SetMaxBacklog(0)` preserves an explicit `max_backlog=0` request.
+- `SetSendKeys(false)` and `SetFullyDurable(false)` clear their option tokens.
 
 ## Message
 

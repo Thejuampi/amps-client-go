@@ -1351,12 +1351,10 @@ func randomToken() (string, error) {
 func jsonError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error": message,
-	})
+	_, _ = w.Write(mustJSON(map[string]string{"error": message}))
 }
 
-func mustJSON(value interface{}) []byte {
+func mustJSON[T any](value T) []byte {
 	var payload, err = json.Marshal(value)
 	if err != nil {
 		return []byte(`{"type":"error","error":"marshal_failure"}`)

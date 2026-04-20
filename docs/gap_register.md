@@ -19,6 +19,7 @@ Current status:
 | `contract-parity-gating` | Parity contract | Open | Closed | `paritycheck` reports `OPEN_GAPS=0` |
 | `correctness-parser-builder-hardening` | Correctness | Open | Closed | Parser/builder tests pass in `./amps/...` |
 | `logon-timeout-enforcement` | Session | Open | Closed | `LogonParams.Timeout` behavior is covered by tests |
+| `transport-compression-parity` | Transport | Open | Closed | `compression=zlib` works on `tcp`/`tcps` and is rejected elsewhere |
 | `wal-checkpoint-durability` | Durability | Open | Closed | File stores recover with WAL/checkpoint replay |
 | `ha-recovery-ordering` | High availability | Open | Closed | Recovery order remains deterministic and test-covered |
 | `kerberos-pluggable-authenticator` | Authentication | Open | Closed | `amps/auth/kerberos` tests pass with capability reporting |

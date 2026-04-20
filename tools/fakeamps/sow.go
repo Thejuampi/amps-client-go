@@ -323,8 +323,8 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 	defer func() {
 		_ = root.Close()
 	}()
-	if err := root.MkdirAll("sow", fakeampsDataDirMode); err != nil {
-		log.Printf("fakeamps: sow save: mkdir failed: %v", err)
+	if mkdirErr := root.MkdirAll("sow", fakeampsDataDirMode); mkdirErr != nil {
+		log.Printf("fakeamps: sow save: mkdir failed: %v", mkdirErr)
 		return
 	}
 	sowRoot, err := root.OpenRoot("sow")
@@ -340,8 +340,8 @@ func (c *sowCache) saveTopicToDisk(topic string, records map[string]*sowRecord) 
 	var safeTopic = strings.ReplaceAll(topic, "\n", "")
 	safeTopic = strings.ReplaceAll(safeTopic, "\r", "")
 	if len(records) == 0 {
-		if err := sowRoot.Remove(fileName); err != nil && !os.IsNotExist(err) {
-			log.Printf("fakeamps: sow save: remove failed for topic=%s: %v", safeTopic, err)
+		if removeErr := sowRoot.Remove(fileName); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("fakeamps: sow save: remove failed for topic=%s: %v", safeTopic, removeErr)
 		}
 		return
 	}

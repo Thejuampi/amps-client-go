@@ -41,11 +41,15 @@ func init() {
 	serverStartTime = time.Now()
 }
 
-func jsonResponse(w http.ResponseWriter, v interface{}) {
+func jsonResponse[T any](w http.ResponseWriter, v T) {
 	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	var payload, err = json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		http.Error(w, "failed to encode JSON response", http.StatusInternalServerError)
+		return
+	}
+	payload = append(payload, '\n')
+	_, _ = w.Write(payload)
 }
 
 func handleAdminStatus(w http.ResponseWriter, r *http.Request) {

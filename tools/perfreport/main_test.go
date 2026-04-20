@@ -293,3 +293,15 @@ func TestWriteOwnerOnlyFileUsesRestrictedPermissions(t *testing.T) {
 		t.Fatalf("writeOwnerOnlyFile mode = %o, want 0600", info.Mode().Perm())
 	}
 }
+
+func TestWriteJSONMarshalFailure(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "report.json")
+	var err = writeJSON(path, map[string]any{"bad": make(chan int)})
+	if err == nil {
+		t.Fatalf("writeJSON should fail for unsupported JSON values")
+	}
+
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("writeJSON should not create output on marshal failure, stat err = %v", statErr)
+	}
+}
