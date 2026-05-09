@@ -19,7 +19,7 @@ jobs:
       - name: Check dependency review support
         id: support
         continue-on-error: true
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             try {
@@ -40,6 +40,6 @@ jobs:
 
       - name: Dependency review
         if: steps.support.outputs.supported == 'true'
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: moderate
