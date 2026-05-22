@@ -115,6 +115,38 @@ func TestDialWebSocketWithPreflightHeadersAndNetConnCoverage(t *testing.T) {
 	}
 }
 
+func TestWebSocketNetConnSetDeadlineAppliesToWrites(t *testing.T) {
+	var upgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		select {
+		case <-done:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(done)
+
+	client := NewClient("websocket-deadline")
+	conn, err := client.dialWebSocket(context.Background(), websocketTestURL(server.URL, "ws"))
+	if err != nil {
+		t.Fatalf("dialWebSocket() error = %v", err)
+	}
+	defer conn.Close()
+
+	if err = conn.SetDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetDeadline() error = %v", err)
+	}
+	if _, err = conn.Write([]byte("deadline must apply to writes")); err == nil {
+		t.Fatalf("Write() after expired SetDeadline succeeded")
+	}
+}
+
 func TestDialWebSocketWSSCoverage(t *testing.T) {
 	var upgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

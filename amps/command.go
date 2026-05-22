@@ -548,8 +548,8 @@ func (com *Command) SetAckType(ackType int) *Command {
 	if header == nil {
 		return nil
 	}
-	if ackType < AckTypeNone ||
-		ackType > (AckTypeReceived|AckTypeParsed|AckTypeProcessed|AckTypePersisted|AckTypeCompleted|AckTypeStats) {
+	var validAckTypes = AckTypeReceived | AckTypeParsed | AckTypeProcessed | AckTypePersisted | AckTypeCompleted | AckTypeStats
+	if ackType < AckTypeNone || ackType&^validAckTypes != 0 {
 		header.ackType = nil
 	} else {
 		header.ackType = &ackType
@@ -563,7 +563,8 @@ func (com *Command) AddAckType(ackType int) *Command {
 	if header == nil {
 		return nil
 	}
-	if ackType > AckTypeNone && ackType <= AckTypeStats {
+	var validAckTypes = AckTypeReceived | AckTypeParsed | AckTypeProcessed | AckTypePersisted | AckTypeCompleted | AckTypeStats
+	if ackType > AckTypeNone && ackType&^validAckTypes == 0 {
 		if header.ackType == nil {
 			header.ackType = &ackType
 		} else {

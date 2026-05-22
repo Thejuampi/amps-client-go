@@ -111,7 +111,12 @@ func (wc *websocketNetConn) RemoteAddr() net.Addr {
 }
 
 func (wc *websocketNetConn) SetDeadline(t time.Time) error {
-	return wc.conn.SetReadDeadline(t)
+	var readErr = wc.conn.SetReadDeadline(t)
+	var writeErr = wc.conn.SetWriteDeadline(t)
+	if readErr != nil {
+		return readErr
+	}
+	return writeErr
 }
 
 func (wc *websocketNetConn) SetReadDeadline(t time.Time) error {
