@@ -1331,13 +1331,27 @@ func (client *Client) onConnectionErrorWithCallbackMode(err error, asyncCallback
 
 	_ = client.clearRoutes()
 
+	errorHandler := client.errorHandler
+	disconnectHandler := client.disconnectHandler
+	var exceptionListener ExceptionListener
+	if state := ensureClientState(client); state != nil {
+		state.lock.Lock()
+		exceptionListener = state.exceptionListener
+		state.lock.Unlock()
+	}
+
 	callbacks := func() {
 		client.notifyConnectionState(ConnectionStateDisconnected)
-		client.onError(err)
+		if errorHandler != nil {
+			errorHandler(err)
+		}
+		if exceptionListener != nil {
+			exceptionListener.ExceptionThrown(err)
+		}
 		client.onInternalDisconnect(err)
 
-		if client.disconnectHandler != nil {
-			client.disconnectHandler(client, err)
+		if disconnectHandler != nil {
+			disconnectHandler(client, err)
 		}
 	}
 	if asyncCallbacks {
