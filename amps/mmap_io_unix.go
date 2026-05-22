@@ -101,10 +101,10 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 		return err
 	}
 
-	if err := file.Truncate(initialSize); err != nil {
+	if truncateErr := file.Truncate(initialSize); truncateErr != nil {
 		_ = file.Close()
 		_ = os.Remove(tmpPath)
-		return err
+		return truncateErr
 	}
 
 	mapped, err := syscall.Mmap(int(file.Fd()), 0, int(initialSize), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
