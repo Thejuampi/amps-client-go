@@ -1600,7 +1600,12 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	}
 
 	client.lock.Lock()
-	defer client.lock.Unlock()
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			client.lock.Unlock()
+		}
+	}()
 
 	parsedURI, err := url.Parse(uri)
 	if err != nil {
@@ -1764,9 +1769,11 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 
 	client.resetDisconnectSignal()
 	client.connected.Store(true)
-	client.notifyConnectionState(ConnectionStateConnected)
-
 	client.stopped.Store(false)
+
+	lockHeld = false
+	client.lock.Unlock()
+	client.notifyConnectionState(ConnectionStateConnected)
 	go client.readRoutine()
 
 	return nil

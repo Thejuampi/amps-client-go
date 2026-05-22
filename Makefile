@@ -9,7 +9,7 @@ GOLANGCI_LINT_VERSION ?= v1.64.8
 GOVULNCHECK_VERSION ?= v1.1.4
 GITLEAKS_VERSION ?= v8.30.1
 GOSEC_VERSION ?= v2.22.4
-PERF_GO_TOOLCHAIN ?= go1.25.9+auto
+PERF_GO_TOOLCHAIN ?= go1.25.10+auto
 COVERPROFILE ?= $(abspath coverage.out)
 FUZZTIME ?= 5s
 STRESS_COUNT ?= 20
@@ -162,7 +162,7 @@ markdown-fix:
 	$(MARKDOWNLINT) --fix
 
 vuln-scan:
-	$(GO) run ./tools/withtoolchain -toolchain go1.25.9+auto -- run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
+	$(GO) run ./tools/withtoolchain -toolchain go1.25.10+auto -- run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
 
 tidy:
 	$(GO) mod tidy

@@ -1151,6 +1151,8 @@ func TestQueuePullOnlyDeliversOnPullRequest(t *testing.T) {
 }
 
 func TestQueueDisconnectRequeuesLeaseImmediately(t *testing.T) {
+	resetTopicSubscribersForTest()
+	resetQueueStateForTest()
 	var oldSow = sow
 	var oldJournal = journal
 	var oldQueue = *flagQueue
@@ -1162,6 +1164,8 @@ func TestQueueDisconnectRequeuesLeaseImmediately(t *testing.T) {
 		sow = oldSow
 		journal = oldJournal
 		*flagQueue = oldQueue
+		resetTopicSubscribersForTest()
+		resetQueueStateForTest()
 	}()
 
 	var listener, err = net.Listen("tcp", "127.0.0.1:0")

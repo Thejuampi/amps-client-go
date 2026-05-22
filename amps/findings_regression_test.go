@@ -124,6 +124,55 @@ func TestClientDisconnectConnectionStateListenerCanReenterClientLock(t *testing.
 	}
 }
 
+func TestClientConnectConnectionStateListenerCanReenterClientLock(t *testing.T) {
+	originalDial := clientNetDialContext
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = ctx
+		_ = network
+		_ = address
+		return newTestConn(), nil
+	}
+
+	client := NewClient("connect-reentrant-listener")
+	client.SetErrorHandler(func(error) {})
+	listenerRan := make(chan struct{}, 1)
+	client.AddConnectionStateListener(ConnectionStateListenerFunc(func(state ConnectionState) {
+		if state != ConnectionStateConnected {
+			return
+		}
+		client.lock.Lock()
+		_ = client.connection
+		client.lock.Unlock()
+		listenerRan <- struct{}{}
+	}))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Connect("tcp://127.0.0.1:9007/amps/json")
+	}()
+
+	select {
+	case <-listenerRan:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected connection state listener to reenter client lock without deadlock")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Connect returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected Connect to return after listener reentry")
+	}
+
+	_ = client.Disconnect()
+}
+
 func TestZeroValueFIXBuilderAppendUsesDefaultSeparator(t *testing.T) {
 	var builder FixMessageBuilder
 	done := make(chan error, 1)

@@ -321,7 +321,6 @@ func main() {
 			continue
 		}
 		globalConnectionsAccepted.Add(1)
-		globalConnectionsCurrent.Add(1)
 		go handleConnection(conn)
 	}
 }
