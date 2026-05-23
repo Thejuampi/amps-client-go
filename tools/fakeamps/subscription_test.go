@@ -11,6 +11,24 @@ import (
 	"go.uber.org/goleak"
 )
 
+func resetQueueStateForTest() {
+	queueLeasesMu.Lock()
+	queueLeases = make(map[string]*queueLease)
+	queueLeasesMu.Unlock()
+
+	queueRedeliveryMu.Lock()
+	queueRedeliveryCursor = make(map[string]int)
+	queueRedeliveryMu.Unlock()
+
+	queueDeliveryMu.Lock()
+	queueDeliveryCursor = make(map[string]int)
+	queueDeliveryMu.Unlock()
+
+	queuePendingMu.Lock()
+	queuePending = make(map[string][]*queuePendingMessage)
+	queuePendingMu.Unlock()
+}
+
 func TestQueueLeaseFunctions(t *testing.T) {
 	// Test addQueueLease
 	addQueueLease("orders", "sub1", "order-1", "bm1", []byte(`{"id":1}`), "ts1", "json", 30*time.Second)

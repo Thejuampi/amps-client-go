@@ -189,6 +189,7 @@ func (client *Client) storePublishCommand(command *Command) error {
 
 	if sequence > 0 {
 		command.SetSequenceID(sequence)
+		command.AddAckType(AckTypePersisted)
 	}
 	return nil
 }

@@ -3,7 +3,9 @@ package amps
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/url"
 	"path/filepath"
 	"testing"
 	"time"
@@ -121,6 +123,235 @@ func TestClientDisconnectConnectionStateListenerCanReenterClientLock(t *testing.
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatalf("expected Disconnect to return after listener reentry")
+	}
+}
+
+func TestClientConnectConnectionStateListenerCanReenterClientLock(t *testing.T) {
+	originalDial := clientNetDialContext
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = ctx
+		_ = network
+		_ = address
+		return newTestConn(), nil
+	}
+
+	client := NewClient("connect-reentrant-listener")
+	client.SetErrorHandler(func(error) {})
+	listenerRan := make(chan struct{}, 1)
+	client.AddConnectionStateListener(ConnectionStateListenerFunc(func(state ConnectionState) {
+		if state != ConnectionStateConnected {
+			return
+		}
+		client.lock.Lock()
+		_ = client.connection
+		client.lock.Unlock()
+		listenerRan <- struct{}{}
+	}))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Connect("tcp://127.0.0.1:9007/amps/json")
+	}()
+
+	select {
+	case <-listenerRan:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected connection state listener to reenter client lock without deadlock")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Connect returned error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected Connect to return after listener reentry")
+	}
+
+	_ = client.Disconnect()
+}
+
+func TestSendWriteFailureErrorHandlerCanReenterClientLock(t *testing.T) {
+	client := NewClient("send-error-reentrant-handler")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+	_ = conn.Close()
+
+	handlerRan := make(chan struct{}, 1)
+	client.SetErrorHandler(func(error) {
+		client.lock.Lock()
+		_ = client.connection
+		client.lock.Unlock()
+		handlerRan <- struct{}{}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- client.PublishBytes("orders", []byte(`{"id":1}`))
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("expected publish write failure")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected PublishBytes to return without callback deadlock")
+	}
+
+	select {
+	case <-handlerRan:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected error handler to run and reenter client lock")
+	}
+}
+
+func TestHeartbeatAbsenceDisconnectsClient(t *testing.T) {
+	client := NewClient("heartbeat-absence-disconnect")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+	client.heartbeatTimestamp.Store(uint32(time.Now().Add(-10 * time.Second).Unix()))
+	client.heartbeatTimeout.Store(1)
+
+	var reported error
+	disconnected := make(chan struct{}, 1)
+	client.SetErrorHandler(func(err error) {
+		reported = err
+	})
+	client.SetDisconnectHandler(func(*Client, error) {
+		disconnected <- struct{}{}
+	})
+
+	client.onHeartbeatAbsence()
+
+	if client.connected.Load() {
+		t.Fatalf("expected heartbeat absence to mark client disconnected")
+	}
+	if reported == nil || reported.Error() != "ConnectionError: heartbeat absence error" {
+		t.Fatalf("expected connection heartbeat absence error, got %v", reported)
+	}
+	select {
+	case <-disconnected:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected heartbeat absence to invoke disconnect handler")
+	}
+}
+
+func TestSOWRecordWithoutLengthDoesNotReusePreviousLength(t *testing.T) {
+	client := NewClient("sow-stale-length")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+
+	var deliveries int
+	client.routes.Store("sub-sow", func(message *Message) error {
+		deliveries++
+		return nil
+	})
+	var reported error
+	client.SetErrorHandler(func(err error) {
+		reported = err
+	})
+
+	frame := buildRawFrame(
+		`{"c":"sow"}`,
+		[]byte(`{"c":"p","sub_id":"sub-sow","l":2}aa{"c":"p","sub_id":"sub-sow"}bb`),
+	)
+	conn.enqueueRead(frame)
+
+	client.readRoutine()
+
+	if deliveries != 1 {
+		t.Fatalf("expected only first SOW record to dispatch, got %d deliveries", deliveries)
+	}
+	if reported == nil || reported.Error() != "ProtocolError: SOW record missing message length" {
+		t.Fatalf("expected missing SOW record length error, got %v", reported)
+	}
+}
+
+type eofAfterFrameConn struct {
+	*testConn
+	frame []byte
+	used  bool
+}
+
+func newEOFAfterFrameConn(frame []byte) *eofAfterFrameConn {
+	return &eofAfterFrameConn{testConn: newTestConn(), frame: append([]byte(nil), frame...)}
+}
+
+func (connection *eofAfterFrameConn) Read(buffer []byte) (int, error) {
+	if connection.used {
+		return 0, io.EOF
+	}
+	connection.used = true
+	copy(buffer, connection.frame)
+	return len(connection.frame), io.EOF
+}
+
+func TestReadRoutineDispatchesCompleteFrameReturnedWithEOF(t *testing.T) {
+	client := NewClient("final-frame-with-eof")
+	frame := buildFrameFromCommand(t, NewCommand("publish").SetSubID("sub-final").SetTopic("orders").SetData([]byte(`{"id":1}`)))
+	conn := newEOFAfterFrameConn(frame)
+	client.connected.Store(true)
+	client.connection = conn
+
+	delivered := make(chan struct{}, 1)
+	client.routes.Store("sub-final", func(message *Message) error {
+		if string(message.Data()) == `{"id":1}` {
+			delivered <- struct{}{}
+		}
+		return nil
+	})
+	client.SetErrorHandler(func(error) {})
+
+	client.readRoutine()
+
+	select {
+	case <-delivered:
+	default:
+		t.Fatalf("expected complete frame returned with EOF to be dispatched")
+	}
+}
+
+func TestLogonWithTimeoutReturnsOnDisconnectSignal(t *testing.T) {
+	client := NewClient("logon-timeout-disconnect")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+	client.url, _ = url.Parse("tcp://127.0.0.1:9007/amps/json")
+	client.messageType = []byte("json")
+	client.resetDisconnectSignal()
+
+	result := make(chan error, 1)
+	go func() {
+		result <- client.Logon(LogonParams{Timeout: 1000})
+	}()
+
+	deadline := time.After(500 * time.Millisecond)
+	for len(conn.WrittenBytes()) == 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("expected Logon to write command before disconnect signal")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	client.signalDisconnect()
+
+	select {
+	case err := <-result:
+		if err == nil || err.Error() != "DisconnectedError: client disconnected while waiting for logon ack" {
+			t.Fatalf("expected disconnected logon error, got %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected Logon with timeout to return on disconnect signal")
 	}
 }
 

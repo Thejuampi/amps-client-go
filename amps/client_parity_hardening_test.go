@@ -143,6 +143,39 @@ func TestApplyAckBookkeepingDiscardPublishOnPersistedAck(t *testing.T) {
 	}
 }
 
+func TestPublishStoreRequestsPersistedAckForCleanup(t *testing.T) {
+	client := NewClient("publish-store-persisted-ack")
+	conn := newTestConn()
+	client.connected.Store(true)
+	client.connection = conn
+	client.SetPublishStore(NewMemoryPublishStore())
+
+	err := client.PublishBytes("orders", []byte(`{"id":1}`))
+	if err != nil {
+		t.Fatalf("PublishBytes returned error: %v", err)
+	}
+
+	payload := conn.WrittenPayload()
+	if !strings.Contains(payload, `"a":"persisted"`) {
+		t.Fatalf("expected publish store send path to request persisted ack, got %q", payload)
+	}
+}
+
+func TestPublishStorePreservesExistingAckTypesWhenAddingPersisted(t *testing.T) {
+	client := NewClient("publish-store-existing-acks")
+	client.SetPublishStore(NewMemoryPublishStore())
+	command := NewCommand("publish").SetTopic("orders").SetAckType(AckTypeProcessed)
+
+	if err := client.storePublishCommand(command); err != nil {
+		t.Fatalf("storePublishCommand returned error: %v", err)
+	}
+
+	ackType, ok := command.AckType()
+	if !ok || ackType != (AckTypeProcessed|AckTypePersisted) {
+		t.Fatalf("AckType() = (%d, %v), want processed|persisted", ackType, ok)
+	}
+}
+
 func TestExecuteAsyncFailedWriteHandlerOnSendFailure(t *testing.T) {
 	client := NewClient("failed-write")
 	conn := newTestConn()

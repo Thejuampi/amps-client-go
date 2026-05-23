@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"compress/zlib"
 	"io"
+	"net"
 	"testing"
+	"time"
 )
 
 func TestDecompressFrame(t *testing.T) {
@@ -50,6 +52,41 @@ func TestTopicMessageTypeHelpers(t *testing.T) {
 	defaultMT := getTopicMessageType("unknown")
 	if defaultMT != "json" {
 		t.Fatalf("expected default message type json got %q", defaultMT)
+	}
+}
+
+func TestHandleConnectionBalancesCurrentMetricWhenCalledDirectly(t *testing.T) {
+	previous := globalConnectionsCurrent.Load()
+	serverConn, clientConn := net.Pipe()
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		handleConnection(serverConn)
+	}()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if globalConnectionsCurrent.Load() == previous+1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := globalConnectionsCurrent.Load(); got != previous+1 {
+		_ = clientConn.Close()
+		<-done
+		t.Fatalf("current connections after direct handleConnection start = %d, want %d", got, previous+1)
+	}
+
+	_ = clientConn.Close()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("handleConnection did not return after peer close")
+	}
+
+	if got := globalConnectionsCurrent.Load(); got != previous {
+		t.Fatalf("current connections after direct handleConnection exit = %d, want %d", got, previous)
 	}
 }
 

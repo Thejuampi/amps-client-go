@@ -99,6 +99,7 @@ func getTopicMessageType(topic string) string {
 // ---------------------------------------------------------------------------
 
 func handleConnection(conn net.Conn) {
+	globalConnectionsCurrent.Add(1)
 	remoteAddr := conn.RemoteAddr().String()
 	baseConn := conn
 	var transportID = primaryTransportID()

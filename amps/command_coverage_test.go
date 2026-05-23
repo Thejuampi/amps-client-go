@@ -286,6 +286,11 @@ func TestCommandSettersAndGettersCoverage(t *testing.T) {
 	if got := command.GetAckType(); got != (AckTypeProcessed | AckTypeStats) {
 		t.Fatalf("unexpected additive ack type: %d", got)
 	}
+	command.SetAckType(AckTypeNone)
+	command.AddAckType(AckTypeCompleted | AckTypeStats)
+	if got := command.GetAckType(); got != (AckTypeCompleted | AckTypeStats) {
+		t.Fatalf("combined additive ack type ignored: %d", got)
+	}
 
 	command.SetBatchSize(0).
 		SetBookmark("").

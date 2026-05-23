@@ -34,12 +34,7 @@ func TestRepoRootFromFindsAncestorGoMod(t *testing.T) {
 }
 
 func TestRepoRootFromErrorsWithoutGoMod(t *testing.T) {
-	var cwd, err = os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-
-	var isolatedRoot, mkErr = os.MkdirTemp(filepath.VolumeName(cwd)+string(os.PathSeparator), "fakeampsgate-noroot-*")
+	var isolatedRoot, mkErr = os.MkdirTemp(t.TempDir(), "fakeampsgate-noroot-*")
 	if mkErr != nil {
 		t.Fatalf("mkdir temp: %v", mkErr)
 	}
@@ -48,7 +43,7 @@ func TestRepoRootFromErrorsWithoutGoMod(t *testing.T) {
 	})
 
 	var nested = filepath.Join(isolatedRoot, "a", "b")
-	err = os.MkdirAll(nested, 0755)
+	var err = os.MkdirAll(nested, 0755)
 	if err != nil {
 		t.Fatalf("mkdir nested: %v", err)
 	}

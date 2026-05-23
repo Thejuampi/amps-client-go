@@ -530,7 +530,7 @@ func (client *Client) send(command *Command) (err error) {
 	_, err = conn.Write(filtered)
 
 	if err != nil {
-		client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket error while sending message (%v)", err)))
+		client.onConnectionErrorAsync(NewError(ConnectionError, fmt.Sprintf("Socket error while sending message (%v)", err)))
 	}
 
 	return
@@ -563,6 +563,7 @@ func (client *Client) readRoutine() {
 		if client.stopped.Load() {
 			return
 		}
+		var pendingReadErr error
 
 		for client.receivePosition-client.readPosition < 4 {
 			if client.receivePosition == len(client.receiveBuffer) {
@@ -583,6 +584,10 @@ func (client *Client) readRoutine() {
 				batchReceiveTime = time.Now().UnixNano()
 			}
 			if err != nil {
+				if count > 0 && client.receivePosition-client.readPosition >= 4 {
+					pendingReadErr = err
+					break
+				}
 				if client.connected.Load() {
 					client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket Read Error: (%v)", err)))
 				}
@@ -633,6 +638,10 @@ func (client *Client) readRoutine() {
 					batchReceiveTime = time.Now().UnixNano()
 				}
 				if err != nil {
+					if count > 0 && endByte <= client.receivePosition {
+						pendingReadErr = err
+						break
+					}
 					if client.connected.Load() {
 						client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket Read Error: (%v)", err)))
 					}
@@ -656,6 +665,7 @@ func (client *Client) readRoutine() {
 			if client.message.header.command == CommandSOW {
 				for len(left) > 0 {
 
+					client.message.header.messageLength = nil
 					left, err = parseHeader(client.message, false, left)
 					if err != nil {
 						client.onConnectionError(NewError(ProtocolError, err))
@@ -707,6 +717,12 @@ func (client *Client) readRoutine() {
 			} else {
 				client.readPosition = endByte
 			}
+		}
+		if pendingReadErr != nil {
+			if client.connected.Load() {
+				client.onConnectionError(NewError(ConnectionError, fmt.Sprintf("Socket Read Error: (%v)", pendingReadErr)))
+			}
+			return
 		}
 	}
 }
@@ -1267,6 +1283,14 @@ func (client *Client) onError(err error) {
 }
 
 func (client *Client) onConnectionError(err error) {
+	client.onConnectionErrorWithCallbackMode(err, false)
+}
+
+func (client *Client) onConnectionErrorAsync(err error) {
+	client.onConnectionErrorWithCallbackMode(err, true)
+}
+
+func (client *Client) onConnectionErrorWithCallbackMode(err error, asyncCallbacks bool) {
 	client.connectionStateLock.Lock()
 	if client.stopped.Load() && !client.connected.Load() {
 		client.connectionStateLock.Unlock()
@@ -1292,7 +1316,6 @@ func (client *Client) onConnectionError(err error) {
 		_ = connection.Close()
 	}
 	client.signalDisconnect()
-	client.notifyConnectionState(ConnectionStateDisconnected)
 	if state := ensureClientState(client); state != nil {
 		state.lock.Lock()
 		if state.ackTimer != nil {
@@ -1308,11 +1331,33 @@ func (client *Client) onConnectionError(err error) {
 
 	_ = client.clearRoutes()
 
-	client.onError(err)
-	client.onInternalDisconnect(err)
+	errorHandler := client.errorHandler
+	disconnectHandler := client.disconnectHandler
+	var exceptionListener ExceptionListener
+	if state := ensureClientState(client); state != nil {
+		state.lock.Lock()
+		exceptionListener = state.exceptionListener
+		state.lock.Unlock()
+	}
 
-	if client.disconnectHandler != nil {
-		client.disconnectHandler(client, err)
+	callbacks := func() {
+		client.notifyConnectionState(ConnectionStateDisconnected)
+		if errorHandler != nil {
+			errorHandler(err)
+		}
+		if exceptionListener != nil {
+			exceptionListener.ExceptionThrown(err)
+		}
+		client.onInternalDisconnect(err)
+
+		if disconnectHandler != nil {
+			disconnectHandler(client, err)
+		}
+	}
+	if asyncCallbacks {
+		go callbacks()
+	} else {
+		callbacks()
 	}
 }
 
@@ -1342,7 +1387,7 @@ func (client *Client) onHeartbeatAbsence() {
 	client.heartbeatLock.Unlock()
 
 	if heartbeatMissing {
-		client.onError(errors.New("heartbeat absence error"))
+		client.onConnectionError(NewError(ConnectionError, "heartbeat absence error"))
 	}
 }
 
@@ -1600,7 +1645,12 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	}
 
 	client.lock.Lock()
-	defer client.lock.Unlock()
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			client.lock.Unlock()
+		}
+	}()
 
 	parsedURI, err := url.Parse(uri)
 	if err != nil {
@@ -1764,9 +1814,11 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 
 	client.resetDisconnectSignal()
 	client.connected.Store(true)
-	client.notifyConnectionState(ConnectionStateConnected)
-
 	client.stopped.Store(false)
+
+	lockHeld = false
+	client.lock.Unlock()
+	client.notifyConnectionState(ConnectionStateConnected)
 	go client.readRoutine()
 
 	return nil
@@ -1927,6 +1979,8 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 	if logonTimeout > 0 {
 		select {
 		case logonFailed = <-doneLoggingIn:
+		case <-client.currentDisconnectSignal():
+			logonFailed = NewError(DisconnectedError, "client disconnected while waiting for logon ack")
 		case <-time.After(logonTimeout):
 			logonFailed = NewError(TimedOutError, "logon timed out waiting for processed ack")
 		}
