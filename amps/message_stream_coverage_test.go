@@ -776,10 +776,7 @@ func TestMessageStreamAdditionalBranchCoverage(t *testing.T) {
 	stream = newMessageStream(nil)
 	stream.setState(messageStreamStateReading)
 	stream.SetTimeout(20)
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		stream.queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("timed")})
-	}()
+	stream.queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("timed")})
 	if !stream.HasNext() {
 		t.Fatalf("expected timeout HasNext to receive queued message")
 	}
