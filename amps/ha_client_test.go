@@ -255,9 +255,11 @@ func TestHAHandleDisconnectGuards(t *testing.T) {
 	ha.SetReconnectDelay(0)
 	ha.SetTimeout(10 * time.Millisecond)
 	ha.handleDisconnect(NewError(ConnectionError, "trigger reconnect"))
-	time.Sleep(30 * time.Millisecond)
-	reconnecting := ha.reconnecting.Load()
-	if reconnecting {
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for ha.reconnecting.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ha.reconnecting.Load() {
 		t.Fatalf("expected reconnecting flag to clear after reconnect attempt")
 	}
 }
