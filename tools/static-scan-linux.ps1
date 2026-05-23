@@ -75,6 +75,7 @@ $staticcheckPath = Join-Path $toolBin ("staticcheck" + $toolExtension)
 $ineffassignPath = Join-Path $toolBin ("ineffassign" + $toolExtension)
 $errcheckPath = Join-Path $toolBin ("errcheck" + $toolExtension)
 $golangciLintPath = Join-Path $toolBin ("golangci-lint" + $toolExtension)
+$patterncheckPath = Join-Path $toolBin ("patterncheck" + $toolExtension)
 
 $oldGOBIN = $env:GOBIN
 $oldGOOS = $env:GOOS
@@ -91,6 +92,7 @@ try {
 	Run-External "go" @("install", "github.com/gordonklaus/ineffassign@$ineffassignVersion")
 	Run-External "go" @("install", "github.com/kisielk/errcheck@$errcheckVersion")
 	Run-External "go" @("install", "github.com/golangci/golangci-lint/cmd/golangci-lint@$golangciLintVersion")
+	Run-External "go" @("build", "-o", $patterncheckPath, "./tools/patterncheck")
 
 	Step "Running Linux-target static analysis"
 	$env:GOOS = "linux"
@@ -100,7 +102,7 @@ try {
 	Run-External $staticcheckPath @("-checks=SA*", "./...")
 	Run-External $ineffassignPath @("./...")
 	Run-External $errcheckPath @("-ignoretests", "./...")
-	Run-External "go" @("run", "./tools/patterncheck", "./...")
+	Run-External $patterncheckPath @("./...")
 	Run-External $golangciLintPath @("run", "--config", ".golangci.yml", "./...")
 
 	Step "Linux-target static analysis passed"
