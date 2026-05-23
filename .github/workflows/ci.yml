@@ -128,7 +128,7 @@ jobs:
         run: make stress-check STRESS_COUNT=2
 
       - name: Performance gate
-        run: make perf-check
+        run: make perf-check PERF_BASELINE=tools/perf_baseline.github.json
 
       - name: Live broker smoke
         if: env.AMPS_TEST_URI != ''

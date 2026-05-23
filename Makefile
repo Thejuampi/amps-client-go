@@ -10,6 +10,7 @@ GOVULNCHECK_VERSION ?= v1.1.4
 GITLEAKS_VERSION ?= v8.30.1
 GOSEC_VERSION ?= v2.22.4
 PERF_GO_TOOLCHAIN ?= go1.25.10+auto
+PERF_BASELINE ?= tools/perf_baseline.json
 COVERPROFILE ?= $(abspath coverage.out)
 FUZZTIME ?= 5s
 STRESS_COUNT ?= 20
@@ -184,7 +185,7 @@ coverage-check:
 
 perf-check:
 	@$(ENSURE_FUZZ_TMPDIR)
-	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_GO_TOOLCHAIN) -- run ./tools/perfgate -baseline tools/perf_baseline.json
+	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_GO_TOOLCHAIN) -- run ./tools/perfgate -baseline $(PERF_BASELINE)
 
 release: preprod-check test test-race build integration-fakeamps parity-check
 	@echo Release checks passed for $(VERSION).

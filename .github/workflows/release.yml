@@ -115,7 +115,7 @@ jobs:
           fi
 
       - name: Release gates
-        run: make release-hosted FUZZTIME=2s STRESS_COUNT=3
+        run: make release-hosted FUZZTIME=2s STRESS_COUNT=3 PERF_BASELINE=tools/perf_baseline.github.json
 
       - name: Live broker smoke
         if: env.AMPS_TEST_URI != ''

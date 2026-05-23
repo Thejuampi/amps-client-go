@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseBenchOutputCollectsRepeatedSamples(t *testing.T) {
 	output := `
@@ -125,4 +130,40 @@ func TestRunPerfGateFailsWhenConfirmatoryRerunStillFails(t *testing.T) {
 	if attempts[1].Failures[0].Name != "BenchmarkFoo" {
 		t.Fatalf("unexpected failing benchmark %q", attempts[1].Failures[0].Name)
 	}
+}
+
+func TestHostedBaselinePreservesStrictBenchmarkCoverageAndAllocationBudgets(t *testing.T) {
+	strict := readBaselineForTest(t, "perf_baseline.json")
+	hosted := readBaselineForTest(t, "perf_baseline.github.json")
+
+	if len(hosted.Benchmarks) != len(strict.Benchmarks) {
+		t.Fatalf("expected hosted baseline to cover %d benchmarks, got %d", len(strict.Benchmarks), len(hosted.Benchmarks))
+	}
+	for name, strictBenchmark := range strict.Benchmarks {
+		hostedBenchmark, ok := hosted.Benchmarks[name]
+		if !ok {
+			t.Fatalf("hosted baseline is missing %s", name)
+		}
+		if hostedBenchmark.AllocsOp != strictBenchmark.AllocsOp {
+			t.Fatalf("%s hosted alloc budget changed: strict %.2f hosted %.2f", name, strictBenchmark.AllocsOp, hostedBenchmark.AllocsOp)
+		}
+		if hostedBenchmark.Group != strictBenchmark.Group {
+			t.Fatalf("%s hosted group changed: strict %q hosted %q", name, strictBenchmark.Group, hostedBenchmark.Group)
+		}
+	}
+}
+
+func readBaselineForTest(t *testing.T, name string) baselineFile {
+	t.Helper()
+
+	path := filepath.Join("..", name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var baseline baselineFile
+	if err = json.Unmarshal(data, &baseline); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return baseline
 }
