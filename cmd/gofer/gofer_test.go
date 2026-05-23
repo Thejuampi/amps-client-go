@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,9 +26,10 @@ type builtBinaries struct {
 }
 
 type fakeBroker struct {
-	addr string
-	uri  string
-	cmd  *exec.Cmd
+	addr     string
+	adminURL string
+	uri      string
+	cmd      *exec.Cmd
 }
 
 var (
@@ -89,7 +92,14 @@ func startFakeBroker(t *testing.T) *fakeBroker {
 	var addr = listener.Addr().String()
 	_ = listener.Close()
 
-	var cmd = exec.Command(built.fakeamps, "-addr", addr)
+	var adminListener, adminErr = net.Listen("tcp", "127.0.0.1:0")
+	if adminErr != nil {
+		t.Fatalf("listen admin: %v", adminErr)
+	}
+	var adminAddr = adminListener.Addr().String()
+	_ = adminListener.Close()
+
+	var cmd = exec.Command(built.fakeamps, "-addr", addr, "-admin", adminAddr)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start fakeamps: %v", err)
@@ -106,9 +116,10 @@ func startFakeBroker(t *testing.T) *fakeBroker {
 	}
 
 	var broker = &fakeBroker{
-		addr: addr,
-		uri:  "tcp://" + addr + "/amps/json",
-		cmd:  cmd,
+		addr:     addr,
+		adminURL: "http://" + adminAddr,
+		uri:      "tcp://" + addr + "/amps/json",
+		cmd:      cmd,
 	}
 	t.Cleanup(func() {
 		if broker.cmd != nil && broker.cmd.Process != nil {
@@ -117,6 +128,37 @@ func startFakeBroker(t *testing.T) *fakeBroker {
 		}
 	})
 	return broker
+}
+
+func waitForBrokerSubscription(t *testing.T, broker *fakeBroker, topic string, timeout time.Duration) bool {
+	t.Helper()
+
+	type subscriptionInfo struct {
+		Topic string `json:"topic"`
+	}
+	type subscriptionsResponse struct {
+		Subscriptions []subscriptionInfo `json:"subscriptions"`
+	}
+
+	var client = &http.Client{Timeout: 500 * time.Millisecond}
+	var deadline = time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		response, err := client.Get(broker.adminURL + "/admin/subscriptions")
+		if err == nil {
+			var decoded subscriptionsResponse
+			if decodeErr := json.NewDecoder(response.Body).Decode(&decoded); decodeErr == nil {
+				for _, sub := range decoded.Subscriptions {
+					if sub.Topic == topic {
+						_ = response.Body.Close()
+						return true
+					}
+				}
+			}
+			_ = response.Body.Close()
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
 }
 
 func runGofer(t *testing.T, stdin string, env []string, args ...string) (string, string, int) {
@@ -268,7 +310,15 @@ func testSubscribeQueueAckBacklogOnce(t *testing.T, broker *fakeBroker) bool {
 		done <- subscribeResult{stdout: stdout, stderr: stderr, code: code}
 	}()
 
-	time.Sleep(750 * time.Millisecond)
+	if !waitForBrokerSubscription(t, broker, "queue://orders.queue", 10*time.Second) {
+		select {
+		case result := <-done:
+			t.Logf("subscribe exited before registration: code=%d stderr=%s", result.code, result.stderr)
+		default:
+			t.Logf("subscribe did not register before timeout")
+		}
+		return false
+	}
 
 	for _, payload := range []string{`{"id":1}`, `{"id":2}`} {
 		_, stderr, code := runGofer(t, "", nil,
