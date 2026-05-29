@@ -1,6 +1,7 @@
 package amps
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -68,6 +69,55 @@ func TestConnectRejectsUnsupportedURIOptions(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "InvalidURIError") {
 		t.Fatalf("Connect error = %q, want InvalidURIError", err)
+	}
+}
+
+func TestConnectRejectsMalformedHostBeforeDial(t *testing.T) {
+	originalDial := clientNetDialContext
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = ctx
+		_ = network
+		_ = address
+		t.Fatalf("malformed URI should fail before dialing")
+		return nil, nil
+	}
+
+	client := NewClient("uriopts-malformed-host")
+	err := client.Connect("tcp://localhost:80:80/amps/json")
+	if err == nil || !strings.Contains(err.Error(), "InvalidURIError") {
+		t.Fatalf("Connect error = %v, want InvalidURIError", err)
+	}
+}
+
+func TestConnectAcceptsBracketedIPv6Host(t *testing.T) {
+	originalDial := clientNetDialContext
+	defer func() {
+		clientNetDialContext = originalDial
+	}()
+
+	var dialNetwork string
+	var dialAddress string
+	clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
+		_ = ctx
+		dialNetwork = network
+		dialAddress = address
+		return newTestConn(), nil
+	}
+
+	client := NewClient("uriopts-ipv6")
+	err := client.Connect("tcp://[::1]:9007/amps/json")
+	defer func() {
+		_ = client.Close()
+	}()
+	if err != nil {
+		t.Fatalf("Connect returned error: %v", err)
+	}
+	if dialNetwork != "tcp6" || dialAddress != "[::1]:9007" {
+		t.Fatalf("dial = %s %s, want tcp6 [::1]:9007", dialNetwork, dialAddress)
 	}
 }
 

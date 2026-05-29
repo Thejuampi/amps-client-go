@@ -23,7 +23,7 @@ Copilot-specific rules:
 ## Project Context
 
 - Module: `github.com/Thejuampi/amps-client-go`
-- Go version: `1.25`
+- Go version: minimum `1.25`, current release/performance toolchain `1.25.10`, performance candidate `1.26.3`
 - Public package: `amps`
 - Internal helpers: `amps/internal/...`
 - Fake broker: `tools/fakeamps`
@@ -51,6 +51,7 @@ Copilot-specific rules:
   - verify the likely regression path, not just correctness
 - If a simpler implementation is materially slower, it is not automatically the right implementation here.
 - `make perf-check` is mandatory for performance-sensitive changes and strongly preferred whenever changed code appears in the perf suite.
+- For toolchain-driven performance work, run `make perf-compare-toolchains` before refreshing `tools/perf_baseline.json` or recommending release. Keep Go 1.25.10 as the release/performance default unless Go 1.26.3 proves faster on the AMPS client benchmark set with no unexplained allocation regressions; neutral, noisy, or slower results are not release evidence.
 
 ## Mutation-First Development Policy
 
@@ -91,6 +92,8 @@ make vet
 make parity-check
 make coverage-check
 make perf-check
+make perf-compare-toolchains
+make compat-check
 make release
 ```
 
@@ -111,14 +114,16 @@ go vet ./...
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
-go run ./tools/withtoolchain -toolchain go1.25.9+auto -- go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- test ./... -skip Integration
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- build ./...
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 go run ./tools/perfgate -baseline tools/perf_baseline.json
 ```
 
 Code scanning stack:
 
 - `make static-scan`: Go correctness and API misuse (`go vet`, `staticcheck`, `ineffassign`, `errcheck`)
-- `make vuln-scan`: Go dependency and stdlib vulnerability scan on patched Go `1.25.9`
+- `make vuln-scan`: Go dependency and stdlib vulnerability scan on the current patched Go release toolchain
 - `make secret-scan`: secret leak detection with `gitleaks`
 - GitHub CodeQL: correctness and security queries on PRs, pushes, and schedule
 - GitHub dependency review: blocks PRs that introduce vulnerable dependencies

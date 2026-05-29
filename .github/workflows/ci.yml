@@ -77,10 +77,16 @@ jobs:
             go-version: "1.25.10"
             race: true
           - os: ubuntu-latest
+            go-version: "1.26.3"
+            race: false
+          - os: ubuntu-latest
             go-version: "stable"
             race: false
           - os: windows-latest
             go-version: "1.25.10"
+            race: false
+          - os: windows-latest
+            go-version: "1.26.3"
             race: false
     steps:
       - name: Checkout
@@ -128,7 +134,7 @@ jobs:
         run: make stress-check STRESS_COUNT=2
 
       - name: Performance gate
-        run: make perf-check PERF_BASELINE=tools/perf_baseline.github.json
+        run: make perf-check
 
       - name: Live broker smoke
         if: env.AMPS_TEST_URI != ''

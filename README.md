@@ -16,7 +16,7 @@
   <a href="https://github.com/Thejuampi/amps-client-go/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Thejuampi/amps-client-go?style=social"></a>
 </p>
 
-Version: `0.8.19`
+Version: `0.8.18`
 
 ---
 
@@ -243,8 +243,10 @@ go test -race -shuffle=on -count=20 ./... -skip Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
-go run ./tools/perfgate -baseline tools/perf_baseline.json
-go run ./tools/withtoolchain -toolchain go1.25.9+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+make compat-check
+make perf-compare-toolchains
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run ./tools/perfgate -baseline tools/perf_baseline.json
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
 Static analysis is enforced in CI with `make static-scan`, which includes vet, staticcheck correctness checks, ineffassign, errcheck on non-test packages, `patterncheck`, and an expanded `golangci-lint` lane for bug detectors such as aliasing hazards, unicode traps, resource leaks, loop-variable mistakes, compiler-directive misuse, shadowed variables, unused writes, nil/error contract mistakes, suspicious assignments, and duration arithmetic errors.
@@ -252,6 +254,8 @@ Static analysis is enforced in CI with `make static-scan`, which includes vet, s
 Leak detection, fuzz smoke, and repeated shuffled race stress runs are exposed separately through `make leak-check`, `make fuzz-smoke`, and `make stress-check`, and combined in `make preprod-check`.
 
 `make vuln-scan` runs `govulncheck` as an advisory scan. Standard-library findings depend on the Go patch version in use, so the workflow records those results without making them a required merge blocker.
+
+The module minimum stays at Go 1.25 for downstream compatibility, with Go 1.25.10 as the current release/performance toolchain. Go 1.26.3 is a performance candidate only after `make perf-compare-toolchains` proves a faster AMPS client on the same commit and host. That target writes raw Go 1.25.10 and Go 1.26.3 benchmark outputs plus a benchstat report under `.tmp/perf/`; neutral, noisy, or slower results are not a reason to recapture `tools/perf_baseline.json` or publish a performance release.
 
 GitHub Actions now enforce an Ubuntu analysis job, a cross-platform test matrix, and a scheduled nightly pre-production workflow, with optional live AMPS smoke coverage whenever `AMPS_TEST_*` secrets are configured.
 

@@ -69,6 +69,9 @@ Sub-benchmark dimensions order:
 1. Go baseline
 
 - Keep `tools/perf_baseline.json` for stable micro gates.
+- The module minimum is Go 1.25, and Go 1.25.10 remains the release/performance default unless same-host A/B proof shows Go 1.26.3 is faster.
+- Use `make perf-compare-toolchains` before a toolchain-driven performance release. It runs the baseline benchmark set with Go 1.25.10 and Go 1.26.3, stores raw outputs under `.tmp/perf/`, and writes a benchstat report.
+- Do not recapture `tools/perf_baseline.json` or publish a performance release when the Go 1.26.3 comparison is neutral, noisy, slower, or shows unexplained allocation regressions.
 - `tools/perfgate` evaluates repeated samples and uses the median result per benchmark to reduce single-run noise.
 - Use benchmark groups in `tools/perf_baseline.json` only for known volatile microbenchmarks; keep the default threshold for the rest.
 - Capture tails with `tools/perfreport capture-go` for broader profiles.
