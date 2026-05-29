@@ -41,6 +41,34 @@ func (chooser *delayedChooser) Add(uri string) ServerChooser {
 }
 func (chooser *delayedChooser) Remove(string) {}
 
+type blockingChooser struct {
+	uri     string
+	entered chan struct{}
+	release <-chan struct{}
+}
+
+func (chooser *blockingChooser) CurrentURI() string {
+	if chooser.entered != nil {
+		select {
+		case chooser.entered <- struct{}{}:
+		default:
+		}
+	}
+	if chooser.release != nil {
+		<-chooser.release
+	}
+	return chooser.uri
+}
+func (chooser *blockingChooser) CurrentAuthenticator() Authenticator { return nil }
+func (chooser *blockingChooser) ReportFailure(error, ConnectionInfo) {}
+func (chooser *blockingChooser) ReportSuccess(ConnectionInfo)        {}
+func (chooser *blockingChooser) Error() string                       { return "" }
+func (chooser *blockingChooser) Add(uri string) ServerChooser {
+	chooser.uri = uri
+	return chooser
+}
+func (chooser *blockingChooser) Remove(string) {}
+
 type failureClearingChooser struct {
 	uri string
 }
@@ -534,7 +562,17 @@ func TestHADisconnectDuringChooserLookupPreventsDial(t *testing.T) {
 	}
 
 	ha := NewHAClient("ha-chooser-disconnect")
-	ha.SetServerChooser(&delayedChooser{uri: "tcp://127.0.0.1:19000/amps/json", delay: 40 * time.Millisecond})
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	unblock := func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}
+	defer unblock()
+	ha.SetServerChooser(&blockingChooser{uri: "tcp://127.0.0.1:19000/amps/json", entered: entered, release: release})
 	ha.SetReconnectDelay(0)
 	ha.SetTimeout(0)
 
@@ -543,8 +581,13 @@ func TestHADisconnectDuringChooserLookupPreventsDial(t *testing.T) {
 		errCh <- ha.ConnectAndLogon()
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-entered:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected chooser lookup to start")
+	}
 	_ = ha.Disconnect()
+	unblock()
 
 	select {
 	case <-dialed:
