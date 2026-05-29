@@ -52,14 +52,8 @@ func (iterator *MessageStreamIterator) Next() (*Message, bool) {
 	if iterator == nil || iterator.stream == nil {
 		return nil, false
 	}
-	if !iterator.stream.HasNext() {
-		return nil, false
-	}
-	message := iterator.stream.Next()
-	if message == nil {
-		return nil, false
-	}
-	return message, true
+	var message = iterator.stream.Next()
+	return message, message != nil
 }
 
 // IsValid reports whether the stream handle is usable.
@@ -241,23 +235,27 @@ func (ms *MessageStream) handleWaitDequeueTimeoutResult(message *Message, ok boo
 		return false
 	}
 
-	ms.timedOut.Store(true)
-	return true
+	return false
 }
 
 func (ms *MessageStream) consumeConflateState() {
-	if ms == nil || ms.current == nil || ms.sowKeyMap == nil {
-		return
-	}
-
-	sowKey, isPresent := ms.current.SowKey()
-	if !isPresent {
+	if ms == nil || ms.current == nil {
 		return
 	}
 
 	ms.lock.Lock()
-	delete(ms.sowKeyMap, sowKey)
-	ms.lock.Unlock()
+	defer ms.lock.Unlock()
+	if ms.sowKeyMap == nil {
+		return
+	}
+	sowKey, isPresent := ms.current.SowKey()
+	if !isPresent || sowKey == "" {
+		return
+	}
+
+	if ms.sowKeyMap[sowKey] == ms.current {
+		delete(ms.sowKeyMap, sowKey)
+	}
 }
 
 func (ms *MessageStream) setCurrentFromQueue(message *Message) {
@@ -420,6 +418,37 @@ func (ms *MessageStream) setRunning() {
 	ms.setState(messageStreamStateReading)
 }
 
+func (ms *MessageStream) enqueueMessage(message *Message) {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+	ms.enqueueMessageLocked(message)
+}
+
+func (ms *MessageStream) enqueueMessageLocked(message *Message) {
+	var droppedMessages = ms.queue.enqueueWithDepth(message, ms.depth)
+	ms.removeConflatedMessagesLocked(droppedMessages)
+}
+
+func (ms *MessageStream) removeConflatedMessagesLocked(messages []*Message) {
+	if len(messages) == 0 {
+		return
+	}
+	if ms.sowKeyMap == nil {
+		return
+	}
+
+	for _, message := range messages {
+		if message == nil {
+			continue
+		}
+		sowKey, isPresent := message.SowKey()
+		if !isPresent || sowKey == "" || ms.sowKeyMap[sowKey] != message {
+			continue
+		}
+		delete(ms.sowKeyMap, sowKey)
+	}
+}
+
 func (ms *MessageStream) messageHandler(message *Message) (err error) {
 	if message == nil {
 		return nil
@@ -433,7 +462,7 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 	var copiedMessage = message.Copy()
 	var sowKey, hasSowKey = copiedMessage.SowKey()
 	if !hasSowKey || sowKey == "" {
-		ms.queue.enqueueWithDepth(copiedMessage, ms.depth)
+		ms.enqueueMessage(copiedMessage)
 		return nil
 	}
 
@@ -444,9 +473,9 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 		return nil
 	}
 	ms.sowKeyMap[sowKey] = copiedMessage
+	ms.enqueueMessageLocked(copiedMessage)
 	ms.lock.Unlock()
 
-	ms.queue.enqueueWithDepth(copiedMessage, ms.depth)
 	return nil
 }
 
@@ -522,18 +551,16 @@ func (queue *_MessageQueue) enqueue(message *Message) {
 	queue.enqueueWithDepth(message, 0)
 }
 
-func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
+func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) []*Message {
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
 	if queue.closed {
-		return
+		return nil
 	}
 
-	for depth != 0 && queue._length >= depth && !queue.closed {
-		queue.notFull.Wait()
-	}
-	if queue.closed {
-		return
+	var droppedMessages []*Message
+	for depth != 0 && queue._length >= depth {
+		droppedMessages = append(droppedMessages, queue.dequeueLocked())
 	}
 
 	if queue.capacity == queue._length {
@@ -546,6 +573,7 @@ func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) {
 	queue.ring[queue.last] = message
 	queue._length++
 	queue.notifyNotEmptyLocked()
+	return droppedMessages
 }
 
 func (queue *_MessageQueue) dequeueLocked() *Message {

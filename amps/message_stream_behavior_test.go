@@ -11,8 +11,8 @@ func TestMessageStreamTimeoutPath(t *testing.T) {
 	stream.SetTimeout(10)
 
 	start := time.Now()
-	if !stream.HasNext() {
-		t.Fatalf("expected timeout signal")
+	if stream.HasNext() {
+		t.Fatalf("expected timeout without message to report no next message")
 	}
 	elapsed := time.Since(start)
 	if elapsed < 8*time.Millisecond {
@@ -20,10 +20,6 @@ func TestMessageStreamTimeoutPath(t *testing.T) {
 	}
 	if elapsed > 300*time.Millisecond {
 		t.Fatalf("timeout returned too late: %v", elapsed)
-	}
-
-	if next := stream.Next(); next != nil {
-		t.Fatalf("expected nil message on timeout")
 	}
 }
 

@@ -186,8 +186,8 @@ func TestMessageStreamNextAndCloseCoverage(t *testing.T) {
 	if !stream.isConflating() {
 		t.Fatalf("expected conflating stream")
 	}
-	stream.sowKeyMap["k1"] = &Message{header: &_Header{sowKey: []byte("k1")}}
 	stream.current = &Message{header: &_Header{sowKey: []byte("k1")}}
+	stream.sowKeyMap["k1"] = stream.current
 	stream.consumeConflateState()
 	if _, exists := stream.sowKeyMap["k1"]; exists {
 		t.Fatalf("expected sow key removal after consume")
@@ -272,11 +272,8 @@ func TestMessageStreamHasNextAndMessageHandlerCoverage(t *testing.T) {
 	}
 	stream.setRunning()
 	stream.SetTimeout(5)
-	if !stream.HasNext() {
-		t.Fatalf("timeout branch should report has-next")
-	}
-	if stream.Next() != nil {
-		t.Fatalf("timed out next should be nil")
+	if stream.HasNext() {
+		t.Fatalf("timeout branch should report no next message")
 	}
 	stream.setState(messageStreamStateComplete)
 	if stream.HasNext() {
@@ -470,6 +467,33 @@ func TestMessageStreamConflateReplacesQueuedDuplicateSowKey(t *testing.T) {
 	}
 }
 
+func TestMessageStreamConflateDropCleanupBranches(t *testing.T) {
+	stream := newMessageStream(nil)
+	message := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k1")}, data: []byte("kept")}
+	stream.lock.Lock()
+	stream.removeConflatedMessagesLocked([]*Message{message})
+	stream.lock.Unlock()
+
+	stream.sowKeyMap = map[string]*Message{
+		"k1": message,
+		"k2": &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k2")}, data: []byte("mapped")},
+	}
+	stale := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k2")}, data: []byte("stale")}
+	blank := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("")}, data: []byte("blank")}
+	missing := &Message{header: &_Header{command: CommandPublish}, data: []byte("missing")}
+
+	stream.lock.Lock()
+	stream.removeConflatedMessagesLocked([]*Message{nil, missing, blank, stale, message})
+	stream.lock.Unlock()
+
+	if _, exists := stream.sowKeyMap["k1"]; exists {
+		t.Fatalf("expected matching dropped message to remove conflate entry")
+	}
+	if _, exists := stream.sowKeyMap["k2"]; !exists {
+		t.Fatalf("expected stale dropped message to preserve newer conflate entry")
+	}
+}
+
 func TestMessageStreamHasNextDrainsQueuedMessagesAfterComplete(t *testing.T) {
 	stream := newMessageStream(nil)
 	stream.queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("queued-after-complete")})
@@ -562,30 +586,16 @@ func TestMessageQueueCoverage(t *testing.T) {
 		t.Fatalf("unexpected waitDequeueTimeout message result")
 	}
 
-	// enqueueWithDepth blocking path.
+	// enqueueWithDepth bounded eviction path.
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("a")})
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")})
-	done := make(chan struct{})
-	go func() {
-		queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("c")}, 1)
-		close(done)
-	}()
-	time.Sleep(10 * time.Millisecond)
-	if _, err := queue.dequeue(); err != nil {
-		t.Fatalf("unexpected first dequeue while waiting on depth: %v", err)
+	dropped := queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("c")}, 1)
+	if len(dropped) != 2 {
+		t.Fatalf("expected bounded enqueue to drop two old messages, got %d", len(dropped))
 	}
-	select {
-	case <-done:
-		t.Fatalf("expected enqueueWithDepth to remain blocked at the exact depth limit")
-	default:
-	}
-	if _, err := queue.dequeue(); err != nil {
-		t.Fatalf("unexpected second dequeue while unblocking depth wait: %v", err)
-	}
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatalf("enqueueWithDepth did not unblock")
+	message, err := queue.dequeue()
+	if err != nil || string(message.Data()) != "c" {
+		t.Fatalf("expected bounded enqueue to keep newest message, got message=%#v err=%v", message, err)
 	}
 
 	queue.clear()
@@ -669,48 +679,27 @@ func TestMessageStreamCompletionAndClosedQueueCoverage(t *testing.T) {
 	queue = newQueue(2)
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("a")})
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")})
-	blocked := make(chan struct{}, 1)
-	go func() {
-		queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("c")}, 1)
-		blocked <- struct{}{}
-	}()
-	time.Sleep(10 * time.Millisecond)
+	dropped := queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("c")}, 1)
 	queue.close()
-	select {
-	case <-blocked:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("enqueueWithDepth did not unblock after queue close")
+	if len(dropped) != 2 {
+		t.Fatalf("expected bounded enqueue to evict old messages before close, got %d", len(dropped))
 	}
-	if queue.length() != 2 {
-		t.Fatalf("expected blocked enqueue to exit without appending when closed")
+	if queue.length() != 1 {
+		t.Fatalf("expected bounded enqueue to leave newest message before close")
 	}
 }
 
-func TestMessageQueueEnqueueWithDepthBlocksAtExactLimit(t *testing.T) {
+func TestMessageQueueEnqueueWithDepthEvictsAtExactLimit(t *testing.T) {
 	queue := newQueue(2)
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("a")})
 
-	blocked := make(chan struct{}, 1)
-	go func() {
-		queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")}, 1)
-		blocked <- struct{}{}
-	}()
-
-	time.Sleep(10 * time.Millisecond)
-	select {
-	case <-blocked:
-		t.Fatalf("expected enqueueWithDepth to block when queue length equals max depth")
-	default:
+	dropped := queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")}, 1)
+	if len(dropped) != 1 || string(dropped[0].Data()) != "a" {
+		t.Fatalf("expected bounded enqueue to evict oldest message")
 	}
-
-	if _, err := queue.dequeue(); err != nil {
-		t.Fatalf("unexpected dequeue while unblocking exact-depth wait: %v", err)
-	}
-
-	select {
-	case <-blocked:
-	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("expected enqueueWithDepth to unblock after dequeue")
+	message, err := queue.dequeue()
+	if err != nil || string(message.Data()) != "b" {
+		t.Fatalf("expected bounded enqueue to keep newest message, got message=%#v err=%v", message, err)
 	}
 }
 
