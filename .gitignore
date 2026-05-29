@@ -5,6 +5,7 @@ coverage.out
 # Local workspace/editor artifacts
 .vscode/
 .opencode/plans/
+.tmp/
 
 # Local scratch sources
 .tmp_*.cpp

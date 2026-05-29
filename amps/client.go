@@ -207,6 +207,30 @@ func parseSocketInt(raw string) (int, error) {
 	return value, nil
 }
 
+func validateParsedURIHost(parsedURI *url.URL) error {
+	var host = parsedURI.Host
+	if host == "" {
+		return nil
+	}
+	if strings.HasPrefix(host, "[") {
+		var closingBracket = strings.LastIndexByte(host, ']')
+		if closingBracket < 0 {
+			return fmt.Errorf("invalid URI host %q", host)
+		}
+		var suffix = host[closingBracket+1:]
+		if strings.Contains(suffix, ":") {
+			if _, _, err := net.SplitHostPort(host); err != nil {
+				return fmt.Errorf("invalid URI host %q", host)
+			}
+		}
+		return nil
+	}
+	if strings.Count(host, ":") > 1 {
+		return fmt.Errorf("invalid URI host %q", host)
+	}
+	return nil
+}
+
 func applySocketOptions(connection net.Conn, options socketOptions) error {
 	if connection == nil {
 		return nil
@@ -1655,6 +1679,9 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	parsedURI, err := url.Parse(uri)
 	if err != nil {
 		return NewError(InvalidURIError, err)
+	}
+	if validateErr := validateParsedURIHost(parsedURI); validateErr != nil {
+		return NewError(InvalidURIError, validateErr)
 	}
 	socketOptions, err := parseSocketOptions(parsedURI.Query())
 	if err != nil {

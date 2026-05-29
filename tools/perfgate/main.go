@@ -270,6 +270,13 @@ func runPerfGate(runner benchmarkRunner, baseline baselineFile, defaultRegressio
 	}
 }
 
+func finalFailureExitCode(finalFailures []gateFailure, reportOnly bool) int {
+	if len(finalFailures) == 0 || reportOnly {
+		return 0
+	}
+	return 2
+}
+
 func main() {
 	baselinePath := flag.String("baseline", "tools/perf_baseline.json", "path to benchmark baseline JSON")
 	packagePath := flag.String("package", "./amps", "package path for benchmarks")
@@ -279,6 +286,7 @@ func main() {
 	retryBenchtime := flag.String("retry-benchtime", "2s", "go test benchmark duration for confirmatory reruns")
 	retrySamples := flag.Int("retry-samples", 5, "number of benchmark samples to collect for confirmatory reruns")
 	maxRegression := flag.Float64("max-regression", 10.0, "max allowed regression percentage")
+	reportOnly := flag.Bool("report-only", false, "print benchmark output and threshold failures without failing on regressions")
 	flag.Parse()
 
 	data, err := os.ReadFile(*baselinePath)
@@ -325,9 +333,13 @@ func main() {
 		return
 	}
 
-	fmt.Println("perf gate: FAIL")
+	if *reportOnly {
+		fmt.Println("perf gate: REPORT ONLY")
+	} else {
+		fmt.Println("perf gate: FAIL")
+	}
 	for _, failure := range finalFailures {
 		fmt.Printf("- %s\n", failure.Message)
 	}
-	os.Exit(2)
+	os.Exit(finalFailureExitCode(finalFailures, *reportOnly))
 }

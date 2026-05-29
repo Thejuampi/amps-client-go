@@ -24,6 +24,8 @@ make stress-check
 make parity-check
 make coverage-check
 make perf-check
+make perf-compare-toolchains
+make compat-check
 make vuln-scan
 make preprod-check
 make release
@@ -52,8 +54,10 @@ go test -race -shuffle=on -count=20 ./... -skip Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
-go run ./tools/perfgate -baseline tools/perf_baseline.json
-go run ./tools/withtoolchain -toolchain go1.25.9+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- test ./... -skip Integration
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- build ./...
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run ./tools/perfgate -baseline tools/perf_baseline.json
+go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
 Windows pre-commit or pre-release parity with the CI static-analysis host:
@@ -105,6 +109,8 @@ Pre-production validation adds heavier checks that are useful before a cut or de
 - `make integration-live-smoke` to run the live-broker smoke subset when `AMPS_TEST_*` is configured
 
 `make release` now flows through the pre-production gate before the existing unit, race, build, fake broker, and parity steps.
+
+Toolchain compatibility and performance proof are separate gates. `make compat-check` verifies the Go 1.25.10 compatibility floor. `make perf-compare-toolchains` runs the hot-path benchmark set on Go 1.25.10 and Go 1.26.3, saves both raw outputs under `.tmp/perf/`, and writes `.tmp/perf/benchstat.txt`. Keep Go 1.25.10 as the release/performance default unless that comparison shows a meaningful Go 1.26.3 client speedup with no unexplained allocation regressions or important benchmark losses.
 
 ## CI and Release Automation
 

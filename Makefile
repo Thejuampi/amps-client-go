@@ -9,14 +9,28 @@ GOLANGCI_LINT_VERSION ?= v1.64.8
 GOVULNCHECK_VERSION ?= v1.1.4
 GITLEAKS_VERSION ?= v8.30.1
 GOSEC_VERSION ?= v2.22.4
-PERF_GO_TOOLCHAIN ?= go1.25.10+auto
-PERF_BASELINE ?= tools/perf_baseline.json
+BENCHSTAT_VERSION ?= latest
+MIN_GO_TOOLCHAIN ?= go1.25.10+auto
+CANDIDATE_GO_TOOLCHAIN ?= go1.26.3+auto
+PERF_GO_TOOLCHAIN ?= $(MIN_GO_TOOLCHAIN)
+VULN_GO_TOOLCHAIN ?= $(MIN_GO_TOOLCHAIN)
 COVERPROFILE ?= $(abspath coverage.out)
 FUZZTIME ?= 5s
 STRESS_COUNT ?= 20
 STRESS_SHUFFLE ?= on
 FUZZ_TMPDIR ?= $(abspath .tmp/go-tmp)
 GO_CACHE_DIR ?= $(abspath .tmp/go-cache)
+PERF_COMPARE_DIR ?= $(abspath .tmp/perf)
+PERF_COMPARE_OLD_TOOLCHAIN ?= $(MIN_GO_TOOLCHAIN)
+PERF_COMPARE_NEW_TOOLCHAIN ?= $(CANDIDATE_GO_TOOLCHAIN)
+PERF_COMPARE_OLD_LABEL ?= go1.25.10
+PERF_COMPARE_NEW_LABEL ?= go1.26.3
+PERF_COMPARE_BENCHTIME ?= 1s
+PERF_COMPARE_SAMPLES ?= 10
+PERF_COMPARE_MAX_REGRESSION ?= 1000000
+PERF_COMPARE_OLD_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_OLD_LABEL).bench.txt
+PERF_COMPARE_NEW_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_NEW_LABEL).bench.txt
+PERF_COMPARE_REPORT ?= $(PERF_COMPARE_DIR)/benchstat.txt
 STRESS_PKG ?= ./amps/... ./cmd/gofer ./internal/... ./tools/coveragegate ./tools/patterncheck ./tools/perfgate ./tools/perfreport ./tools/withtoolchain
 MARKDOWNLINT ?= npx --yes markdownlint-cli2
 MARKDOWNLINT_REPORT ?= $(abspath markdownlint-report.txt)
@@ -26,6 +40,7 @@ GOSEC_REPORT ?= $(abspath gosec-report.sarif)
 ifeq ($(OS),Windows_NT)
 PARITY_CHECK_IF_AVAILABLE = @if exist ..\amps-c++-client-5.3.5.1-Windows ( $(MAKE) parity-check ) else ( echo Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found. )
 ENSURE_FUZZ_TMPDIR = powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(FUZZ_TMPDIR)','$(GO_CACHE_DIR)' | Out-Null"
+ENSURE_PERF_COMPARE_DIR = powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(PERF_COMPARE_DIR)' | Out-Null"
 FUZZ_ENV = set "TMP=$(FUZZ_TMPDIR)" && set "TEMP=$(FUZZ_TMPDIR)" && set "TMPDIR=$(FUZZ_TMPDIR)" && set "GOTMPDIR=$(FUZZ_TMPDIR)" && set "GOCACHE=$(GO_CACHE_DIR)" &&
 else
 PARITY_CHECK_IF_AVAILABLE = @if [ -d ../amps-c++-client-5.3.5.1-Windows ]; then \
@@ -34,16 +49,18 @@ else \
 	echo "Skipping parity check: ../amps-c++-client-5.3.5.1-Windows not found."; \
 fi
 ENSURE_FUZZ_TMPDIR = mkdir -p "$(FUZZ_TMPDIR)" "$(GO_CACHE_DIR)"
+ENSURE_PERF_COMPARE_DIR = mkdir -p "$(PERF_COMPARE_DIR)"
 FUZZ_ENV = TMP=$(FUZZ_TMPDIR) TEMP=$(FUZZ_TMPDIR) TMPDIR=$(FUZZ_TMPDIR) GOTMPDIR=$(FUZZ_TMPDIR) GOCACHE=$(GO_CACHE_DIR)
 endif
 
-.PHONY: help build test test-race integration-test integration-fakeamps integration-live-smoke install fmt vet static-scan golangci-scan pattern-scan leak-check fuzz-smoke stress-check preprod-check preprod-check-hosted security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check release release-hosted
+.PHONY: help build test test-race compat-check integration-test integration-fakeamps integration-live-smoke install fmt vet static-scan golangci-scan pattern-scan leak-check fuzz-smoke stress-check preprod-check preprod-check-hosted security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check perf-compare-toolchains release release-hosted
 
 help:
 	@echo Available targets:
 	@echo   make build            Build all packages
 	@echo   make test             Run unit tests
 	@echo   make test-race        Run tests with race detector
+	@echo   make compat-check     Run unit tests and build with the minimum supported Go toolchain
 	@echo   make integration-test Run integration tests only (-run Integration)
 	@echo   make integration-fakeamps Run strict integration gates against ephemeral fakeamps endpoints
 	@echo   make install          Install packages with go install
@@ -72,6 +89,7 @@ help:
 	@echo   make parity-check     Validate C++->Go parity manifest mappings
 	@echo   make coverage-check   Run ./amps/... coverage gate checks
 	@echo   make perf-check       Run hot-path benchmark regression gate
+	@echo   make perf-compare-toolchains Compare hot-path benchmarks across minimum and preferred Go toolchains
 	@echo   make release          Run release verification pipeline
 
 build:
@@ -82,6 +100,10 @@ test:
 
 test-race:
 	$(GO) test -race $(GOFLAGS) $(PKG) -skip Integration
+
+compat-check:
+	$(GO) run ./tools/withtoolchain -toolchain $(MIN_GO_TOOLCHAIN) -- test $(GOFLAGS) $(PKG) -skip Integration
+	$(GO) run ./tools/withtoolchain -toolchain $(MIN_GO_TOOLCHAIN) -- build $(GOFLAGS) $(PKG)
 
 integration-test:
 	$(GO) test $(GOFLAGS) $(PKG) -run Integration
@@ -163,7 +185,7 @@ markdown-fix:
 	$(MARKDOWNLINT) --fix
 
 vuln-scan:
-	$(GO) run ./tools/withtoolchain -toolchain go1.25.10+auto -- run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
+	$(GO) run ./tools/withtoolchain -toolchain $(VULN_GO_TOOLCHAIN) -- run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(PKG)
 
 tidy:
 	$(GO) mod tidy
@@ -185,7 +207,15 @@ coverage-check:
 
 perf-check:
 	@$(ENSURE_FUZZ_TMPDIR)
-	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_GO_TOOLCHAIN) -- run ./tools/perfgate -baseline $(PERF_BASELINE)
+	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_GO_TOOLCHAIN) -- run ./tools/perfgate -baseline tools/perf_baseline.json
+
+perf-compare-toolchains:
+	@$(ENSURE_FUZZ_TMPDIR)
+	@$(ENSURE_PERF_COMPARE_DIR)
+	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_COMPARE_OLD_TOOLCHAIN) -- run ./tools/perfgate -baseline tools/perf_baseline.json -benchtime $(PERF_COMPARE_BENCHTIME) -samples $(PERF_COMPARE_SAMPLES) -retry-count 0 -max-regression $(PERF_COMPARE_MAX_REGRESSION) -report-only > "$(PERF_COMPARE_OLD_OUTPUT)"
+	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_COMPARE_NEW_TOOLCHAIN) -- run ./tools/perfgate -baseline tools/perf_baseline.json -benchtime $(PERF_COMPARE_BENCHTIME) -samples $(PERF_COMPARE_SAMPLES) -retry-count 0 -max-regression $(PERF_COMPARE_MAX_REGRESSION) -report-only > "$(PERF_COMPARE_NEW_OUTPUT)"
+	$(GO) run golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION) "$(PERF_COMPARE_OLD_OUTPUT)" "$(PERF_COMPARE_NEW_OUTPUT)" > "$(PERF_COMPARE_REPORT)"
+	@echo Perf comparison written to $(PERF_COMPARE_REPORT)
 
 release: preprod-check test test-race build integration-fakeamps parity-check
 	@echo Release checks passed for $(VERSION).
