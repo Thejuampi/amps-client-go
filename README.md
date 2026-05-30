@@ -26,7 +26,7 @@ AMPS is one of the fastest message brokers on the planet. Building a client wort
 
 - 🏎️ **Faster than C on the hot path** — Go client outperforms the official C library on header parsing and SOW batch processing at p95/p99  
 - 🔬 **261 parity-mapped symbols** — full `Client` and `HAClient` API surface, tested against C++ 5.3.5.1 behavior  
-- 🛡️ **Production-grade quality gates** — 90%+ coverage, zero open parity gaps, enforced regression budgets on every PR  
+- 🛡️ **Production-grade quality gates** — 90%+ coverage, zero open parity gaps, and blocking perf regression budgets on `main` pre-production and release workflows  
 - ⚡ **Zero-allocation critical paths** — header parse, uint decode, timeout poll, and string conversion all run at 0 allocs/op  
 - 🔄 **HA failover built in** — reconnect strategies, bookmark replay, publish stores, and server chooser with no manual plumbing  
 
@@ -44,11 +44,11 @@ These are the strict parity workloads we currently gate for C-vs-Go comparisons.
 
 | Benchmark | Go p95 (ns/op) | C p95 (ns/op) | Delta | Winner |
 |:---|---:|---:|---:|:---|
-| **Header Parse** (strict parity) | **18.41** | 22.38 | **-17.7%** | Go |
-| **SOW Batch Parse** (strict parity) | **93.34** | 123.14 | **-24.2%** | Go |
-| **Header Serialize** (strict parity) | **68.88** | 69.60 | **-1.0%** | Go |
-| **Publish Integration** (processed ack) | **101380** | 245025.75 | **-58.6%** | Go |
-| **Subscribe Integration** (processed ack) | **105067** | 225831 | **-53.5%** | Go |
+| **Header Parse** (strict parity) | **21.67** | 23.74 | **-8.7%** | Go |
+| **SOW Batch Parse** (strict parity) | **110.90** | 137.39 | **-19.3%** | Go |
+| **Header Serialize** (strict parity) | **67.19** | 73.05 | **-8.0%** | Go |
+| **Publish Integration** (processed ack) | **259300** | 364372.75 | **-28.8%** | Go |
+| **Subscribe Integration** (processed ack) | **144100** | 283117.70 | **-49.1%** | Go |
 
 This is 5/5 wins on the in-scope hot-path parity suite (p95).
 
@@ -60,23 +60,23 @@ Every hot path in the client is micro-benchmarked and tracked across commits. He
 
 | Hot Path | p95 (ns/op) | Allocs/Op |
 |:---|---:|---:|
-| Header parse | 21.44 | 0 |
-| SOW batch parse | 78.27 | 0 |
-| Route dispatch (single) | 139.0 | — |
-| Route dispatch (many subscriptions) | 137.7 | — |
-| Frame decode → dispatch | 177.3 | — |
-| Publish send (full frame) | 48.7 | 0 |
-| Uint parse (bytes) | 8.87 | 0 |
-| Stream dequeue | 75.39 | — |
-| Stream timeout poll | 12.79 | 0 |
-| Header reset | 0.13 | 0 |
-| Ack serialization | 21.79 | — |
+| Header parse | 19.22 | 0 |
+| SOW batch parse | 73.66 | 0 |
+| Route dispatch (single) | 54.82 | — |
+| Route dispatch (many subscriptions) | 57.09 | — |
+| Frame decode → dispatch | 77.28 | — |
+| Publish send (full frame) | 45.36 | 0 |
+| Uint parse (bytes) | 6.91 | 0 |
+| Stream dequeue | 32.29 | — |
+| Stream timeout poll | 10.81 | 0 |
+| Header reset | 0.11 | 0 |
+| Ack to string | 0.11 | — |
 
 ### How We Measure
 
 - **Methodology**: `go test -bench=. -benchtime=1s -count=20` with nearest-rank percentile extraction  
 - **C baselines**: compiled from the official AMPS C client library, run with the same fake server and payload profiles  
-- **Regression gates**: PRs fail on >7% ns/op regression or >5% allocs/op regression against committed baselines  
+- **Regression gates**: the blocking perf gate runs in `main` pre-production and release workflows against committed baselines; pull requests still run the broader scan, test, and coverage matrix  
 - **Artifacts**: all raw data committed in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json), and [`tools/perf_side_by_side_baseline.json`](tools/perf_side_by_side_baseline.json)
 
 ---
