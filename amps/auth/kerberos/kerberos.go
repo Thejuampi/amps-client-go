@@ -27,11 +27,11 @@ type Config struct {
 }
 
 type kerberosAuthenticator struct {
-	config      Config
-	lastReason  string
-	lastToken   atomic.Value
-	retryCount  atomic.Uint64
-	completed   atomic.Bool
+	config     Config
+	lastReason string
+	lastToken  atomic.Value
+	retryCount atomic.Uint64
+	completed  atomic.Bool
 }
 
 // NewAuthenticator creates a Kerberos compatibility authenticator.

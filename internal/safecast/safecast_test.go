@@ -37,7 +37,7 @@ func TestUnsignedAndSignedWidthChecks(t *testing.T) {
 		t.Fatalf("Uint16FromIntChecked(-1) = ok, want negative failure")
 	}
 
-	if got, ok := Uint32FromIntChecked(1<<20); !ok || got != 1<<20 {
+	if got, ok := Uint32FromIntChecked(1 << 20); !ok || got != 1<<20 {
 		t.Fatalf("Uint32FromIntChecked(1<<20) = %d, %v, want 1<<20, true", got, ok)
 	}
 	if _, ok := Int32FromIntChecked(math.MaxInt32 + 1); ok {

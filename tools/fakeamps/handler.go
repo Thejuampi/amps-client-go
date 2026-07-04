@@ -99,6 +99,9 @@ func getTopicMessageType(topic string) string {
 // ---------------------------------------------------------------------------
 
 func handleConnection(conn net.Conn) {
+	activeHandlers.Add(1)
+	defer activeHandlers.Done()
+
 	globalConnectionsCurrent.Add(1)
 	remoteAddr := conn.RemoteAddr().String()
 	baseConn := conn
@@ -306,8 +309,9 @@ func handleConnection(conn net.Conn) {
 			writer.send(buildAck(buf, "received", commandID, "success"))
 		}
 
-		if sow != nil {
-			var expired = sow.gcExpiredRecords()
+		var currentSOW = getSOW()
+		if currentSOW != nil {
+			var expired = currentSOW.gcExpiredRecords()
 			notifyExpiredSOWRecords(expired)
 		}
 
@@ -430,9 +434,10 @@ func handleConnection(conn net.Conn) {
 			}
 
 			// Bookmark replay.
-			if isBookmarkSub && journal != nil {
+			var currentJournal = getJournal()
+			if isBookmarkSub && currentJournal != nil {
 				afterSeq := parseBookmarkSeq(bookmark)
-				entries := journal.replayFrom(topic, afterSeq)
+				entries := currentJournal.replayFrom(topic, afterSeq)
 				mt := getTopicMessageType(topic)
 				var completedBookmark = bookmark
 				for _, e := range entries {
@@ -472,39 +477,36 @@ func handleConnection(conn net.Conn) {
 					kv{k: "query_id", v: queryID}))
 			}
 
-			totalCount := 0
-			if sow != nil {
-				result := querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
-				totalCount = result.totalCount
-				mt := getTopicMessageType(topic)
+			var sowResult = querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
+			totalCount := sowResult.totalCount
+			mt := getTopicMessageType(topic)
 
-				// Apply aggregation if requested.
-				if aggQ != nil && aggQ.hasAgg {
-					aggResults := executeAggQuery(aggQ, result.records)
-					recordCount := len(aggResults)
-					if recordCount > 0 {
-						writer.send(buildGroupBegin(buf, queryID))
-						for i, payload := range aggResults {
-							key := "agg-" + strconv.Itoa(i)
-							seq := globalBookmarkSeq.Add(1)
-							bm := makeBookmark(seq)
-							writer.send(buildSOWRecord(buf, topic, queryID, key, bm, mt, payload))
-						}
-						writer.send(buildGroupEnd(buf, queryID))
+			// Apply aggregation if requested.
+			if aggQ != nil && aggQ.hasAgg {
+				aggResults := executeAggQuery(aggQ, sowResult.records)
+				recordCount := len(aggResults)
+				if recordCount > 0 {
+					writer.send(buildGroupBegin(buf, queryID))
+					for i, payload := range aggResults {
+						key := "agg-" + strconv.Itoa(i)
+						seq := globalBookmarkSeq.Add(1)
+						bm := makeBookmark(seq)
+						writer.send(buildSOWRecord(buf, topic, queryID, key, bm, mt, payload))
 					}
-				} else {
-					recordCount := len(result.records)
-					if recordCount > 0 {
-						writer.send(buildGroupBegin(buf, queryID))
-						for _, r := range result.records {
-							recPayload := r.payload
-							if aggQ != nil {
-								recPayload = projectFieldsFromQuery(r.payload, aggQ)
-							}
-							writer.send(buildSOWRecord(buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload))
+					writer.send(buildGroupEnd(buf, queryID))
+				}
+			} else {
+				recordCount := len(sowResult.records)
+				if recordCount > 0 {
+					writer.send(buildGroupBegin(buf, queryID))
+					for _, r := range sowResult.records {
+						recPayload := r.payload
+						if aggQ != nil {
+							recPayload = projectFieldsFromQuery(r.payload, aggQ)
 						}
-						writer.send(buildGroupEnd(buf, queryID))
+						writer.send(buildSOWRecord(buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload))
 					}
+					writer.send(buildGroupEnd(buf, queryID))
 				}
 			}
 
@@ -591,38 +593,35 @@ func handleConnection(conn net.Conn) {
 			}
 
 			// Send SOW snapshot.
-			totalCount := 0
-			if sow != nil {
-				result := querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
-				totalCount = result.totalCount
-				mt := getTopicMessageType(topic)
+			var sowResult = querySOWWithBookmark(topic, filter, topN, header.orderBy, bookmark)
+			totalCount := sowResult.totalCount
+			mt := getTopicMessageType(topic)
 
-				if aggQ != nil && aggQ.hasAgg {
-					aggResults := executeAggQuery(aggQ, result.records)
-					recordCount := len(aggResults)
-					if recordCount > 0 {
-						writer.send(buildGroupBegin(buf, queryID))
-						for i, payload := range aggResults {
-							key := "agg-" + strconv.Itoa(i)
-							seq := globalBookmarkSeq.Add(1)
-							bm := makeBookmark(seq)
-							writer.send(buildSOWRecord(buf, topic, queryID, key, bm, mt, payload))
-						}
-						writer.send(buildGroupEnd(buf, queryID))
+			if aggQ != nil && aggQ.hasAgg {
+				aggResults := executeAggQuery(aggQ, sowResult.records)
+				recordCount := len(aggResults)
+				if recordCount > 0 {
+					writer.send(buildGroupBegin(buf, queryID))
+					for i, payload := range aggResults {
+						key := "agg-" + strconv.Itoa(i)
+						seq := globalBookmarkSeq.Add(1)
+						bm := makeBookmark(seq)
+						writer.send(buildSOWRecord(buf, topic, queryID, key, bm, mt, payload))
 					}
-				} else {
-					recordCount := len(result.records)
-					if recordCount > 0 {
-						writer.send(buildGroupBegin(buf, queryID))
-						for _, r := range result.records {
-							recPayload := r.payload
-							if aggQ != nil {
-								recPayload = projectFieldsFromQuery(r.payload, aggQ)
-							}
-							writer.send(buildSOWRecord(buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload))
+					writer.send(buildGroupEnd(buf, queryID))
+				}
+			} else {
+				recordCount := len(sowResult.records)
+				if recordCount > 0 {
+					writer.send(buildGroupBegin(buf, queryID))
+					for _, r := range sowResult.records {
+						recPayload := r.payload
+						if aggQ != nil {
+							recPayload = projectFieldsFromQuery(r.payload, aggQ)
 						}
-						writer.send(buildGroupEnd(buf, queryID))
+						writer.send(buildSOWRecord(buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload))
 					}
+					writer.send(buildGroupEnd(buf, queryID))
 				}
 			}
 
@@ -711,8 +710,9 @@ func handleConnection(conn net.Conn) {
 			// Journal.
 			var bm string
 			var seq uint64
-			if journal != nil {
-				bm, seq = journal.append(topic, effectiveSowKey, payload)
+			var currentJournal = getJournal()
+			if currentJournal != nil {
+				bm, seq = currentJournal.append(topic, effectiveSowKey, payload)
 			} else {
 				seq = globalBookmarkSeq.Add(1)
 				bm = makeBookmark(seq)
@@ -722,15 +722,16 @@ func handleConnection(conn net.Conn) {
 			var evictedRecord *sowRecord
 			var previousWorkspacePayload []byte
 			var currentWorkspacePayload = payload
-			if sow != nil && topic != "" {
+			currentSOW = getSOW()
+			if currentSOW != nil && topic != "" {
 				if effectiveSowKey == "" {
 					effectiveSowKey = makeSowKey(topic, seq)
 				}
 				ts := makeTimestamp()
 				if isDelta {
-					_, _, previousWorkspacePayload, currentWorkspacePayload, evictedRecord = sow.deltaUpsertWithPrevious(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
+					_, _, previousWorkspacePayload, currentWorkspacePayload, evictedRecord = currentSOW.deltaUpsertWithPrevious(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				} else {
-					_, _, previousWorkspacePayload, evictedRecord = sow.upsertWithEvicted(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
+					_, _, previousWorkspacePayload, evictedRecord = currentSOW.upsertWithEvicted(topic, effectiveSowKey, payload, bm, ts, seq, expiration)
 				}
 			}
 
@@ -803,9 +804,10 @@ func handleConnection(conn net.Conn) {
 			filter = applyEntitlementFilter(connUserID, filter)
 			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
 			var isDuplicateCommand = connCommandDedupe.seenBefore(dedupeClientID, commandID)
+			var currentSOW = getSOW()
 			var topicMatches = 0
-			if sow != nil {
-				topicMatches = sow.count(topic)
+			if currentSOW != nil {
+				topicMatches = currentSOW.count(topic)
 			}
 
 			deleted := 0
@@ -814,22 +816,22 @@ func handleConnection(conn net.Conn) {
 			if isDuplicateCommand {
 				deleted = 0
 			} else if header.sowKeys != "" {
-				if sow != nil {
-					deleted = sow.deleteByKeys(topic, header.sowKeys)
+				if currentSOW != nil {
+					deleted = currentSOW.deleteByKeys(topic, header.sowKeys)
 				}
 			} else if sowKey != "" {
-				if sow != nil && sow.delete(topic, sowKey) {
+				if currentSOW != nil && currentSOW.delete(topic, sowKey) {
 					deleted = 1
 					deletedKeys = []string{sowKey}
 				}
 			} else if filter != "" {
-				if sow != nil {
-					deleted, deletedKeys = sow.deleteByFilter(topic, filter)
+				if currentSOW != nil {
+					deleted, deletedKeys = currentSOW.deleteByFilter(topic, filter)
 				}
 			} else if len(payload) > 0 {
 				// SowDeleteByData: infer key from payload body.
 				inferredKey := extractSowKey(payload)
-				if inferredKey != "" && sow != nil && sow.delete(topic, inferredKey) {
+				if inferredKey != "" && currentSOW != nil && currentSOW.delete(topic, inferredKey) {
 					deleted = 1
 					deletedKeys = []string{inferredKey}
 				}

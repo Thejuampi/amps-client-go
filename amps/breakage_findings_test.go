@@ -115,15 +115,18 @@ func TestMessageStreamConflateEvictionRemovesStaleSowKey(t *testing.T) {
 	}
 }
 
-// TestMessageStreamTimeoutDoesNotAdvertiseNilNext guards the HasNext/Next
-// contract: a timeout without a message must not report HasNext as true.
-func TestMessageStreamTimeoutDoesNotAdvertiseNilNext(t *testing.T) {
+// TestMessageStreamTimeoutAdvertisesInvalidMessage matches the C++ contract:
+// a live timeout yields one invalid message without completing the stream.
+func TestMessageStreamTimeoutAdvertisesInvalidMessage(t *testing.T) {
 	var stream = newMessageStream(nil)
 	stream.SetAcksOnly("cid-timeout")
 	stream.setRunning()
 	stream.SetTimeout(20) // 20ms
 
-	if stream.HasNext() {
-		t.Fatalf("HasNext()=true after timeout with no message")
+	if !stream.HasNext() {
+		t.Fatalf("HasNext()=false after live timeout")
+	}
+	if stream.Next() != nil {
+		t.Fatal("Next() returned a valid message for timeout marker")
 	}
 }

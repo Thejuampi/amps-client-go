@@ -272,8 +272,8 @@ func TestMessageStreamHasNextAndMessageHandlerCoverage(t *testing.T) {
 	}
 	stream.setRunning()
 	stream.SetTimeout(5)
-	if stream.HasNext() {
-		t.Fatalf("timeout branch should report no next message")
+	if !stream.HasNext() {
+		t.Fatalf("timeout branch should report an invalid next message")
 	}
 	stream.setState(messageStreamStateComplete)
 	if stream.HasNext() {

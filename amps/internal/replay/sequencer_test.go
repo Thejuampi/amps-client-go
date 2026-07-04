@@ -16,4 +16,3 @@ func TestSequencerCoverage(t *testing.T) {
 		t.Fatalf("expected nil sequencer next=0, got %d", got)
 	}
 }
-

@@ -58,14 +58,6 @@ func TestIntegrationClientSowAndSubscribeAsyncSingleConnectionStress(t *testing.
 	resetTopicConfigsForTest()
 	resetViewsForTest()
 	resetActionsForTest()
-	defer func() {
-		resetTopicSubscribersForTest()
-		resetTopicConfigsForTest()
-		resetViewsForTest()
-		resetActionsForTest()
-		sow = oldSow
-		journal = oldJournal
-	}()
 
 	var listener, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -229,6 +221,25 @@ func TestIntegrationClientSowAndSubscribeAsyncSingleConnectionStress(t *testing.
 		}
 	}()
 
+	defer func() {
+		_ = subscriber.Close()
+		for _, publisher := range publishers {
+			_ = publisher.Close()
+		}
+		listener.Close()
+		select {
+		case <-serverDone:
+		case <-time.After(2 * time.Second):
+		}
+		waitForActiveHandlers(2 * time.Second)
+		resetTopicSubscribersForTest()
+		resetTopicConfigsForTest()
+		resetViewsForTest()
+		resetActionsForTest()
+		sow = oldSow
+		journal = oldJournal
+	}()
+
 	var publishErrCh = make(chan error, topicCount)
 	var publisherWG sync.WaitGroup
 	for topicIndex = 0; topicIndex < topicCount; topicIndex++ {
@@ -331,5 +342,9 @@ func TestIntegrationClientSowAndSubscribeAsyncSingleConnectionStress(t *testing.
 	case <-serverDone:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("fakeamps server did not exit in time")
+	}
+
+	if !waitForActiveHandlers(2 * time.Second) {
+		t.Fatalf("fakeamps handlers did not drain in time")
 	}
 }

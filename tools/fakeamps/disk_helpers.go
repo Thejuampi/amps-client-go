@@ -6,9 +6,9 @@ import (
 )
 
 const (
-	fakeampsDataDirMode = 0o700
+	fakeampsDataDirMode  = 0o700
 	fakeampsDataFileMode = 0o600
-	fakeampsLogDirMode  = 0o750
+	fakeampsLogDirMode   = 0o750
 )
 
 func openFakeampsDiskRoot(path string) (*os.Root, error) {

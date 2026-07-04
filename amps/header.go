@@ -573,6 +573,7 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		return nil
 	}
 	var textExtras = headerTextExtras(header)
+	var initialLength = buffer.Len()
 
 	_ = buffer.WriteByte('{')
 
@@ -700,7 +701,7 @@ func (header *_Header) write(buffer *bytes.Buffer) (err error) {
 		writeNumberField("grace_period", uint64(*header.gracePeriod))
 	}
 
-	if buffer.Len() == 1 {
+	if buffer.Len() == initialLength+1 {
 		_ = buffer.WriteByte('}')
 		return nil
 	}

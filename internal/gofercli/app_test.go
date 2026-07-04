@@ -438,8 +438,8 @@ func TestVersionFlag(t *testing.T) {
 	var app = &App{
 		Stdout: &stdout,
 		Stderr: &stderr,
-		Now:   time.Now,
-		Sleep: time.Sleep,
+		Now:    time.Now,
+		Sleep:  time.Sleep,
 	}
 	var code = app.Run([]string{"--version"})
 	if code != 0 {
@@ -456,8 +456,8 @@ func TestVersionFlagShort(t *testing.T) {
 	var app = &App{
 		Stdout: &stdout,
 		Stderr: &stderr,
-		Now:   time.Now,
-		Sleep: time.Sleep,
+		Now:    time.Now,
+		Sleep:  time.Sleep,
 	}
 	var code = app.Run([]string{"-version"})
 	if code != 0 {

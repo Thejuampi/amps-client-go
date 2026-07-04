@@ -94,7 +94,7 @@ Connection URI notes:
 
 | Symbol | Purpose | Required State | Side Effects / Errors |
 |---|---|---|---|
-| `ErrorHandler()` / `SetErrorHandler(handler)` | General error hook | Any | Handles connection/protocol/message errors. |
+| `ErrorHandler()` / `SetErrorHandler(handler)` | General error hook | Any | Handles connection/protocol/message errors; the default handler is silent. |
 | `DisconnectHandler()` / `SetDisconnectHandler(handler)` | External disconnect callback | Any | Called on unintentional disconnect path. |
 | `SetDuplicateMessageHandler(handler)` / `DuplicateMessageHandler()` | Duplicate-message hook | Any | Invoked when bookmark store marks duplicate. |
 | `SetUnhandledMessageHandler(handler)` | Unhandled-message hook | Any | Fallback layer before last chance. |

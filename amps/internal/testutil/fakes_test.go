@@ -11,4 +11,3 @@ func TestCounterNextCoverage(t *testing.T) {
 		t.Fatalf("expected second counter value 2, got %d", next)
 	}
 }
-

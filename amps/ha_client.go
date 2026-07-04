@@ -2,11 +2,14 @@ package amps
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+var errHAReconnectCancelled = errors.New("HAClient reconnect cancelled")
+var errHAClientStopped = errors.New("HAClient is stopped")
 
 // HAClient wraps Client with reconnect, replay, and failover behavior.
 type HAClient struct {
@@ -99,11 +102,7 @@ func shouldReportHAReconnectError(err error) bool {
 	if err == nil {
 		return false
 	}
-	message := err.Error()
-	if !strings.Contains(message, "DisconnectedError") {
-		return true
-	}
-	if strings.Contains(message, "cancelled") || strings.Contains(message, "stopped") {
+	if errors.Is(err, errHAReconnectCancelled) || errors.Is(err, errHAClientStopped) {
 		return false
 	}
 	return true
@@ -217,12 +216,12 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return NewError(DisconnectedError, "HAClient reconnect cancelled")
+			return NewError(DisconnectedError, errHAReconnectCancelled)
 		default:
 		}
 
 		if ha.stopped.Load() {
-			return NewError(DisconnectedError, "HAClient is stopped")
+			return NewError(DisconnectedError, errHAClientStopped)
 		}
 
 		var uri string
@@ -251,11 +250,11 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
-			return NewError(DisconnectedError, "HAClient reconnect cancelled")
+			return NewError(DisconnectedError, errHAReconnectCancelled)
 		default:
 		}
 		if ha.stopped.Load() {
-			return NewError(DisconnectedError, "HAClient is stopped")
+			return NewError(DisconnectedError, errHAClientStopped)
 		}
 		if uri == "" && chooser == nil {
 			uri = ha.client.URI()
@@ -320,7 +319,7 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 			}
 			select {
 			case <-ctx.Done():
-				return NewError(DisconnectedError, "HAClient reconnect cancelled")
+				return NewError(DisconnectedError, errHAReconnectCancelled)
 			case <-time.After(wait):
 			}
 		}

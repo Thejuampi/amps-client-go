@@ -246,7 +246,7 @@ go run ./tools/coveragegate -profile coverage.out
 make compat-check
 make perf-compare-toolchains
 go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run ./tools/perfgate -baseline tools/perf_baseline.json
-go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.25.11+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
 Static analysis is enforced in CI with `make static-scan`, which includes vet, staticcheck correctness checks, ineffassign, errcheck on non-test packages, `patterncheck`, and an expanded `golangci-lint` lane for bug detectors such as aliasing hazards, unicode traps, resource leaks, loop-variable mistakes, compiler-directive misuse, shadowed variables, unused writes, nil/error contract mistakes, suspicious assignments, and duration arithmetic errors.

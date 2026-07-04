@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -96,9 +97,51 @@ var (
 	globalConnectionsCurrent  atomic.Int64
 	globalBookmarkSeq         atomic.Uint64
 
-	journal *messageJournal
-	sow     *sowCache
+	journal   *messageJournal
+	journalMu sync.RWMutex
+	sow       *sowCache
+	sowMu     sync.RWMutex
+
+	activeHandlers sync.WaitGroup
 )
+
+func getJournal() *messageJournal {
+	journalMu.RLock()
+	defer journalMu.RUnlock()
+	return journal
+}
+
+func setJournal(j *messageJournal) {
+	journalMu.Lock()
+	journal = j
+	journalMu.Unlock()
+}
+
+func getSOW() *sowCache {
+	sowMu.RLock()
+	defer sowMu.RUnlock()
+	return sow
+}
+
+func setSOW(s *sowCache) {
+	sowMu.Lock()
+	sow = s
+	sowMu.Unlock()
+}
+
+func waitForActiveHandlers(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		activeHandlers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
 
 type benchmarkStabilitySettings struct {
 	logConn            bool
