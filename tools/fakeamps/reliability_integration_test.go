@@ -65,6 +65,33 @@ func tryReadFrameBody(conn net.Conn, timeout time.Duration) (string, bool) {
 	return string(frame), true
 }
 
+// awaitFrameContaining reads frames until one contains every substring. It
+// exists so publisher tests can confirm the server fully applied a command
+// before closing the socket; closing early lets a Windows RST discard
+// still-unread frames from the server's receive buffer.
+func awaitFrameContaining(t *testing.T, conn net.Conn, substrings ...string) {
+	t.Helper()
+
+	var deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var body, ok = tryReadFrameBody(conn, time.Until(deadline))
+		if !ok {
+			break
+		}
+		var matched = true
+		for _, substring := range substrings {
+			if !strings.Contains(body, substring) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return
+		}
+	}
+	t.Fatalf("did not receive frame containing %v", substrings)
+}
+
 func TestPublishCommandIDDedupeSkipsSecondApply(t *testing.T) {
 	var oldSow = sow
 	var oldJournal = journal
@@ -97,15 +124,11 @@ func TestPublishCommandIDDedupeSkipsSecondApply(t *testing.T) {
 		t.Fatalf("failed to dial test server: %v", dialErr)
 	}
 
-	var readDone = make(chan struct{})
-	go func() {
-		defer close(readDone)
-		_, _ = io.Copy(io.Discard, client)
-	}()
-
 	sendFrame(t, client, buildCommandFrame(`{"c":"logon","cid":"log-1","a":"processed","client_name":"dedupe-client"}`, nil))
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"10","k":"order-1","mt":"json"}`, []byte(`{"id":1}`)))
+	awaitFrameContaining(t, client, `"a":"persisted"`, `"cid":"dup-1"`)
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"11","k":"order-2","mt":"json"}`, []byte(`{"id":2}`)))
+	awaitFrameContaining(t, client, `"a":"persisted"`, `"cid":"dup-1"`)
 
 	_ = client.Close()
 
@@ -114,8 +137,6 @@ func TestPublishCommandIDDedupeSkipsSecondApply(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("handleConnection did not exit in time")
 	}
-
-	<-readDone
 
 	var result = sow.query("orders", "", -1, "")
 	if result.totalCount != 1 {
@@ -413,15 +434,11 @@ func TestPublishSequenceReplaySkipsSecondApply(t *testing.T) {
 		t.Fatalf("failed to dial test server: %v", dialErr)
 	}
 
-	var readDone = make(chan struct{})
-	go func() {
-		defer close(readDone)
-		_, _ = io.Copy(io.Discard, client)
-	}()
-
 	sendFrame(t, client, buildCommandFrame(`{"c":"logon","cid":"log-1","a":"processed","client_name":"seq-client"}`, nil))
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"seq-1","t":"orders","a":"processed,persisted","s":"10","k":"order-1","mt":"json"}`, []byte(`{"id":1}`)))
+	awaitFrameContaining(t, client, `"a":"persisted"`, `"cid":"seq-1"`)
 	sendFrame(t, client, buildCommandFrame(`{"c":"publish","cid":"seq-2","t":"orders","a":"processed,persisted","s":"9","k":"order-2","mt":"json"}`, []byte(`{"id":2}`)))
+	awaitFrameContaining(t, client, `"a":"persisted"`, `"cid":"seq-2"`)
 
 	_ = client.Close()
 
@@ -430,8 +447,6 @@ func TestPublishSequenceReplaySkipsSecondApply(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("handleConnection did not exit in time")
 	}
-
-	<-readDone
 
 	var result = sow.query("orders", "", -1, "")
 	if result.totalCount != 1 {
@@ -478,16 +493,10 @@ func TestPublishReconnectReusesIdentityWithoutSuppressingValidCommands(t *testin
 			t.Fatalf("failed to dial test server: %v", dialErr)
 		}
 
-		var readDone = make(chan struct{})
-		go func() {
-			defer close(readDone)
-			_, _ = io.Copy(io.Discard, client)
-		}()
-
 		sendFrame(t, client, buildCommandFrame(`{"c":"logon","cid":"log-1","a":"processed","client_name":"stable-client"}`, nil))
 		sendFrame(t, client, buildCommandFrame(commandJSON, payload))
+		awaitFrameContaining(t, client, `"a":"persisted"`, `"cid":"dup-1"`)
 		_ = client.Close()
-		<-readDone
 	}
 
 	runClient(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"10","k":"order-1","mt":"json"}`, []byte(`{"id":1}`))
