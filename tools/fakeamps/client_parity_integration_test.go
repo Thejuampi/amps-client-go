@@ -2,8 +2,8 @@ package main
 
 import (
 	"net"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 

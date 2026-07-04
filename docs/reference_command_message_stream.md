@@ -65,7 +65,8 @@ Controls:
 Notes:
 
 - `Close()` handles unsubscribe/route cleanup based on stream state.
-- `Next()` returns `nil` on completion or timeout transition.
+- On a live timeout, `HasNext()` returns `true` once and `Next()` returns `nil`, matching the C++ invalid-message timeout contract without completing the stream.
+- On completion, `HasNext()` returns `false`.
 
 ## Related
 

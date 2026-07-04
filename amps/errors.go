@@ -1,6 +1,9 @@
 package amps
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // AlreadyConnectedError and related constants define protocol and client behavior values.
 const (
@@ -72,8 +75,47 @@ func reasonToError(reason string) error {
 	return NewError(err)
 }
 
-// NewError returns a new Error.
-func NewError(errorCode int, message ...interface{}) error {
+// AMPSError is an AMPS client error with a machine-readable kind and an
+// optional wrapped cause.
+type AMPSError struct {
+	Kind    int
+	Message string
+	cause   error
+}
+
+// Error returns the stable text representation used by earlier client releases.
+func (err *AMPSError) Error() string {
+	if err == nil {
+		return "<nil>"
+	}
+	var name = errorKindName(err.Kind)
+	if err.Message == "" {
+		return name
+	}
+	return name + ": " + err.Message
+}
+
+// Unwrap returns the original cause supplied to NewError, when present.
+func (err *AMPSError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+// Is matches AMPSErrors by kind and otherwise delegates through Unwrap.
+func (err *AMPSError) Is(target error) bool {
+	var targetAMPSError, ok = target.(*AMPSError)
+	return ok && err != nil && targetAMPSError != nil && err.Kind == targetAMPSError.Kind
+}
+
+// IsErrorKind reports whether err contains an AMPSError of the requested kind.
+func IsErrorKind(err error, kind int) bool {
+	var ampsErr *AMPSError
+	return errors.As(err, &ampsErr) && ampsErr.Kind == kind
+}
+
+func errorKindName(errorCode int) string {
 	var errorName string
 
 	switch errorCode {
@@ -124,10 +166,18 @@ func NewError(errorCode int, message ...interface{}) error {
 	default:
 		errorName = "UnknownError"
 	}
+	return errorName
+}
+
+// NewError returns a new Error.
+func NewError(errorCode int, message ...interface{}) error {
+	var ampsErr = &AMPSError{Kind: errorCode}
 
 	if len(message) > 0 {
-		return fmt.Errorf("%s: %s", errorName, message[0])
+		ampsErr.Message = fmt.Sprint(message[0])
+		if cause, ok := message[0].(error); ok {
+			ampsErr.cause = cause
+		}
 	}
-
-	return fmt.Errorf("%s", errorName)
+	return ampsErr
 }

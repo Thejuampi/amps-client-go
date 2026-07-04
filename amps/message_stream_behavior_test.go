@@ -11,8 +11,8 @@ func TestMessageStreamTimeoutPath(t *testing.T) {
 	stream.SetTimeout(10)
 
 	start := time.Now()
-	if stream.HasNext() {
-		t.Fatalf("expected timeout without message to report no next message")
+	if !stream.HasNext() {
+		t.Fatalf("expected live timeout to report an invalid next message")
 	}
 	elapsed := time.Since(start)
 	if elapsed < 8*time.Millisecond {

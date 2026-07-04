@@ -2,7 +2,6 @@ package amps
 
 import (
 	"context"
-	"crypto/tls"
 	"net"
 	"net/http"
 	"net/url"
@@ -30,13 +29,10 @@ func (client *Client) dialWebSocket(ctx context.Context, parsedURI *url.URL) (ne
 
 	var dialer = websocket.DefaultDialer
 	if parsedURI.Scheme == "wss" {
-		tlsConfig := client.tlsConfig
-		if tlsConfig == nil {
-			tlsConfig = &tls.Config{
-				MinVersion: tls.VersionTLS12,
-				ServerName: parsedURI.Hostname(),
-			}
-		}
+		client.configLock.RLock()
+		var baseTLSConfig = client.tlsConfig
+		client.configLock.RUnlock()
+		var tlsConfig = clientTLSConfigForHost(baseTLSConfig, parsedURI.Hostname())
 		dialer = &websocket.Dialer{
 			TLSClientConfig: tlsConfig,
 		}

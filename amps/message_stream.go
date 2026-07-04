@@ -26,6 +26,8 @@ const maxMessageStreamTimeoutMillis = uint64(math.MaxInt64 / int64(time.Millisec
 // MessageStream stores exported state used by AMPS client APIs.
 type MessageStream struct {
 	client        *Client
+	clientLock    sync.RWMutex
+	lifecycleLock sync.Mutex
 	commandID     string
 	queryID       string
 	unsubscribeID string
@@ -73,10 +75,19 @@ func (ms *MessageStream) End() *MessageStreamIterator {
 
 // FromExistingHandler binds an existing handler to this stream.
 func (ms *MessageStream) FromExistingHandler(handler func(*Message) error) *MessageStream {
-	if ms == nil || ms.client == nil || handler == nil || ms.commandID == "" {
+	if ms == nil || handler == nil {
 		return ms
 	}
-	ms.client.routes.Store(ms.commandID, handler)
+	ms.lifecycleLock.Lock()
+	defer ms.lifecycleLock.Unlock()
+	if ms.commandID == "" {
+		return ms
+	}
+	var client = ms.getClient()
+	if client == nil {
+		return ms
+	}
+	client.routes.Store(ms.commandID, handler)
 	return ms
 }
 
@@ -186,8 +197,12 @@ func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
 
 // HasNext reports whether the receiver has next configured.
 func (ms *MessageStream) HasNext() bool {
-	ms.timedOut.Store(false)
 	if ms.current != nil {
+		return true
+	}
+
+	state := atomic.LoadInt32(&ms.state)
+	if ms.timedOut.Load() && state != messageStreamStateComplete {
 		return true
 	}
 
@@ -196,11 +211,12 @@ func (ms *MessageStream) HasNext() bool {
 		return true
 	}
 
-	if atomic.LoadInt32(&ms.state) == messageStreamStateComplete {
+	if state == messageStreamStateComplete {
+		ms.timedOut.Store(false)
 		return false
 	}
 
-	reading := (atomic.LoadInt32(&ms.state) & messageStreamStateReading) != 0
+	reading := (state & messageStreamStateReading) != 0
 	if !reading {
 		return ms.current != nil
 	}
@@ -234,8 +250,8 @@ func (ms *MessageStream) handleWaitDequeueTimeoutResult(message *Message, ok boo
 	if atomic.LoadInt32(&ms.state) == messageStreamStateComplete {
 		return false
 	}
-
-	return false
+	ms.timedOut.Store(true)
+	return true
 }
 
 func (ms *MessageStream) consumeConflateState() {
@@ -277,20 +293,23 @@ func (ms *MessageStream) Next() (message *Message) {
 
 	returnVal := ms.current
 	ms.current = nil
+	ms.lifecycleLock.Lock()
+	defer ms.lifecycleLock.Unlock()
 
 	cleanupRoutes := func() {
-		if ms.client == nil {
+		var client = ms.getClient()
+		if client == nil {
 			ms.commandID = ""
 			ms.queryID = ""
 			return
 		}
 
 		if len(ms.commandID) > 0 {
-			_ = ms.client.deleteRoute(ms.commandID)
+			_ = client.deleteRoute(ms.commandID)
 			ms.commandID = ""
 		}
 		if len(ms.queryID) > 0 {
-			_ = ms.client.deleteRoute(ms.queryID)
+			_ = client.deleteRoute(ms.queryID)
 			ms.queryID = ""
 		}
 	}
@@ -332,14 +351,17 @@ func (ms *MessageStream) isConflating() bool {
 
 // Close is an alias for Disconnect.
 func (ms *MessageStream) Close() (err error) {
+	ms.lifecycleLock.Lock()
+	defer ms.lifecycleLock.Unlock()
+	var client = ms.getClient()
 	removeMessageStream := func(routeID string) {
-		ms.client.messageStreams.Delete(routeID)
+		client.messageStreams.Delete(routeID)
 	}
 	removeRoute := func(routeID string) {
-		ms.client.routes.Delete(routeID)
+		client.routes.Delete(routeID)
 	}
 
-	if ms.client == nil {
+	if client == nil {
 		ms.commandID = ""
 		ms.queryID = ""
 		ms.unsubscribeID = ""
@@ -358,9 +380,9 @@ func (ms *MessageStream) Close() (err error) {
 				}
 				ms.setState(messageStreamStateComplete)
 				if ms.unsubscribeID != "" {
-					err = ms.client.Unsubscribe(ms.unsubscribeID)
+					err = client.Unsubscribe(ms.unsubscribeID)
 				} else {
-					err = ms.client.Unsubscribe(ms.commandID)
+					err = client.Unsubscribe(ms.commandID)
 				}
 			} else {
 				removeRoute(ms.commandID)
@@ -376,7 +398,7 @@ func (ms *MessageStream) Close() (err error) {
 
 			if atomic.LoadInt32(&ms.state) >= messageStreamStateComplete {
 				ms.setState(messageStreamStateComplete)
-				err = ms.client.Unsubscribe(ms.queryID)
+				err = client.Unsubscribe(ms.queryID)
 			} else {
 				removeRoute(ms.queryID)
 			}
@@ -494,6 +516,24 @@ func newMessageStream(client *Client) *MessageStream {
 	stream.client = client
 	stream.queue = newQueue(256)
 	return stream
+}
+
+func (ms *MessageStream) getClient() *Client {
+	if ms == nil {
+		return nil
+	}
+	ms.clientLock.RLock()
+	defer ms.clientLock.RUnlock()
+	return ms.client
+}
+
+func (ms *MessageStream) detachClient() {
+	if ms == nil {
+		return
+	}
+	ms.clientLock.Lock()
+	ms.client = nil
+	ms.clientLock.Unlock()
 }
 
 type _MessageQueue struct {

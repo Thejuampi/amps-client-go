@@ -227,8 +227,6 @@ type clientParityState struct {
 	lock                   sync.Mutex
 }
 
-var clientParityStates sync.Map
-
 func newClientParityState() *clientParityState {
 	var state = &clientParityState{
 		retryOnDisconnect:     false,
@@ -267,25 +265,15 @@ func ensureClientState(client *Client) *clientParityState {
 		return cached
 	}
 
-	if state, ok := clientParityStates.Load(client); ok {
-		var typed = state.(*clientParityState)
-		client.parityState.Store(typed)
-		return typed
-	}
-
 	var state = newClientParityState()
-
-	actual, _ := clientParityStates.LoadOrStore(client, state)
-	var typed = actual.(*clientParityState)
-	client.parityState.Store(typed)
-	return typed
+	client.parityState.CompareAndSwap(nil, state)
+	return client.parityState.Load()
 }
 
 func forgetClientState(client *Client) {
 	if client == nil {
 		return
 	}
-	clientParityStates.Delete(client)
 	client.parityState.Store((*clientParityState)(nil))
 }
 

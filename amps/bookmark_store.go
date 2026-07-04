@@ -18,6 +18,8 @@ type bookmarkRecord struct {
 	Discarded bool   `json:"discarded"`
 }
 
+const memoryBookmarkPruneThreshold = 1024
+
 type bookmarkWalRecord struct {
 	Type          string          `json:"type"`
 	SubID         string          `json:"sub_id,omitempty"`
@@ -166,6 +168,7 @@ func (store *MemoryBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	if bookmarkSeqNo > store.discardedUpTo[subID] {
 		store.discardedUpTo[subID] = bookmarkSeqNo
 	}
+	store.pruneDiscardedRecordsLocked(subID)
 }
 
 // DiscardMessage executes the exported discardmessage operation.
@@ -188,6 +191,53 @@ func (store *MemoryBookmarkStore) DiscardMessage(message *Message) {
 		record.Discarded = true
 		if record.SeqNo > store.discardedUpTo[subID] {
 			store.discardedUpTo[subID] = record.SeqNo
+		}
+		store.pruneDiscardedRecordsLocked(subID)
+	}
+}
+
+func (store *MemoryBookmarkStore) pruneDiscardedRecordsLocked(subID string) {
+	var records = store.records[subID]
+	if len(records) < memoryBookmarkPruneThreshold {
+		return
+	}
+	var discardedUpTo = store.discardedUpTo[subID]
+	type bookmarkSelection struct {
+		bookmark string
+		seqNo    uint64
+	}
+	var latestByPublisher = make(map[uint64]bookmarkSelection)
+	var latestUnparsed string
+	var latestUnparsedSeq uint64
+	for bookmark, record := range records {
+		if record == nil || (!record.Discarded && record.SeqNo > discardedUpTo) {
+			continue
+		}
+		publisher, _, ok := parseBookmarkToken(bookmark)
+		if !ok {
+			if latestUnparsed == "" || record.SeqNo > latestUnparsedSeq {
+				latestUnparsed = bookmark
+				latestUnparsedSeq = record.SeqNo
+			}
+			continue
+		}
+		if current, exists := latestByPublisher[publisher]; !exists || record.SeqNo > current.seqNo {
+			latestByPublisher[publisher] = bookmarkSelection{bookmark: bookmark, seqNo: record.SeqNo}
+		}
+	}
+	for bookmark, record := range records {
+		if record == nil || (!record.Discarded && record.SeqNo > discardedUpTo) {
+			continue
+		}
+		publisher, _, ok := parseBookmarkToken(bookmark)
+		if ok {
+			if latestByPublisher[publisher].bookmark != bookmark {
+				delete(records, bookmark)
+			}
+			continue
+		}
+		if bookmark != latestUnparsed {
+			delete(records, bookmark)
 		}
 	}
 }
@@ -322,6 +372,7 @@ func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) strin
 	if record.SeqNo > store.discardedUpTo[subID] {
 		store.discardedUpTo[subID] = record.SeqNo
 	}
+	store.pruneDiscardedRecordsLocked(subID)
 	return bookmark
 }
 

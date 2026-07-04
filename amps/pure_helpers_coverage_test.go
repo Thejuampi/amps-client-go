@@ -515,8 +515,8 @@ func TestEnsureClientStateCachesOnClient(t *testing.T) {
 	}
 
 	client.parityState.Store((*clientParityState)(nil))
-	if loaded := ensureClientState(client); loaded != state {
-		t.Fatalf("expected sync.Map parity state reuse when client cache is empty")
+	if loaded := ensureClientState(client); loaded == state {
+		t.Fatalf("expected clearing the client cache to release the old parity state")
 	}
 
 	forgetClientState(client)

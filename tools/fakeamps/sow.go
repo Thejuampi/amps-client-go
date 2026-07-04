@@ -798,29 +798,31 @@ func (c *sowCache) query(topic, filter string, topN int, orderBy string) queryRe
 }
 
 func querySOWWithBookmark(topic, filter string, topN int, orderBy, bookmark string) queryResult {
-	if sow == nil {
+	var currentSOW = getSOW()
+	if currentSOW == nil {
 		return queryResult{}
 	}
 
 	if bookmark == "" {
-		return sow.query(topic, filter, topN, orderBy)
+		return currentSOW.query(topic, filter, topN, orderBy)
 	}
 
 	if bookmark == "0" {
 		return queryResult{}
 	}
 
-	if journal == nil {
-		return sow.query(topic, filter, topN, orderBy)
+	var currentJournal = getJournal()
+	if currentJournal == nil {
+		return currentSOW.query(topic, filter, topN, orderBy)
 	}
 
 	var maxSeq = parseBookmarkSeq(bookmark)
 	if maxSeq == 0 {
-		return sow.query(topic, filter, topN, orderBy)
+		return currentSOW.query(topic, filter, topN, orderBy)
 	}
 
 	var snapshotByKey = make(map[string]sowRecord)
-	var entries = journal.replayAll(0)
+	var entries = currentJournal.replayAll(0)
 	var firstSeqForTopic uint64
 	for _, entry := range entries {
 		if entry.topic != topic {
