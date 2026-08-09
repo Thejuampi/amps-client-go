@@ -58,7 +58,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	waitingStream.SetTimeout(1)
 	waitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("waiting")}
 	waitingStream.queue.enqueue(waitingMessage)
-	if !waitingStream.waitForNextWithTimeout() {
+	if !waitingStream.waitForNextWithTimeout(waitingStream.Timeout()) {
 		t.Fatalf("expected timeout wait helper to dequeue preloaded message")
 	}
 	if waitingStream.current != waitingMessage {
@@ -68,7 +68,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	saturatingWaitingStream.SetTimeout(maxMessageStreamTimeoutMillis + 1)
 	saturatingWaitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("saturating-wait")}
 	saturatingWaitingStream.queue.enqueue(saturatingWaitingMessage)
-	if !saturatingWaitingStream.waitForNextWithTimeout() {
+	if !saturatingWaitingStream.waitForNextWithTimeout(saturatingWaitingStream.Timeout()) {
 		t.Fatalf("expected oversized timeout wait helper to dequeue preloaded message")
 	}
 	if saturatingWaitingStream.current != saturatingWaitingMessage {
@@ -120,7 +120,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	timedReadingStream.SetTimeout(1)
 	timedReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("timed-reading")}
 	timedReadingStream.queue.enqueue(timedReadingMessage)
-	if !timedReadingStream.waitForNextWithTimeout() {
+	if !timedReadingStream.waitForNextWithTimeout(timedReadingStream.Timeout()) {
 		t.Fatalf("expected timeout wait helper to dequeue message with timeout configured")
 	}
 	if timedReadingStream.current != timedReadingMessage {

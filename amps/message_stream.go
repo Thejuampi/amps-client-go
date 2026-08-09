@@ -111,9 +111,14 @@ func (ms *MessageStream) SetAcksOnly(commandID string) *MessageStream {
 		return nil
 	}
 	ms.resetForConfiguration()
+	// The route identifiers are also read and written by Close()/Next() under
+	// lifecycleLock; reconfiguring without it lets Close() observe a torn pair
+	// and unsubscribe the wrong route, leaking the correct one.
+	ms.lifecycleLock.Lock()
 	ms.commandID = commandID
 	ms.queryID = ""
 	ms.unsubscribeID = ""
+	ms.lifecycleLock.Unlock()
 	ms.setState(messageStreamStateReading)
 	return ms
 }
@@ -124,9 +129,11 @@ func (ms *MessageStream) SetSOWOnly(commandID string, queryID string) *MessageSt
 		return nil
 	}
 	ms.resetForConfiguration()
+	ms.lifecycleLock.Lock()
 	ms.commandID = commandID
 	ms.queryID = queryID
 	ms.unsubscribeID = ""
+	ms.lifecycleLock.Unlock()
 	ms.setSowOnly()
 	return ms
 }
@@ -137,6 +144,7 @@ func (ms *MessageStream) SetStatsOnly(commandID string, queryID ...string) *Mess
 		return nil
 	}
 	ms.resetForConfiguration()
+	ms.lifecycleLock.Lock()
 	ms.commandID = commandID
 	if len(queryID) > 0 {
 		ms.queryID = queryID[0]
@@ -144,6 +152,7 @@ func (ms *MessageStream) SetStatsOnly(commandID string, queryID ...string) *Mess
 		ms.queryID = ""
 	}
 	ms.unsubscribeID = ""
+	ms.lifecycleLock.Unlock()
 	ms.setStatsOnly()
 	return ms
 }
@@ -154,6 +163,7 @@ func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, q
 		return nil
 	}
 	ms.resetForConfiguration()
+	ms.lifecycleLock.Lock()
 	ms.commandID = routeID
 	ms.unsubscribeID = routeID
 	if unsubscribeID != "" {
@@ -164,6 +174,7 @@ func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, q
 	} else {
 		ms.queryID = ""
 	}
+	ms.lifecycleLock.Unlock()
 	ms.setState(messageStreamStateSubscribed)
 	return ms
 }
@@ -221,8 +232,11 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.current != nil
 	}
 
-	if ms.timeout.Load() != 0 {
-		return ms.waitForNextWithTimeout()
+	// Read the timeout once. A concurrent SetTimeout must not be able to turn
+	// the bounded wait this call selected into an unbounded one.
+	var timeout = ms.timeout.Load()
+	if timeout != 0 {
+		return ms.waitForNextWithTimeout(timeout)
 	}
 	message, ok := ms.queue.waitDequeue()
 	if !ok {
@@ -232,8 +246,8 @@ func (ms *MessageStream) HasNext() bool {
 	return true
 }
 
-func (ms *MessageStream) waitForNextWithTimeout() bool {
-	var timeoutMillis = min(ms.timeout.Load(), maxMessageStreamTimeoutMillis)
+func (ms *MessageStream) waitForNextWithTimeout(timeout uint64) bool {
+	var timeoutMillis = min(timeout, maxMessageStreamTimeoutMillis)
 	var timeoutDuration = time.Millisecond * time.Duration(safecast.Int64FromUint64Saturating(timeoutMillis))
 	return ms.handleWaitDequeueTimeoutResult(
 		ms.queue.waitDequeueTimeout(
