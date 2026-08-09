@@ -217,6 +217,7 @@ type clientParityState struct {
 	deferredExecutions     []deferredExecutionCall
 	pendingRetry           []retryCommand
 	pendingPublishByCmdID  map[string]*Command
+	pendingPublishOrder    []string
 	noResubscribeRoutes    map[string]struct{}
 	internalDisconnect     func(error)
 	manualDisconnect       bool

@@ -502,15 +502,27 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 		return nil
 	}
 
+	// isConflating() released the lock before we re-acquire it here, so the
+	// stream may have been reconfigured in between. resetForConfiguration nils
+	// sowKeyMap, and writing to a nil map panics on the client receive
+	// goroutine, which has no recover, taking down the process. Deferring the
+	// unlock also stops a panic below from leaving the stream locked forever.
 	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	if ms.sowKeyMap == nil {
+		// Reconfigured out of conflation while this message was in flight; it
+		// belongs to the previous configuration, so deliver it unconflated.
+		ms.enqueueMessageLocked(copiedMessage)
+		return nil
+	}
+
 	if existingMessage, exists := ms.sowKeyMap[sowKey]; exists {
 		existingMessage.Replace(copiedMessage)
-		ms.lock.Unlock()
 		return nil
 	}
 	ms.sowKeyMap[sowKey] = copiedMessage
 	ms.enqueueMessageLocked(copiedMessage)
-	ms.lock.Unlock()
 
 	return nil
 }

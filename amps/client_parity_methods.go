@@ -131,6 +131,44 @@ func (client *Client) queueRetryCommand(command *Command, messageHandler func(*M
 	state.lock.Unlock()
 }
 
+// maxPendingPublishRetained bounds how many un-acknowledged publish commands are
+// retained for failed-write reporting. A publish that requests no acks can never
+// be acknowledged, so without a bound the retention map grows for the lifetime
+// of the connection. Oldest entries are evicted first: a failure ack is most
+// likely to refer to a recent publish.
+const maxPendingPublishRetained = 4096
+
+// retainPendingPublishLocked stores a cloned command for failed-write reporting,
+// evicting the oldest retained entries once the bound is exceeded. Callers must
+// hold state.lock.
+func retainPendingPublishLocked(state *clientParityState, commandID string, command *Command) {
+	if _, exists := state.pendingPublishByCmdID[commandID]; !exists {
+		state.pendingPublishOrder = append(state.pendingPublishOrder, commandID)
+	}
+	state.pendingPublishByCmdID[commandID] = cloneCommand(command)
+
+	for len(state.pendingPublishOrder) > maxPendingPublishRetained {
+		var oldest = state.pendingPublishOrder[0]
+		state.pendingPublishOrder = state.pendingPublishOrder[1:]
+		delete(state.pendingPublishByCmdID, oldest)
+	}
+}
+
+// releasePendingPublishLocked drops a retained command once it is resolved.
+// Callers must hold state.lock.
+func releasePendingPublishLocked(state *clientParityState, commandID string) {
+	if _, exists := state.pendingPublishByCmdID[commandID]; !exists {
+		return
+	}
+	delete(state.pendingPublishByCmdID, commandID)
+	for index, candidate := range state.pendingPublishOrder {
+		if candidate == commandID {
+			state.pendingPublishOrder = append(state.pendingPublishOrder[:index], state.pendingPublishOrder[index+1:]...)
+			return
+		}
+	}
+}
+
 func (client *Client) registerPendingPublishCommand(commandID string, command *Command) {
 	state := ensureClientState(client)
 	if state == nil || command == nil || commandID == "" {
@@ -142,7 +180,7 @@ func (client *Client) registerPendingPublishCommand(commandID string, command *C
 		state.lock.Unlock()
 		return
 	}
-	state.pendingPublishByCmdID[commandID] = cloneCommand(command)
+	retainPendingPublishLocked(state, commandID, command)
 	state.lock.Unlock()
 }
 
@@ -157,7 +195,7 @@ func (client *Client) registerPendingPublishCommandBytes(commandID []byte, comma
 		state.lock.Unlock()
 		return
 	}
-	state.pendingPublishByCmdID[string(commandID)] = cloneCommand(command)
+	retainPendingPublishLocked(state, string(commandID), command)
 	state.lock.Unlock()
 }
 
@@ -374,11 +412,11 @@ func (client *Client) applyAckBookkeeping(message *Message) {
 	bookmarkStore := state.bookmarkStore
 	handler := state.failedWriteHandler
 	pendingCommand := state.pendingPublishByCmdID[commandID]
-	if status == "failure" && commandID != "" {
-		delete(state.pendingPublishByCmdID, commandID)
-	}
-	if status == "success" && commandID != "" && (ackType&AckTypePersisted) > 0 {
-		delete(state.pendingPublishByCmdID, commandID)
+	// Any terminal ack resolves the command, so the retained clone can go.
+	// Releasing only on failure/persisted left every other ack type retained
+	// until the connection ended.
+	if commandID != "" && (status == "failure" || status == "success") {
+		releasePendingPublishLocked(state, commandID)
 	}
 	state.lock.Unlock()
 
