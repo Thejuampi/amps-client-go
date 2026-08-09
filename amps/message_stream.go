@@ -35,8 +35,8 @@ type MessageStream struct {
 	sowKeyMap     map[string]*Message
 
 	state    int32
-	depth    uint64
-	timeout  uint64
+	depth    atomic.Uint64
+	timeout  atomic.Uint64
 	timedOut atomic.Bool
 
 	queue *_MessageQueue
@@ -170,12 +170,12 @@ func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, q
 
 // Timeout executes the exported timeout operation.
 func (ms *MessageStream) Timeout() uint64 {
-	return ms.timeout
+	return ms.timeout.Load()
 }
 
 // SetTimeout sets timeout on the receiver.
 func (ms *MessageStream) SetTimeout(timeout uint64) *MessageStream {
-	ms.timeout = timeout
+	ms.timeout.Store(timeout)
 	return ms
 }
 
@@ -186,12 +186,12 @@ func (ms *MessageStream) Depth() uint64 {
 
 // MaxDepth executes the exported maxdepth operation.
 func (ms *MessageStream) MaxDepth() uint64 {
-	return ms.depth
+	return ms.depth.Load()
 }
 
 // SetMaxDepth sets max depth on the receiver.
 func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
-	ms.depth = depth
+	ms.depth.Store(depth)
 	return ms
 }
 
@@ -221,7 +221,7 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.current != nil
 	}
 
-	if ms.timeout != 0 {
+	if ms.timeout.Load() != 0 {
 		return ms.waitForNextWithTimeout()
 	}
 	message, ok := ms.queue.waitDequeue()
@@ -233,7 +233,7 @@ func (ms *MessageStream) HasNext() bool {
 }
 
 func (ms *MessageStream) waitForNextWithTimeout() bool {
-	var timeoutMillis = min(ms.timeout, maxMessageStreamTimeoutMillis)
+	var timeoutMillis = min(ms.timeout.Load(), maxMessageStreamTimeoutMillis)
 	var timeoutDuration = time.Millisecond * time.Duration(safecast.Int64FromUint64Saturating(timeoutMillis))
 	return ms.handleWaitDequeueTimeoutResult(
 		ms.queue.waitDequeueTimeout(
@@ -447,7 +447,7 @@ func (ms *MessageStream) enqueueMessage(message *Message) {
 }
 
 func (ms *MessageStream) enqueueMessageLocked(message *Message) {
-	var droppedMessages = ms.queue.enqueueWithDepth(message, ms.depth)
+	var droppedMessages = ms.queue.enqueueWithDepth(message, ms.depth.Load())
 	ms.removeConflatedMessagesLocked(droppedMessages)
 }
 
@@ -477,7 +477,7 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 	}
 
 	if !ms.isConflating() {
-		ms.queue.enqueueWithDepth(message.Copy(), ms.depth)
+		ms.queue.enqueueWithDepth(message.Copy(), ms.depth.Load())
 		return nil
 	}
 

@@ -560,24 +560,23 @@ func TestClientLogonAckWithoutSequenceDoesNotReusePreviousSequence(t *testing.T)
 	}
 }
 
-func TestClientDisconnectZerosHeartbeatConfig(t *testing.T) {
-	client := NewClient("heartbeat-zero-on-disconnect")
+// Heartbeat interval/timeout are client configuration, not per-connection
+// runtime state: Disconnect must leave them intact so a later Connect/Logon
+// re-establishes the heartbeat. This matches the unintentional-disconnect path
+// in onConnectionError, which has always preserved them, and is required by
+// HAClient, which configures the heartbeat once in NewHAClient and calls
+// Disconnect between failover attempts.
+func TestClientDisconnectKeepsHeartbeatConfig(t *testing.T) {
+	client := NewClient("heartbeat-config-on-disconnect")
 	client.SetHeartbeat(10, 20)
-
-	if client.heartbeatInterval.Load() != 10 {
-		t.Fatalf("expected heartbeatInterval=10, got %d", client.heartbeatInterval.Load())
-	}
-	if client.heartbeatTimeout.Load() != 20 {
-		t.Fatalf("expected heartbeatTimeout=20, got %d", client.heartbeatTimeout.Load())
-	}
 
 	_ = client.Disconnect()
 
-	if client.heartbeatInterval.Load() != 0 {
-		t.Fatalf("expected heartbeatInterval=0 after disconnect, got %d", client.heartbeatInterval.Load())
+	if client.heartbeatInterval.Load() != 10 {
+		t.Fatalf("expected heartbeatInterval=10 after disconnect, got %d", client.heartbeatInterval.Load())
 	}
-	if client.heartbeatTimeout.Load() != 0 {
-		t.Fatalf("expected heartbeatTimeout=0 after disconnect, got %d", client.heartbeatTimeout.Load())
+	if client.heartbeatTimeout.Load() != 20 {
+		t.Fatalf("expected heartbeatTimeout=20 after disconnect, got %d", client.heartbeatTimeout.Load())
 	}
 }
 

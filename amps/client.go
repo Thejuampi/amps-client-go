@@ -46,6 +46,16 @@ var heartbeatBeatOptions = []byte("beat")
 
 var errClientNotConnected = errors.New("client is not connected while trying to send data")
 
+// maxConsecutiveEmptyReads bounds transports that return (0, nil) instead of
+// blocking or reporting an error. net.Conn implementations are discouraged from
+// doing so, but a peer can provoke it (for example a WebSocket peer emitting
+// zero-length frames), and the receive loop treats a short read as "keep
+// reading". Without a bound that becomes an unbreakable spin on the receive
+// goroutine, which also never observes a stop request.
+const maxConsecutiveEmptyReads = 100
+
+var errNoReadProgress = errors.New("transport returned no data without reporting an error")
+
 var clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
 	var dialer net.Dialer
 	return dialer.DialContext(ctx, network, address)
@@ -575,6 +585,21 @@ func (client *Client) readRoutine() {
 	client.readRoutineForConnection(connection)
 }
 
+// readIntoBuffer reads from connection and converts a run of no-progress reads
+// into a terminal error so the receive loop cannot spin forever.
+func (client *Client) readIntoBuffer(connection net.Conn, buffer []byte, consecutiveEmptyReads *int) (int, error) {
+	var count, err = connection.Read(buffer)
+	if err == nil && count == 0 {
+		*consecutiveEmptyReads++
+		if *consecutiveEmptyReads >= maxConsecutiveEmptyReads {
+			return 0, errNoReadProgress
+		}
+		return 0, nil
+	}
+	*consecutiveEmptyReads = 0
+	return count, err
+}
+
 func (client *Client) readRoutineForConnection(connection net.Conn) {
 	client.receiveRoutineLock.Lock()
 	defer client.receiveRoutineLock.Unlock()
@@ -599,6 +624,7 @@ func (client *Client) readRoutineForConnection(connection net.Conn) {
 	client.readPosition = 0
 	client.receivePosition = 0
 	var batchReceiveTime int64
+	var consecutiveEmptyReads int
 
 	for {
 		if client.stopped.Load() {
@@ -619,7 +645,7 @@ func (client *Client) readRoutineForConnection(connection net.Conn) {
 				}
 			}
 
-			count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
+			count, err := client.readIntoBuffer(connection, client.receiveBuffer[client.receivePosition:], &consecutiveEmptyReads)
 			client.receivePosition += count
 			if count > 0 {
 				batchReceiveTime = time.Now().UnixNano()
@@ -673,7 +699,7 @@ func (client *Client) readRoutineForConnection(connection net.Conn) {
 					client.receiveBuffer = newBuffer
 				}
 
-				count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
+				count, err := client.readIntoBuffer(connection, client.receiveBuffer[client.receivePosition:], &consecutiveEmptyReads)
 				client.receivePosition += count
 				if count > 0 {
 					batchReceiveTime = time.Now().UnixNano()
@@ -3023,14 +3049,15 @@ func (client *Client) Disconnect() (err error) {
 	client.connection = nil
 	client.connectionStateLock.Unlock()
 
+	// Only the runtime heartbeat state is cleared. The configured interval and
+	// timeout are client configuration and must survive a disconnect so a later
+	// Connect/Logon (notably HAClient failover) re-establishes the heartbeat.
 	client.heartbeatLock.Lock()
 	if client.heartbeatTimeoutID != nil {
 		_ = client.heartbeatTimeoutID.Stop()
 		client.heartbeatTimeoutID = nil
 	}
 	client.heartbeatTimestamp.Store(0)
-	client.heartbeatInterval.Store(0)
-	client.heartbeatTimeout.Store(0)
 	client.heartbeatLock.Unlock()
 	client.lock.Unlock()
 
@@ -3050,12 +3077,6 @@ func (client *Client) Disconnect() (err error) {
 		client.notifyConnectionState(ConnectionStateDisconnected)
 		return
 	}
-
-	client.heartbeatLock.Lock()
-	client.heartbeatTimestamp.Store(0)
-	client.heartbeatInterval.Store(0)
-	client.heartbeatTimeout.Store(0)
-	client.heartbeatLock.Unlock()
 
 	client.closeSyncAckProcessing()
 

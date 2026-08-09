@@ -19,7 +19,7 @@
 | `Close()` | Alias to disconnect | Any | Same as `Disconnect`. |
 | `SetCompression(enabled)` | Configure default zlib transport compression | Before `Connect` recommended | Applies to `tcp`/`tcps` when the URI omits compression. |
 | `SetTLSConfig(config)` | Configure TLS parameters | Before `Connect` | Misconfiguration fails on connect. |
-| `SetHeartbeat(interval, timeout...)` | Configure heartbeat behavior | Connected/logged on | Depends on endpoint heartbeat support. |
+| `SetHeartbeat(interval, timeout...)` | Configure heartbeat behavior | Connected/logged on | Depends on endpoint heartbeat support. Interval and timeout are client configuration and survive `Disconnect`, so a later `Connect`/`Logon` re-establishes the heartbeat. |
 | `ServerVersion()` | Get server version from logon ack | Logged on recommended | Empty if unavailable. |
 | `URI()` | Get configured URI | Any | None. |
 | `GetConnectionInfo()` / `GatherConnectionInfo()` | Best-effort connection metadata | Any | Values depend on current transport state. |
