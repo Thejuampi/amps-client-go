@@ -120,6 +120,8 @@ Toolchain compatibility and performance proof are separate gates. `make compat-c
 
 The repository also runs a separate GitHub CodeQL workflow with `security-and-quality` queries for deeper code scanning on pull requests, pushes to `main`, and a weekly schedule.
 
+The CI workflow publishes a required `validate` status only after both the blocking analysis job and every cross-platform test-matrix entry succeed. Branch protection should require this aggregate status.
+
 `make vuln-scan` runs `govulncheck` with the pinned patched Go toolchain and is part of the blocking `make scan` merge gate. Keep that toolchain current so standard-library findings reflect the release runtime rather than a stale compiler patch.
 
 ## Coverage Gate (`./amps/...`)
