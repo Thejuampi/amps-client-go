@@ -190,7 +190,8 @@ func TestConnectSurvivesWebSocketPeerSendingOnlyEmptyFrames(t *testing.T) {
 				return
 			}
 		}
-		<-request.Context().Done()
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		_, _, _ = conn.ReadMessage()
 	}))
 	defer server.Close()
 
@@ -214,5 +215,12 @@ func TestConnectSurvivesWebSocketPeerSendingOnlyEmptyFrames(t *testing.T) {
 	case <-disconnected:
 	case <-time.After(10 * time.Second):
 		t.Fatalf("receive loop never terminated against a peer sending only empty frames")
+	}
+
+	_ = client.Close()
+	select {
+	case <-handlerDone:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("WebSocket test handler did not exit after client disconnect")
 	}
 }
