@@ -81,6 +81,7 @@ type reconnectStressLiveTracker struct {
 type reconnectStressServer struct {
 	listener net.Listener
 	done     chan struct{}
+	handlers sync.WaitGroup
 
 	connLock    sync.Mutex
 	active      net.Conn
@@ -1162,9 +1163,11 @@ func startReconnectStressServer(t *testing.T) *reconnectStressServer {
 				return
 			}
 			server.setActive(conn)
+			server.handlers.Add(1)
 			go func(current net.Conn) {
+				defer server.handlers.Done()
+				defer server.clearActive(current)
 				handleConnection(current)
-				server.clearActive(current)
 			}(conn)
 		}
 	}()
@@ -1227,4 +1230,15 @@ func (server *reconnectStressServer) close(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("fakeamps reconnect stress server did not exit in time")
 	}
+
+	server.connLock.Lock()
+	var connections = make([]net.Conn, 0, len(server.connections))
+	for connection := range server.connections {
+		connections = append(connections, connection)
+	}
+	server.connLock.Unlock()
+	for _, connection := range connections {
+		_ = connection.Close()
+	}
+	server.handlers.Wait()
 }

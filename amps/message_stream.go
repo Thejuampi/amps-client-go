@@ -35,8 +35,8 @@ type MessageStream struct {
 	sowKeyMap     map[string]*Message
 
 	state    int32
-	depth    uint64
-	timeout  uint64
+	depth    atomic.Uint64
+	timeout  atomic.Uint64
 	timedOut atomic.Bool
 
 	queue *_MessageQueue
@@ -111,9 +111,14 @@ func (ms *MessageStream) SetAcksOnly(commandID string) *MessageStream {
 		return nil
 	}
 	ms.resetForConfiguration()
+	// The route identifiers are also read and written by Close()/Next() under
+	// lifecycleLock; reconfiguring without it lets Close() observe a torn pair
+	// and unsubscribe the wrong route, leaking the correct one.
+	ms.lifecycleLock.Lock()
 	ms.commandID = commandID
 	ms.queryID = ""
 	ms.unsubscribeID = ""
+	ms.lifecycleLock.Unlock()
 	ms.setState(messageStreamStateReading)
 	return ms
 }
@@ -124,9 +129,11 @@ func (ms *MessageStream) SetSOWOnly(commandID string, queryID string) *MessageSt
 		return nil
 	}
 	ms.resetForConfiguration()
+	ms.lifecycleLock.Lock()
 	ms.commandID = commandID
 	ms.queryID = queryID
 	ms.unsubscribeID = ""
+	ms.lifecycleLock.Unlock()
 	ms.setSowOnly()
 	return ms
 }
@@ -137,6 +144,7 @@ func (ms *MessageStream) SetStatsOnly(commandID string, queryID ...string) *Mess
 		return nil
 	}
 	ms.resetForConfiguration()
+	ms.lifecycleLock.Lock()
 	ms.commandID = commandID
 	if len(queryID) > 0 {
 		ms.queryID = queryID[0]
@@ -144,6 +152,7 @@ func (ms *MessageStream) SetStatsOnly(commandID string, queryID ...string) *Mess
 		ms.queryID = ""
 	}
 	ms.unsubscribeID = ""
+	ms.lifecycleLock.Unlock()
 	ms.setStatsOnly()
 	return ms
 }
@@ -154,6 +163,7 @@ func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, q
 		return nil
 	}
 	ms.resetForConfiguration()
+	ms.lifecycleLock.Lock()
 	ms.commandID = routeID
 	ms.unsubscribeID = routeID
 	if unsubscribeID != "" {
@@ -164,18 +174,19 @@ func (ms *MessageStream) SetSubscription(routeID string, unsubscribeID string, q
 	} else {
 		ms.queryID = ""
 	}
+	ms.lifecycleLock.Unlock()
 	ms.setState(messageStreamStateSubscribed)
 	return ms
 }
 
 // Timeout executes the exported timeout operation.
 func (ms *MessageStream) Timeout() uint64 {
-	return ms.timeout
+	return ms.timeout.Load()
 }
 
 // SetTimeout sets timeout on the receiver.
 func (ms *MessageStream) SetTimeout(timeout uint64) *MessageStream {
-	ms.timeout = timeout
+	ms.timeout.Store(timeout)
 	return ms
 }
 
@@ -186,12 +197,12 @@ func (ms *MessageStream) Depth() uint64 {
 
 // MaxDepth executes the exported maxdepth operation.
 func (ms *MessageStream) MaxDepth() uint64 {
-	return ms.depth
+	return ms.depth.Load()
 }
 
 // SetMaxDepth sets max depth on the receiver.
 func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
-	ms.depth = depth
+	ms.depth.Store(depth)
 	return ms
 }
 
@@ -221,8 +232,11 @@ func (ms *MessageStream) HasNext() bool {
 		return ms.current != nil
 	}
 
-	if ms.timeout != 0 {
-		return ms.waitForNextWithTimeout()
+	// Read the timeout once. A concurrent SetTimeout must not be able to turn
+	// the bounded wait this call selected into an unbounded one.
+	var timeout = ms.timeout.Load()
+	if timeout != 0 {
+		return ms.waitForNextWithTimeout(timeout)
 	}
 	message, ok := ms.queue.waitDequeue()
 	if !ok {
@@ -232,8 +246,8 @@ func (ms *MessageStream) HasNext() bool {
 	return true
 }
 
-func (ms *MessageStream) waitForNextWithTimeout() bool {
-	var timeoutMillis = min(ms.timeout, maxMessageStreamTimeoutMillis)
+func (ms *MessageStream) waitForNextWithTimeout(timeout uint64) bool {
+	var timeoutMillis = min(timeout, maxMessageStreamTimeoutMillis)
 	var timeoutDuration = time.Millisecond * time.Duration(safecast.Int64FromUint64Saturating(timeoutMillis))
 	return ms.handleWaitDequeueTimeoutResult(
 		ms.queue.waitDequeueTimeout(
@@ -447,7 +461,7 @@ func (ms *MessageStream) enqueueMessage(message *Message) {
 }
 
 func (ms *MessageStream) enqueueMessageLocked(message *Message) {
-	var droppedMessages = ms.queue.enqueueWithDepth(message, ms.depth)
+	var droppedMessages = ms.queue.enqueueWithDepth(message, ms.depth.Load())
 	ms.removeConflatedMessagesLocked(droppedMessages)
 }
 
@@ -477,7 +491,7 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 	}
 
 	if !ms.isConflating() {
-		ms.queue.enqueueWithDepth(message.Copy(), ms.depth)
+		ms.queue.enqueueWithDepth(message.Copy(), ms.depth.Load())
 		return nil
 	}
 
@@ -488,17 +502,32 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 		return nil
 	}
 
-	ms.lock.Lock()
-	if existingMessage, exists := ms.sowKeyMap[sowKey]; exists {
-		existingMessage.Replace(copiedMessage)
-		ms.lock.Unlock()
-		return nil
-	}
-	ms.sowKeyMap[sowKey] = copiedMessage
-	ms.enqueueMessageLocked(copiedMessage)
-	ms.lock.Unlock()
-
+	// isConflating() released the lock before we re-acquire it here, so the
+	// stream may have been reconfigured in between. resetForConfiguration nils
+	// sowKeyMap, and writing to a nil map panics on the client receive
+	// goroutine, which has no recover, taking down the process. Deferring the
+	// unlock also stops a panic below from leaving the stream locked forever.
+	ms.enqueueConflatedMessage(copiedMessage, sowKey)
 	return nil
+}
+
+func (ms *MessageStream) enqueueConflatedMessage(message *Message, sowKey string) {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	if ms.sowKeyMap == nil {
+		// Reconfigured out of conflation while this message was in flight; it
+		// belongs to the previous configuration, so deliver it unconflated.
+		ms.enqueueMessageLocked(message)
+		return
+	}
+
+	if existingMessage, exists := ms.sowKeyMap[sowKey]; exists {
+		existingMessage.Replace(message)
+		return
+	}
+	ms.sowKeyMap[sowKey] = message
+	ms.enqueueMessageLocked(message)
 }
 
 func (ms *MessageStream) setState(state int32) {

@@ -143,6 +143,30 @@ func TestApplyAckBookkeepingDiscardPublishOnPersistedAck(t *testing.T) {
 	}
 }
 
+func TestApplyAckBookkeepingKeepsPublishAfterNonTerminalSuccessAck(t *testing.T) {
+	var client = NewClient("ack-bookkeeping-non-terminal")
+	var command = NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)).SetCommandID("cmd-1")
+	var state = ensureClientState(client)
+	state.lock.Lock()
+	retainPendingPublishLocked(state, "cmd-1", command)
+	state.lock.Unlock()
+
+	var ackType = AckTypeReceived
+	client.applyAckBookkeeping(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte("cmd-1"),
+		status:    []byte("success"),
+		ackType:   &ackType,
+	}})
+
+	state.lock.Lock()
+	var _, exists = state.pendingPublishByCmdID["cmd-1"]
+	state.lock.Unlock()
+	if !exists {
+		t.Fatal("non-terminal success ack removed pending publish needed by later failure reporting")
+	}
+}
+
 func TestPublishStoreRequestsPersistedAckForCleanup(t *testing.T) {
 	client := NewClient("publish-store-persisted-ack")
 	conn := newTestConn()
@@ -560,24 +584,23 @@ func TestClientLogonAckWithoutSequenceDoesNotReusePreviousSequence(t *testing.T)
 	}
 }
 
-func TestClientDisconnectZerosHeartbeatConfig(t *testing.T) {
-	client := NewClient("heartbeat-zero-on-disconnect")
+// Heartbeat interval/timeout are client configuration, not per-connection
+// runtime state: Disconnect must leave them intact so a later Connect/Logon
+// re-establishes the heartbeat. This matches the unintentional-disconnect path
+// in onConnectionError, which has always preserved them, and is required by
+// HAClient, which configures the heartbeat once in NewHAClient and calls
+// Disconnect between failover attempts.
+func TestClientDisconnectKeepsHeartbeatConfig(t *testing.T) {
+	client := NewClient("heartbeat-config-on-disconnect")
 	client.SetHeartbeat(10, 20)
-
-	if client.heartbeatInterval.Load() != 10 {
-		t.Fatalf("expected heartbeatInterval=10, got %d", client.heartbeatInterval.Load())
-	}
-	if client.heartbeatTimeout.Load() != 20 {
-		t.Fatalf("expected heartbeatTimeout=20, got %d", client.heartbeatTimeout.Load())
-	}
 
 	_ = client.Disconnect()
 
-	if client.heartbeatInterval.Load() != 0 {
-		t.Fatalf("expected heartbeatInterval=0 after disconnect, got %d", client.heartbeatInterval.Load())
+	if client.heartbeatInterval.Load() != 10 {
+		t.Fatalf("expected heartbeatInterval=10 after disconnect, got %d", client.heartbeatInterval.Load())
 	}
-	if client.heartbeatTimeout.Load() != 0 {
-		t.Fatalf("expected heartbeatTimeout=0 after disconnect, got %d", client.heartbeatTimeout.Load())
+	if client.heartbeatTimeout.Load() != 20 {
+		t.Fatalf("expected heartbeatTimeout=20 after disconnect, got %d", client.heartbeatTimeout.Load())
 	}
 }
 

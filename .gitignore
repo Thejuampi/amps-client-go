@@ -23,6 +23,11 @@ fakeamps.exe
 tools/perf_subscribe_*
 *.pprof
 
+# External-client benchmark results are private unless publication is authorized
+tools/perf_tail_c_*.json
+tools/perf_side_by_side_*.json
+tools/perf_side_by_side_*.md
+
 # Local coverage artifacts
 tools/*.cover.out
 tools/all.cover.out

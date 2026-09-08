@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -18,8 +19,13 @@ import (
 )
 
 const (
-	defaultCaptureTimeout   = 5 * time.Minute
-	defaultProgressInterval = 20 * time.Second
+	defaultCaptureTimeout               = 5 * time.Minute
+	defaultProgressInterval             = 20 * time.Second
+	defaultExternalCTailCurrentPath     = ".tmp/perf/external/perf_tail_c_current.json"
+	defaultExternalMergedBaselinePath   = ".tmp/perf/external/perf_side_by_side_baseline.json"
+	defaultExternalMergedCurrentPath    = ".tmp/perf/external/perf_side_by_side_current.json"
+	defaultExternalMergedComparisonPath = ".tmp/perf/external/perf_side_by_side_comparison.json"
+	defaultExternalMergedReportPath     = ".tmp/perf/external/perf_side_by_side_report.md"
 )
 
 type tailBenchmarkStats struct {
@@ -470,6 +476,9 @@ func writeJSON[T any](path string, value T) error {
 }
 
 func writeOwnerOnlyFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create output directory: %w", err)
+	}
 	return os.WriteFile(path, data, 0o600)
 }
 
@@ -854,7 +863,7 @@ func commandCaptureC(arguments []string) error {
 	var samples = flagSet.Int("samples", 20, "number of benchmark samples")
 	var timeout = flagSet.Duration("timeout", defaultCaptureTimeout, "maximum capture runtime")
 	var progressInterval = flagSet.Duration("progress-interval", defaultProgressInterval, "progress log interval")
-	var outPath = flagSet.String("out", "tools/perf_tail_c_current.json", "output JSON path")
+	var outPath = flagSet.String("out", defaultExternalCTailCurrentPath, "output JSON path")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}
@@ -1008,9 +1017,9 @@ func commandMerge(arguments []string) error {
 	var manifestPath = flagSet.String("manifest", "tools/perf_api_manifest.json", "API benchmark manifest")
 	var parityPath = flagSet.String("parity-manifest", "tools/parity_manifest.json", "canonical parity manifest")
 	var goPath = flagSet.String("go", "tools/perf_tail_current.json", "Go tail metrics JSON")
-	var cPath = flagSet.String("c", "tools/perf_tail_c_current.json", "C tail metrics JSON")
-	var outJSON = flagSet.String("out-json", "tools/perf_side_by_side_current.json", "merged output JSON")
-	var outMarkdown = flagSet.String("out-md", "tools/perf_side_by_side_report.md", "merged output markdown")
+	var cPath = flagSet.String("c", defaultExternalCTailCurrentPath, "C tail metrics JSON")
+	var outJSON = flagSet.String("out-json", defaultExternalMergedCurrentPath, "merged output JSON")
+	var outMarkdown = flagSet.String("out-md", defaultExternalMergedReportPath, "merged output markdown")
 	var requireComplete = flagSet.Bool("require-complete", false, "require all enabled rows to have both Go and C metrics")
 	var requireIntegrationComplete = flagSet.Bool("require-integration-complete", false, "require enabled integration rows to have both Go and C metrics")
 	var minComparable = flagSet.Int("min-comparable", 0, "minimum comparable Go/C rows required")
@@ -1178,9 +1187,9 @@ func commandMerge(arguments []string) error {
 
 func commandCompareMerged(arguments []string) error {
 	var flagSet = flag.NewFlagSet("compare-merged", flag.ContinueOnError)
-	var baselinePath = flagSet.String("baseline", "tools/perf_side_by_side_baseline.json", "baseline merged JSON")
-	var currentPath = flagSet.String("current", "tools/perf_side_by_side_current.json", "current merged JSON")
-	var outPath = flagSet.String("out", "tools/perf_side_by_side_comparison.json", "output comparison JSON")
+	var baselinePath = flagSet.String("baseline", defaultExternalMergedBaselinePath, "baseline merged JSON")
+	var currentPath = flagSet.String("current", defaultExternalMergedCurrentPath, "current merged JSON")
+	var outPath = flagSet.String("out", defaultExternalMergedComparisonPath, "output comparison JSON")
 	if err := flagSet.Parse(arguments); err != nil {
 		return err
 	}

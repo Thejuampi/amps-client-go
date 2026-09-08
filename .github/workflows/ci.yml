@@ -22,7 +22,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.10"
+          go-version: "1.25.13"
           check-latest: true
 
       - name: Generate gosec report
@@ -74,7 +74,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            go-version: "1.25.10"
+            go-version: "1.25.13"
             race: true
           - os: ubuntu-latest
             go-version: "1.26.3"
@@ -83,7 +83,7 @@ jobs:
             go-version: "stable"
             race: false
           - os: windows-latest
-            go-version: "1.25.10"
+            go-version: "1.25.13"
             race: false
           - os: windows-latest
             go-version: "1.26.3"
@@ -108,11 +108,25 @@ jobs:
       - name: Build
         run: go build ./...
 
-  preprod-smoke:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  validate:
+    if: always()
     needs:
       - analysis
       - test-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all blocking CI jobs
+        env:
+          ANALYSIS_RESULT: ${{ needs.analysis.result }}
+          TEST_MATRIX_RESULT: ${{ needs.test-matrix.result }}
+        run: |
+          test "$ANALYSIS_RESULT" = "success"
+          test "$TEST_MATRIX_RESULT" = "success"
+
+  preprod-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - validate
     runs-on: ubuntu-latest
     env:
       AMPS_TEST_URI: ${{ secrets.AMPS_TEST_URI }}
@@ -127,7 +141,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.10"
+          go-version: "1.25.13"
           check-latest: true
 
       - name: Stress check

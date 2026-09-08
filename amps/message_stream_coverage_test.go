@@ -58,7 +58,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	waitingStream.SetTimeout(1)
 	waitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("waiting")}
 	waitingStream.queue.enqueue(waitingMessage)
-	if !waitingStream.waitForNextWithTimeout() {
+	if !waitingStream.waitForNextWithTimeout(waitingStream.Timeout()) {
 		t.Fatalf("expected timeout wait helper to dequeue preloaded message")
 	}
 	if waitingStream.current != waitingMessage {
@@ -68,7 +68,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	saturatingWaitingStream.SetTimeout(maxMessageStreamTimeoutMillis + 1)
 	saturatingWaitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("saturating-wait")}
 	saturatingWaitingStream.queue.enqueue(saturatingWaitingMessage)
-	if !saturatingWaitingStream.waitForNextWithTimeout() {
+	if !saturatingWaitingStream.waitForNextWithTimeout(saturatingWaitingStream.Timeout()) {
 		t.Fatalf("expected oversized timeout wait helper to dequeue preloaded message")
 	}
 	if saturatingWaitingStream.current != saturatingWaitingMessage {
@@ -120,7 +120,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	timedReadingStream.SetTimeout(1)
 	timedReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("timed-reading")}
 	timedReadingStream.queue.enqueue(timedReadingMessage)
-	if !timedReadingStream.waitForNextWithTimeout() {
+	if !timedReadingStream.waitForNextWithTimeout(timedReadingStream.Timeout()) {
 		t.Fatalf("expected timeout wait helper to dequeue message with timeout configured")
 	}
 	if timedReadingStream.current != timedReadingMessage {
@@ -298,6 +298,51 @@ func TestMessageStreamHasNextAndMessageHandlerCoverage(t *testing.T) {
 	next := stream.Next()
 	if next == nil || string(next.Data()) != "x" {
 		t.Fatalf("unexpected dequeued message")
+	}
+}
+
+func TestMessageStreamFromExistingHandlerWithoutCommandDoesNotRegisterRoute(t *testing.T) {
+	var client = NewClient("stream-handler-without-command")
+	var stream = newMessageStream(client)
+	var handler = func(*Message) error { return nil }
+
+	if returned := stream.FromExistingHandler(handler); returned != stream {
+		t.Fatal("FromExistingHandler() did not preserve the stream")
+	}
+	if _, exists := client.routes.Load(""); exists {
+		t.Fatal("FromExistingHandler() registered an empty command route")
+	}
+}
+
+func TestMessageStreamConflationFallbackEnqueuesAfterReconfiguration(t *testing.T) {
+	var stream = newMessageStream(nil)
+	var message = &Message{header: &_Header{command: CommandPublish, sowKey: []byte("key")}, data: []byte("value")}
+
+	stream.enqueueConflatedMessage(message, "key")
+
+	var queued, ok = stream.queue.tryDequeue()
+	if !ok || queued != message {
+		t.Fatalf("fallback queue result = (%p, %v), want (%p, true)", queued, ok, message)
+	}
+}
+
+func TestMessageStreamWaitForNextWithTimeoutUsesCapturedValue(t *testing.T) {
+	var stream = newMessageStream(nil)
+	stream.SetTimeout(0)
+	defer stream.queue.close()
+
+	var returned = make(chan bool, 1)
+	go func() {
+		returned <- stream.waitForNextWithTimeout(5)
+	}()
+
+	select {
+	case result := <-returned:
+		if !result || !stream.timedOut.Load() {
+			t.Fatalf("wait result = (%v, timedOut=%v), want (true, true)", result, stream.timedOut.Load())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitForNextWithTimeout() ignored its captured timeout argument")
 	}
 }
 

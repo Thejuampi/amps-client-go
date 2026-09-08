@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +23,12 @@ func connectAndLogonStressClient(t *testing.T, uri string, clientName string, er
 
 	var client = amps.NewClient(clientName)
 	client.SetErrorHandler(func(err error) {
+		// Race instrumentation can make a healthy flush exceed the client's
+		// diagnostic threshold. The test's completion timeout still catches a
+		// flush that never receives its acknowledgement.
+		if err != nil && strings.HasPrefix(err.Error(), "warning: still waiting ") {
+			return
+		}
 		select {
 		case errCh <- err:
 		default:

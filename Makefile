@@ -10,10 +10,10 @@ GOVULNCHECK_VERSION ?= v1.1.4
 GITLEAKS_VERSION ?= v8.30.1
 GOSEC_VERSION ?= v2.22.4
 BENCHSTAT_VERSION ?= latest
-MIN_GO_TOOLCHAIN ?= go1.25.10+auto
+MIN_GO_TOOLCHAIN ?= go1.25.13+auto
 CANDIDATE_GO_TOOLCHAIN ?= go1.26.3+auto
 PERF_GO_TOOLCHAIN ?= $(MIN_GO_TOOLCHAIN)
-VULN_GO_TOOLCHAIN ?= go1.25.11+auto
+VULN_GO_TOOLCHAIN ?= go1.25.13+auto
 COVERPROFILE ?= $(abspath coverage.out)
 FUZZTIME ?= 5s
 STRESS_COUNT ?= 20
@@ -23,7 +23,7 @@ GO_CACHE_DIR ?= $(abspath .tmp/go-cache)
 PERF_COMPARE_DIR ?= $(abspath .tmp/perf)
 PERF_COMPARE_OLD_TOOLCHAIN ?= $(MIN_GO_TOOLCHAIN)
 PERF_COMPARE_NEW_TOOLCHAIN ?= $(CANDIDATE_GO_TOOLCHAIN)
-PERF_COMPARE_OLD_LABEL ?= go1.25.10
+PERF_COMPARE_OLD_LABEL ?= go1.25.13
 PERF_COMPARE_NEW_LABEL ?= go1.26.3
 PERF_COMPARE_BENCHTIME ?= 1s
 PERF_COMPARE_SAMPLES ?= 10
@@ -31,7 +31,7 @@ PERF_COMPARE_MAX_REGRESSION ?= 1000000
 PERF_COMPARE_OLD_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_OLD_LABEL).bench.txt
 PERF_COMPARE_NEW_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_NEW_LABEL).bench.txt
 PERF_COMPARE_REPORT ?= $(PERF_COMPARE_DIR)/benchstat.txt
-STRESS_PKG ?= ./amps/... ./cmd/gofer ./internal/... ./tools/coveragegate ./tools/patterncheck ./tools/perfgate ./tools/perfreport ./tools/withtoolchain
+STRESS_PKG ?= ./amps/... ./cmd/gofer ./internal/... ./tools/coveragegate ./tools/patterncheck ./tools/perfgate ./tools/perfreport ./tools/publicationcheck ./tools/withtoolchain
 MARKDOWNLINT ?= npx --yes markdownlint-cli2
 MARKDOWNLINT_REPORT ?= $(abspath markdownlint-report.txt)
 GITLEAKS_REPORT ?= $(abspath gitleaks-report.sarif)
@@ -53,7 +53,7 @@ ENSURE_PERF_COMPARE_DIR = mkdir -p "$(PERF_COMPARE_DIR)"
 FUZZ_ENV = TMP=$(FUZZ_TMPDIR) TEMP=$(FUZZ_TMPDIR) TMPDIR=$(FUZZ_TMPDIR) GOTMPDIR=$(FUZZ_TMPDIR) GOCACHE=$(GO_CACHE_DIR)
 endif
 
-.PHONY: help build test test-race compat-check integration-test integration-fakeamps integration-live-smoke install fmt vet static-scan golangci-scan pattern-scan leak-check fuzz-smoke stress-check preprod-check preprod-check-hosted security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check perf-compare-toolchains release release-hosted
+.PHONY: help build test test-race compat-check integration-test integration-fakeamps integration-live-smoke install fmt vet static-scan golangci-scan pattern-scan publication-scan leak-check fuzz-smoke stress-check preprod-check preprod-check-hosted security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check perf-compare-toolchains release release-hosted
 
 help:
 	@echo Available targets:
@@ -69,6 +69,7 @@ help:
 	@echo   make static-scan      Run blocking static analysis (vet, staticcheck, ineffassign, errcheck, patterncheck, expanded golangci-lint)
 	@echo   make golangci-scan    Run expanded golangci-lint bug detectors from .golangci.yml
 	@echo   make pattern-scan     Run the repo-specific bug-pattern analyzer
+	@echo   make publication-scan Prevent publication of unauthorized external-client benchmark results
 	@echo   make leak-check       Run goroutine leak detection on key packages
 	@echo   make fuzz-smoke       Run short fuzzing smoke tests for parser-heavy code
 	@echo   make stress-check     Run repeated shuffled race tests before pre-prod
@@ -129,6 +130,7 @@ static-scan:
 	$(GO) run github.com/gordonklaus/ineffassign@$(INEFFASSIGN_VERSION) $(PKG)
 	$(GO) run github.com/kisielk/errcheck@$(ERRCHECK_VERSION) -ignoretests $(PKG)
 	$(MAKE) pattern-scan PKG=$(PKG)
+	$(MAKE) publication-scan
 	$(MAKE) golangci-scan PKG=$(PKG)
 
 golangci-scan:
@@ -136,6 +138,9 @@ golangci-scan:
 
 pattern-scan:
 	$(GO) run ./tools/patterncheck $(PKG)
+
+publication-scan:
+	$(GO) run ./tools/publicationcheck -root .
 
 leak-check:
 	@$(ENSURE_FUZZ_TMPDIR)
