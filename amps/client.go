@@ -118,7 +118,6 @@ type Client struct {
 
 	connected  atomic.Bool
 	connection net.Conn
-	logging    bool
 	url        *url.URL
 	tlsConfig  *tls.Config
 
@@ -1389,7 +1388,6 @@ func (client *Client) onConnectionErrorWithCallbackModeForConnection(err error, 
 
 	client.connected.Store(false)
 	client.stopped.Store(true)
-	client.logging = false
 	client.connectionStateLock.Unlock()
 
 	client.heartbeatLock.Lock()
@@ -1766,8 +1764,6 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		ctx = context.Background()
 	}
 
-	client.logging = false
-
 	if client.ErrorHandler() == nil {
 		client.SetErrorHandler(defaultErrorHandler(client))
 	}
@@ -2063,7 +2059,6 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		logonTimeout = time.Millisecond * time.Duration(optionalParams[0].Timeout) // #nosec G115 -- timeout is user-provided bounded milliseconds
 	}
 
-	client.logging = true
 	logonRetries := 3
 	client.routes.Store(commandID, func(message *Message) (logonAckErr error) {
 		if message.header.command == CommandAck {
@@ -2172,8 +2167,6 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 			logonFailed = NewError(DisconnectedError, "client disconnected while waiting for logon ack")
 		}
 	}
-	client.logging = false
-
 	client.routes.Delete(commandID)
 
 	if logonFailed == nil {
@@ -3043,7 +3036,6 @@ func (client *Client) Disconnect() (err error) {
 
 	client.connectionStateLock.Lock()
 	client.connected.Store(false)
-	client.logging = false
 	client.stopped.Store(true)
 	var connection = client.connection
 	client.connection = nil

@@ -412,10 +412,10 @@ func (client *Client) applyAckBookkeeping(message *Message) {
 	bookmarkStore := state.bookmarkStore
 	handler := state.failedWriteHandler
 	pendingCommand := state.pendingPublishByCmdID[commandID]
-	// Any terminal ack resolves the command, so the retained clone can go.
-	// Releasing only on failure/persisted left every other ack type retained
-	// until the connection ended.
-	if commandID != "" && (status == "failure" || status == "success") {
+	// Failures and persisted successes are terminal. Earlier success stages may
+	// be followed by another acknowledgement, so keep the command available for
+	// later failure reporting.
+	if commandID != "" && (status == "failure" || (status == "success" && (ackType&AckTypePersisted) != 0)) {
 		releasePendingPublishLocked(state, commandID)
 	}
 	state.lock.Unlock()

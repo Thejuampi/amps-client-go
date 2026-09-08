@@ -4,7 +4,7 @@ param(
   [string]$ExtraExe = "",
   [string]$RequireBenchmarks = "",
   [int]$Samples = 20,
-  [string]$Out = "tools/perf_tail_c_current.json",
+  [string]$Out = ".tmp/perf/external/perf_tail_c_current.json",
   [string]$Timeout = "5m",
   [string]$ProgressInterval = "20s",
   [switch]$StartFakeamps,

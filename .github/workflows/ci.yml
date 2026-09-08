@@ -22,7 +22,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.10"
+          go-version: "1.25.13"
           check-latest: true
 
       - name: Generate gosec report
@@ -74,7 +74,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            go-version: "1.25.10"
+            go-version: "1.25.13"
             race: true
           - os: ubuntu-latest
             go-version: "1.26.3"
@@ -83,7 +83,7 @@ jobs:
             go-version: "stable"
             race: false
           - os: windows-latest
-            go-version: "1.25.10"
+            go-version: "1.25.13"
             race: false
           - os: windows-latest
             go-version: "1.26.3"
@@ -127,7 +127,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.10"
+          go-version: "1.25.13"
           check-latest: true
 
       - name: Stress check

@@ -88,11 +88,8 @@ func TestDisconnectClearsHeartbeatRuntimeState(t *testing.T) {
 // receive goroutine reads ms.depth on every enqueue, so tuning a live stream
 // raced with delivery.
 //
-// This covers ONLY that pair of fields. MessageStream as a whole is not
-// race-free: commandID/queryID/unsubscribeID are still written unsynchronised
-// by SetSubscription while Close/Next write them under lifecycleLock, and
-// Close can read a torn commandID/unsubscribeID pair and unsubscribe the wrong
-// route. Those remain open.
+// This test isolates that pair of fields. Route identifier lifecycle locking is
+// covered separately by the stream reconfiguration regression tests.
 func TestMessageStreamDepthTuningDoesNotRaceWithDelivery(t *testing.T) {
 	var stream = newMessageStream(nil)
 	stream.setRunning()

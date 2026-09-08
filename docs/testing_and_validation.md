@@ -54,10 +54,10 @@ go test -race -shuffle=on -count=20 ./... -skip Integration
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
-go run ./tools/withtoolchain -toolchain go1.25.10+auto -- test ./... -skip Integration
-go run ./tools/withtoolchain -toolchain go1.25.10+auto -- build ./...
-go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run ./tools/perfgate -baseline tools/perf_baseline.json
-go run ./tools/withtoolchain -toolchain go1.25.11+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.25.13+auto -- test ./... -skip Integration
+go run ./tools/withtoolchain -toolchain go1.25.13+auto -- build ./...
+go run ./tools/withtoolchain -toolchain go1.25.13+auto -- run ./tools/perfgate -baseline tools/perf_baseline.json
+go run ./tools/withtoolchain -toolchain go1.25.13+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
 Windows pre-commit or pre-release parity with the CI static-analysis host:
@@ -110,7 +110,7 @@ Pre-production validation adds heavier checks that are useful before a cut or de
 
 `make release` now flows through the pre-production gate before the existing unit, race, build, fake broker, and parity steps.
 
-Toolchain compatibility and performance proof are separate gates. `make compat-check` verifies the Go 1.25.10 compatibility floor. `make perf-compare-toolchains` runs the hot-path benchmark set on Go 1.25.10 and Go 1.26.3, saves both raw outputs under `.tmp/perf/`, and writes `.tmp/perf/benchstat.txt`. Keep Go 1.25.10 as the release/performance default unless that comparison shows a meaningful Go 1.26.3 client speedup with no unexplained allocation regressions or important benchmark losses.
+Toolchain compatibility and performance proof are separate gates. `make compat-check` verifies the Go 1.25.13 compatibility floor. `make perf-compare-toolchains` runs the hot-path benchmark set on Go 1.25.13 and Go 1.26.3, saves both raw outputs under `.tmp/perf/`, and writes `.tmp/perf/benchstat.txt`. Keep Go 1.25.13 as the release/performance default unless that comparison shows a meaningful Go 1.26.3 client speedup with no unexplained allocation regressions or important benchmark losses.
 
 ## CI and Release Automation
 
@@ -120,7 +120,7 @@ Toolchain compatibility and performance proof are separate gates. `make compat-c
 
 The repository also runs a separate GitHub CodeQL workflow with `security-and-quality` queries for deeper code scanning on pull requests, pushes to `main`, and a weekly schedule.
 
-`make vuln-scan` runs `govulncheck` as an advisory scan. Standard-library findings are toolchain-sensitive, so the workflow records them without turning them into a required merge gate.
+`make vuln-scan` runs `govulncheck` with the pinned patched Go toolchain and is part of the blocking `make scan` merge gate. Keep that toolchain current so standard-library findings reflect the release runtime rather than a stale compiler patch.
 
 ## Coverage Gate (`./amps/...`)
 

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 type deliveryHarness struct {
 	listener net.Listener
 	clients  []*amps.Client
+	handlers sync.WaitGroup
 }
 
 func startDeliveryHarness(t *testing.T) *deliveryHarness {
@@ -26,22 +28,33 @@ func startDeliveryHarness(t *testing.T) *deliveryHarness {
 		t.Fatalf("failed to listen: %v", err)
 	}
 
+	var harness = &deliveryHarness{listener: listener}
+
+	harness.handlers.Add(1)
 	go func() {
+		defer harness.handlers.Done()
 		for {
 			var conn, acceptErr = listener.Accept()
 			if acceptErr != nil {
 				return
 			}
-			go handleConnection(conn)
+			harness.handlers.Add(1)
+			go func() {
+				defer harness.handlers.Done()
+				handleConnection(conn)
+			}()
 		}
 	}()
 
-	var harness = &deliveryHarness{listener: listener}
+	// Connection handlers read fakeamps package globals (sow, journal). Tests
+	// that swap those globals restore them in their own cleanup, so this must
+	// wait for every handler to exit first or the restore races the server.
 	t.Cleanup(func() {
 		for _, client := range harness.clients {
 			_ = client.Close()
 		}
 		_ = listener.Close()
+		harness.handlers.Wait()
 	})
 	return harness
 }

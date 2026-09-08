@@ -143,6 +143,30 @@ func TestApplyAckBookkeepingDiscardPublishOnPersistedAck(t *testing.T) {
 	}
 }
 
+func TestApplyAckBookkeepingKeepsPublishAfterNonTerminalSuccessAck(t *testing.T) {
+	var client = NewClient("ack-bookkeeping-non-terminal")
+	var command = NewCommand("publish").SetTopic("orders").SetData([]byte(`{"id":1}`)).SetCommandID("cmd-1")
+	var state = ensureClientState(client)
+	state.lock.Lock()
+	retainPendingPublishLocked(state, "cmd-1", command)
+	state.lock.Unlock()
+
+	var ackType = AckTypeReceived
+	client.applyAckBookkeeping(&Message{header: &_Header{
+		command:   CommandAck,
+		commandID: []byte("cmd-1"),
+		status:    []byte("success"),
+		ackType:   &ackType,
+	}})
+
+	state.lock.Lock()
+	var _, exists = state.pendingPublishByCmdID["cmd-1"]
+	state.lock.Unlock()
+	if !exists {
+		t.Fatal("non-terminal success ack removed pending publish needed by later failure reporting")
+	}
+}
+
 func TestPublishStoreRequestsPersistedAckForCleanup(t *testing.T) {
 	client := NewClient("publish-store-persisted-ack")
 	conn := newTestConn()

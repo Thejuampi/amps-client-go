@@ -507,24 +507,27 @@ func (ms *MessageStream) messageHandler(message *Message) (err error) {
 	// sowKeyMap, and writing to a nil map panics on the client receive
 	// goroutine, which has no recover, taking down the process. Deferring the
 	// unlock also stops a panic below from leaving the stream locked forever.
+	ms.enqueueConflatedMessage(copiedMessage, sowKey)
+	return nil
+}
+
+func (ms *MessageStream) enqueueConflatedMessage(message *Message, sowKey string) {
 	ms.lock.Lock()
 	defer ms.lock.Unlock()
 
 	if ms.sowKeyMap == nil {
 		// Reconfigured out of conflation while this message was in flight; it
 		// belongs to the previous configuration, so deliver it unconflated.
-		ms.enqueueMessageLocked(copiedMessage)
-		return nil
+		ms.enqueueMessageLocked(message)
+		return
 	}
 
 	if existingMessage, exists := ms.sowKeyMap[sowKey]; exists {
-		existingMessage.Replace(copiedMessage)
-		return nil
+		existingMessage.Replace(message)
+		return
 	}
-	ms.sowKeyMap[sowKey] = copiedMessage
-	ms.enqueueMessageLocked(copiedMessage)
-
-	return nil
+	ms.sowKeyMap[sowKey] = message
+	ms.enqueueMessageLocked(message)
 }
 
 func (ms *MessageStream) setState(state int32) {

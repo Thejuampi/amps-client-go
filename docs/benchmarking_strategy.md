@@ -1,13 +1,13 @@
 # Benchmarking Strategy
 
-This document defines benchmark coverage for `amps/client.go` and `amps/ha_client.go` against deterministic fake server scenarios, with repeatable comparison against official C benchmarks.
+This document defines benchmark coverage for `amps/client.go` and `amps/ha_client.go` against deterministic fake server scenarios.
 
 ## Goals
 
 - Keep low-noise micro regressions visible in PRs.
 - Measure realistic end-to-end behavior against `tools/fakeamps`.
 - Track HA reconnect/failover recovery characteristics.
-- Maintain stable Go-vs-C side-by-side baselines over time.
+- Preserve reproducible internal Go baselines over time.
 
 ## Benchmark Layers
 
@@ -69,20 +69,24 @@ Sub-benchmark dimensions order:
 1. Go baseline
 
 - Keep `tools/perf_baseline.json` for stable micro gates.
-- The module minimum is Go 1.25, and Go 1.25.10 remains the release/performance default unless same-host A/B proof shows Go 1.26.3 is faster.
-- Use `make perf-compare-toolchains` before a toolchain-driven performance release. It runs the baseline benchmark set with Go 1.25.10 and Go 1.26.3, stores raw outputs under `.tmp/perf/`, and writes a benchstat report.
+- The module minimum is Go 1.25, and Go 1.25.13 remains the release/performance default unless same-host A/B proof shows Go 1.26.3 is faster.
+- Use `make perf-compare-toolchains` before a toolchain-driven performance release. It runs the baseline benchmark set with Go 1.25.13 and Go 1.26.3, stores raw outputs under `.tmp/perf/`, and writes a benchstat report.
 - Do not recapture `tools/perf_baseline.json` or publish a performance release when the Go 1.26.3 comparison is neutral, noisy, slower, or shows unexplained allocation regressions.
 - `tools/perfgate` evaluates repeated samples and uses the median result per benchmark to reduce single-run noise.
 - Use benchmark groups in `tools/perf_baseline.json` only for known volatile microbenchmarks; keep the default threshold for the rest.
 - Capture tails with `tools/perfreport capture-go` for broader profiles.
 
-1. C baseline
+1. Internal comparison artifacts
 
-- Capture with `official_c_parity_benchmark` and `tools/cperf/fakeamps_c_integration_benchmark` in the same fake server profile window.
+- Save raw Go output, summarized tails (p50/p95/p99), and metadata (`profile`, `source_command`, commit SHA in CI).
+- Keep toolchain comparisons under `.tmp/perf/`; do not commit generated reports.
 
-1. Comparison artifacts
+## External Benchmark Publication Policy
 
-- Save raw output, summarized tails (p50/p95/p99), and metadata (`profile`, `source_command`, commit SHA in CI).
+- External-client benchmark results are private evaluation material unless their publication is expressly authorized in writing.
+- Do not commit raw samples, summarized results, winner labels, ratios, or reports that compare this project with a vendor-supplied or third-party client.
+- Keep permitted internal evaluation output under `.tmp/perf/external/`.
+- Run `make publication-scan` before every release. The check rejects public comparison claims and external-client result artifacts.
 
 ## Gate Policy
 
@@ -96,10 +100,6 @@ Nightly (`integration`, `ha_integration`, `soak`):
 - Alert on >10% regressions.
 - Fail nightly after two consecutive breaches.
 - HA reconnect/recovery regressions >15% follow same policy.
-
-Go vs C tracking:
-
-- Alert on ratio drift >12% from baseline band per benchmark ID.
 
 ## Tooling Targets
 

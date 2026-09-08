@@ -85,17 +85,17 @@ client := amps.NewClient("entrypoint-example")
 client.SetCompression(true)
 
 if err := client.Connect("tcp://localhost:9000/amps/json"); err != nil {
-	panic(err)
+ panic(err)
 }
 defer client.Close()
 
 if err := client.Logon(); err != nil {
-	panic(err)
+ panic(err)
 }
 
 stream, err := client.Execute(amps.NewCommand("flush"))
 if err != nil {
-	panic(err)
+ panic(err)
 }
 defer stream.Close()
 ```

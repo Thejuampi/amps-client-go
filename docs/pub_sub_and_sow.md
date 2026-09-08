@@ -108,20 +108,20 @@ Recovery path:
 ```go
 stream, err := client.SowAndSubscribe("orders", "/status = 'open'")
 if err != nil {
-	panic(err)
+ panic(err)
 }
 defer stream.Close()
 
 for stream.HasNext() {
-	msg := stream.Next()
-	if msg == nil {
-		break
-	}
-	// process snapshot or live update
+ msg := stream.Next()
+ if msg == nil {
+  break
+ }
+ // process snapshot or live update
 }
 
 if err := client.Unsubscribe(); err != nil {
-	panic(err)
+ panic(err)
 }
 ```
 

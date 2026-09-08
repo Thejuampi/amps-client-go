@@ -75,17 +75,17 @@ State enum is defined in [Reference: Types and Handlers](reference_types_and_han
 
 ```go
 client.SetCompression(true).
-	SetTransportFilter(func(direction amps.TransportFilterDirection, payload []byte) []byte {
-		// preserve framing; optionally inspect bytes
-		return payload
-	}).
-	SetReceiveRoutineStartedCallback(func() {
-		// record receive loop startup
-	})
+ SetTransportFilter(func(direction amps.TransportFilterDirection, payload []byte) []byte {
+  // preserve framing; optionally inspect bytes
+  return payload
+ }).
+ SetReceiveRoutineStartedCallback(func() {
+  // record receive loop startup
+ })
 
 client.AddConnectionStateListener(amps.ConnectionStateListenerFunc(func(state amps.ConnectionState) {
-	// emit metrics or logs
-	_ = state
+ // emit metrics or logs
+ _ = state
 }))
 ```
 
