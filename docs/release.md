@@ -35,7 +35,14 @@ Pick the release version from the merged changes:
 - minor `X.Y+1.0`: backwards-compatible features or public API additions
 - major `X+1.0.0`: breaking API or behavior changes
 
-For the current change set, the correct bump is a patch release.
+The 1.0.0 release is a major bump: `cppcompat.CRC.Compute` changes its return
+type from `uint32` to `uint64`, and corrected acknowledgement, stream, and query
+semantics can require application changes. See the
+[changelog](../CHANGELOG.md) and [migration guide](migration_guide.md).
+
+Prepare `VERSION`, the README version, `amps.ClientVersion`, and the newest
+dated changelog entry together. Tests require those markers to agree. The
+module path stays `github.com/Thejuampi/amps-client-go` for v1.
 
 ## Local Strict Release
 
@@ -60,6 +67,12 @@ That keeps the same release gates as local release, except parity is conditional
 - if it does not exist, parity is skipped and the rest of the hosted release gates still run
 
 Use local `make release` when you need the full strict parity-validated release path.
+
+The workflow accepts a version already prepared and committed on `main`. It
+runs all gates and skips the version-bump commit when the markers already
+match, then creates the requested tag and release. The changelog must contain
+the corresponding version before running the workflow. A dry run still skips
+committing, tagging, pushing, and publishing.
 
 ## One-time Setup
 

@@ -546,6 +546,42 @@ func handleQueueAckByBookmarkBatch(bookmarks string) []*queueLease {
 	return released
 }
 
+func acknowledgeQueueBookmarks(topic string, bookmarks string, cancel bool) int {
+	var values = splitQueueAckValues(bookmarks)
+	if len(values) == 0 {
+		return 0
+	}
+	var wanted = make(map[string]struct{}, len(values))
+	for _, bookmark := range values {
+		wanted[bookmark] = struct{}{}
+	}
+	var released []*queueLease
+	queueLeasesMu.Lock()
+	for key, lease := range queueLeases {
+		if lease == nil || lease.topic != topic {
+			continue
+		}
+		if _, matched := wanted[lease.bookmark]; matched {
+			released = append(released, lease)
+			delete(queueLeases, key)
+		}
+	}
+	queueLeasesMu.Unlock()
+	if len(released) > 0 {
+		if cancel {
+			for _, lease := range released {
+				requeueMessage(lease)
+			}
+		} else if cache := getSOW(); cache != nil {
+			for _, lease := range released {
+				cache.delete(topic, lease.sowKey)
+			}
+		}
+		dispatchPendingQueueTopic(topic)
+	}
+	return len(released)
+}
+
 func splitQueueAckValues(raw string) []string {
 	if raw == "" {
 		return nil

@@ -22,7 +22,7 @@ import (
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.8.20"
+	ClientVersion = "1.0.0"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
@@ -111,20 +111,29 @@ type Client struct {
 	acksLock          sync.Mutex
 	ackProcessingLock sync.Mutex
 	syncAckProcessing chan _Result
+	syncAckReceived   bool
 	routes            *sync.Map
 	messageStreams    *sync.Map
 	unsubscribeRoutes *sync.Map
 	parityState       atomic.Pointer[clientParityState]
 
+	generation atomic.Uint64
 	connected  atomic.Bool
 	connection net.Conn
 	url        *url.URL
 	tlsConfig  *tls.Config
 
-	sendBuffer *bytes.Buffer
-	command    *Command
-	sendHb     bool
-	hbCommand  *Command
+	sendBuffer      *bytes.Buffer
+	command         *Command
+	batchLimit      atomic.Uint64
+	batchTimeout    atomic.Int64
+	batchBuffer     []byte
+	batchConnection net.Conn
+	batchGeneration uint64
+	batchEpoch      uint64
+	batchTimer      *time.Timer
+	sendHb          bool
+	hbCommand       *Command
 
 	replicationGroup string
 
@@ -146,6 +155,14 @@ type socketOptions struct {
 	receiveBuffer    int
 	receiveBufferSet bool
 	compression      string
+	connectTimeout   time.Duration
+	keepAlive        bool
+	keepAliveSet     bool
+	linger           int
+	lingerSet        bool
+	ipPreference     string
+	httpPreflight    bool
+	httpPreflightSet bool
 }
 
 type socketConfigurator interface {
@@ -185,6 +202,39 @@ func parseSocketOptions(values url.Values) (socketOptions, error) {
 			}
 			options.receiveBuffer = parsed
 			options.receiveBufferSet = true
+		case "tcp_connecttimeout":
+			var parsed, err = parseSocketInt(value)
+			if err != nil || int64(parsed) > (1<<63-1)/int64(time.Millisecond) {
+				return socketOptions{}, fmt.Errorf("invalid connect timeout %q", value)
+			}
+			options.connectTimeout = time.Duration(parsed) * time.Millisecond
+		case "tcp_keepalive":
+			var parsed, err = parseSocketBool(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.keepAlive, options.keepAliveSet = parsed, true
+		case "tcp_linger":
+			var parsed, err = parseSocketInt(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.linger, options.lingerSet = parsed, true
+		case "http_preflight":
+			var parsed, err = parseSocketBool(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.httpPreflight, options.httpPreflightSet = parsed, true
+		case "pretty":
+			if _, err := parseSocketBool(value); err != nil {
+				return socketOptions{}, err
+			}
+		case "ip_protocol_prefer":
+			if value != "ipv4" && value != "ipv6" {
+				return socketOptions{}, fmt.Errorf("invalid IP protocol preference %q", value)
+			}
+			options.ipPreference = value
 		case "compression":
 			switch strings.TrimSpace(value) {
 			case "zlib":
@@ -259,6 +309,24 @@ func applySocketOptions(connection net.Conn, options socketOptions) error {
 		underlying = wrapped.NetConn()
 	}
 
+	if options.keepAliveSet {
+		if socket, ok := underlying.(interface{ SetKeepAlive(bool) error }); ok {
+			if err := socket.SetKeepAlive(options.keepAlive); err != nil {
+				return err
+			}
+		}
+	}
+	if options.lingerSet {
+		if socket, ok := underlying.(interface{ SetLinger(int) error }); ok {
+			var linger = options.linger
+			if linger == 0 {
+				linger = -1
+			}
+			if err := socket.SetLinger(linger); err != nil {
+				return err
+			}
+		}
+	}
 	configurable, ok := underlying.(socketConfigurator)
 	if !ok {
 		return nil
@@ -341,6 +409,10 @@ func (client *Client) startSyncAckWarning(command *Command, commandID string, ro
 	if client == nil || command == nil || syncAckWarningInitialDelay <= 0 {
 		return nil
 	}
+	var processing = client.getSyncAckProcessing()
+	if processing == nil {
+		return nil
+	}
 
 	var commandName = commandIntToString(command.header.command)
 	if commandName == "" {
@@ -369,6 +441,17 @@ func (client *Client) startSyncAckWarning(command *Command, commandID string, ro
 			case <-timer.C:
 			}
 
+			select {
+			case <-done:
+				return
+			default:
+			}
+			client.ackProcessingLock.Lock()
+			var received = client.syncAckProcessing != processing || client.syncAckReceived
+			client.ackProcessingLock.Unlock()
+			if received {
+				return
+			}
 			waited += delay
 			client.reportWarning(fmt.Errorf("warning: still waiting %s for processed ack for %s command (command_id=%q route_id=%q)", waited, commandName, commandID, routeID))
 
@@ -419,6 +502,7 @@ trimEnd:
 func (client *Client) setSyncAckProcessing(channel chan _Result) {
 	client.ackProcessingLock.Lock()
 	client.syncAckProcessing = channel
+	client.syncAckReceived = false
 	client.ackProcessingLock.Unlock()
 }
 
@@ -445,6 +529,7 @@ func (client *Client) signalSyncAckProcessing(result _Result) bool {
 	}
 	select {
 	case client.syncAckProcessing <- result:
+		client.syncAckReceived = true
 		return true
 	default:
 		return false
@@ -567,6 +652,14 @@ func (client *Client) send(command *Command) (err error) {
 	client.connectionStateLock.Unlock()
 	if conn == nil {
 		return errClientNotConnected
+	}
+	if limit, timeout := client.batchLimit.Load(), time.Duration(client.batchTimeout.Load()); limit > 0 && timeout > 0 && (command.header.command == CommandPublish || command.header.command == CommandDeltaPublish) {
+		return client.batchPublishFrame(conn, filtered, limit, timeout)
+	}
+	if len(client.batchBuffer) > 0 {
+		if err = client.flushPublishBatch(); err != nil {
+			return err
+		}
 	}
 	_, err = conn.Write(filtered)
 
@@ -836,6 +929,25 @@ func (client *Client) onMessage(message *Message) (err error) {
 	}
 
 	handled := false
+	var dataMessage = command == CommandPublish || command == CommandSOW || command == CommandOOF
+	var normalDelivery bool
+	var deliver = func(handler func(*Message) error) error {
+		if dataMessage && client.detectAndTrackDuplicate(message) {
+			return client.callDuplicateHandler(message)
+		}
+		normalDelivery = true
+		for {
+			var handlerErr = handler(message)
+			if handlerErr == nil || !errors.Is(handlerErr, errMessageStreamFull) {
+				return handlerErr
+			}
+			if !client.connected.Load() {
+				return NewError(DisconnectedError, "disconnected while waiting for stream capacity")
+			}
+			client.checkAndSendHeartbeat(false)
+			time.Sleep(time.Millisecond)
+		}
+	}
 	var routeID string
 	switch {
 	case len(queryIDBytes) > 0:
@@ -847,6 +959,7 @@ func (client *Client) onMessage(message *Message) (err error) {
 	}
 
 	if len(subIDsBytes) > 0 {
+		var originalSubID = message.header.subID
 		start := 0
 		for start < len(subIDsBytes) {
 			end := start
@@ -858,7 +971,8 @@ func (client *Client) onMessage(message *Message) (err error) {
 			if len(candidateRoute) > 0 {
 				if messageHandler, exists := client.routes.Load(unsafeStringFromBytes(candidateRoute)); exists {
 					handled = true
-					if handlerErr := messageHandler.(func(*Message) error)(message); handlerErr != nil && err == nil {
+					message.header.subID = candidateRoute
+					if handlerErr := deliver(messageHandler.(func(*Message) error)); handlerErr != nil && err == nil {
 						err = handlerErr
 					}
 				}
@@ -869,24 +983,20 @@ func (client *Client) onMessage(message *Message) (err error) {
 			}
 			start = end + 1
 		}
+		message.header.subID = originalSubID
 	} else if routeID != "" {
 		if messageHandler, exists := client.routes.Load(routeID); exists {
 			handled = true
-			err = messageHandler.(func(*Message) error)(message)
+			err = deliver(messageHandler.(func(*Message) error))
 		}
 	}
 
-	if globalErr, globalHandled := client.callGlobalCommandTypeHandler(command, message); globalHandled {
-		handled = true
-		if err == nil {
-			err = globalErr
-		}
-	}
-
-	if (command == CommandPublish || command == CommandSOW || command == CommandOOF) && client.detectAndTrackDuplicate(message) {
-		handled = true
-		if duplicateErr := client.callDuplicateHandler(message); err == nil {
-			err = duplicateErr
+	if !handled || normalDelivery {
+		if globalErr, globalHandled := client.callGlobalCommandTypeHandler(command, message); globalHandled {
+			handled = true
+			if err == nil {
+				err = globalErr
+			}
 		}
 	}
 
@@ -904,7 +1014,7 @@ func (client *Client) onMessage(message *Message) (err error) {
 	}
 
 	if err == nil {
-		client.maybeAutoAck(message)
+		err = client.maybeAutoAck(message)
 	}
 
 	return
@@ -1783,9 +1893,14 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	if validateErr := validateParsedURIHost(parsedURI); validateErr != nil {
 		return NewError(InvalidURIError, validateErr)
 	}
-	socketOptions, err := parseSocketOptions(parsedURI.Query())
+	transportOptions, err := parseSocketOptions(parsedURI.Query())
 	if err != nil {
 		return NewError(InvalidURIError, err)
+	}
+	if transportOptions.connectTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, transportOptions.connectTimeout)
+		defer cancel()
 	}
 	state := ensureClientState(client)
 	var defaultCompressionEnabled bool
@@ -1796,7 +1911,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		defaultCompressionEnabled = state.compressionEnabled
 		state.lock.Unlock()
 	}
-	var connectionCompression = socketOptions.compression
+	var connectionCompression = transportOptions.compression
 	if connectionCompression == "" && defaultCompressionEnabled {
 		connectionCompression = "zlib"
 	}
@@ -1850,7 +1965,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	var connection net.Conn
 	switch parsedURI.Scheme {
 	case "ws", "wss":
-		wsConn, err := client.dialWebSocket(ctx, parsedURI)
+		wsConn, err := client.dialWebSocket(ctx, parsedURI, transportOptions)
 		if err != nil {
 			return classifyDialError(err)
 		}
@@ -1871,7 +1986,9 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		var baseTLSConfig = client.tlsConfig
 		client.configLock.RUnlock()
 		var connectionTLSConfig = clientTLSConfigForHost(baseTLSConfig, parsedURI.Hostname())
-		var dialedConnection, err = clientTLSDialContext(ctx, dialNetwork, parsedURI.Host, connectionTLSConfig)
+		var dialedConnection, err = dialTCPPreference(ctx, dialNetwork, parsedURI.Host, transportOptions.ipPreference, func(ctx context.Context, network, address string) (net.Conn, error) {
+			return clientTLSDialContext(ctx, network, address, connectionTLSConfig)
+		})
 		if err != nil {
 			if dialedConnection != nil {
 				_ = dialedConnection.Close()
@@ -1881,7 +1998,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		connection = dialedConnection
 
 	default:
-		var dialedConnection, err = clientNetDialContext(ctx, dialNetwork, parsedURI.Host)
+		var dialedConnection, err = dialTCPPreference(ctx, dialNetwork, parsedURI.Host, transportOptions.ipPreference, clientNetDialContext)
 		if err != nil {
 			if dialedConnection != nil {
 				_ = dialedConnection.Close()
@@ -1891,7 +2008,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		connection = dialedConnection
 	}
 
-	if err := applySocketOptions(connection, socketOptions); err != nil {
+	if err := applySocketOptions(connection, transportOptions); err != nil {
 		_ = connection.Close()
 		return NewError(ConnectionError, err)
 	}
@@ -1900,7 +2017,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		state.lock.Lock()
 		headers := append([]string(nil), state.httpPreflightHeaders...)
 		state.lock.Unlock()
-		if len(headers) > 0 {
+		if (transportOptions.httpPreflight || (len(headers) > 0 && !transportOptions.httpPreflightSet)) && (parsedURI.Scheme == "tcp" || parsedURI.Scheme == "tcps") {
 			if preflightErr := performHTTPPreflight(connection, parsedURI.Hostname(), headers); preflightErr != nil {
 				_ = connection.Close()
 				return preflightErr
@@ -1914,6 +2031,8 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	client.resetDisconnectSignal()
 	client.connectionStateLock.Lock()
 	client.connection = connection
+	client.generation.Add(1)
+	client.resetPublishBatch()
 	client.connected.Store(true)
 	client.stopped.Store(false)
 	client.connectionStateLock.Unlock()
@@ -2042,6 +2161,11 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		logonCommand.header.correlationID = []byte(client.logonCorrelationID)
 	}
 
+	if client.url != nil {
+		if pretty, _ := parseSocketBool(client.url.Query().Get("pretty")); pretty {
+			logonCommand.SetOptions("pretty")
+		}
+	}
 	client.notifyConnectionState(ConnectionStateAuthenticating)
 
 	doneLoggingIn := make(chan error, 1)
@@ -2061,6 +2185,11 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 
 	logonRetries := 3
 	client.routes.Store(commandID, func(message *Message) (logonAckErr error) {
+		defer func() {
+			if logonAckErr != nil {
+				signalLogonResult(logonAckErr)
+			}
+		}()
 		if message.header.command == CommandAck {
 			var loggingError error
 			if ackType, hasAckType := message.AckType(); hasAckType && ackType == AckTypeProcessed {
@@ -2079,6 +2208,10 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 						client.nameHashValue = parsedHash
 					} else {
 						client.nameHashValue = unsafeStringHash(client.nameHash)
+					}
+					if publisher, _, valid := parseBookmarkToken(string(message.header.bookmark)); valid {
+						client.nameHashValue = publisher
+						client.nameHash = strconv.FormatUint(publisher, 10)
 					}
 					logonAckSequence = 0
 					if ackSeq, hasSeq := message.SequenceID(); hasSeq && ackSeq > 0 {
@@ -2207,7 +2340,7 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		if hasAuthenticator {
 			optionalParams[0].Authenticator.Completed(username, password, logonAckReason)
 		}
-		client.postLogonRecovery()
+		err = client.postLogonRecovery()
 
 		return
 	}
@@ -2256,7 +2389,10 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 		return 0, NewError(InvalidTopicError, "A topic must be specified")
 	}
 	if !client.connected.Load() {
-		return 0, NewError(DisconnectedError, "Client is not connected while trying to publish")
+		var state = client.parityState.Load()
+		if state == nil || !state.hasPublishStore.Load() {
+			return 0, NewError(DisconnectedError, "Client is not connected while trying to publish")
+		}
 	}
 
 	client.lock.Lock()
@@ -2277,7 +2413,8 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 	client.registerPendingPublishCommandBytes(client.command.header.commandID, client.command)
 
 	sequence := uint64(0)
-	if storeErr := client.storePublishCommand(client.command); storeErr != nil {
+	var retained, storeErr = client.storePublishCommand(client.command)
+	if storeErr != nil {
 		return 0, storeErr
 	}
 	if storedSequence, hasSequence := client.command.SequenceID(); hasSequence {
@@ -2286,6 +2423,9 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 
 	err := client.send(client.command)
 	if err != nil {
+		if retained && !IsErrorKind(err, ProtocolError) && !IsErrorKind(err, CommandError) {
+			return sequence, nil
+		}
 		client.handleSendFailure(client.command, err)
 		return sequence, NewError(ConnectionError, err)
 	}
@@ -2473,7 +2613,7 @@ func (client *Client) executeAsync(
 	messageHandler func(message *Message) error,
 	copyRoutedMessages bool,
 	onRouteReady func(commandID string, routeID string),
-) (string, error) {
+) (resultID string, resultError error) {
 	if command == nil || command.header.command == CommandUnknown {
 		return "", NewError(CommandError, "Invalid Command provided")
 	}
@@ -2501,8 +2641,22 @@ func (client *Client) executeAsync(
 	}
 	defer unlockClient()
 
+	command.generation = client.generation.Load()
+	if command.replay {
+		if manager, ok := subscriptionManager.(interface{ hasGeneration(string, uint64) bool }); ok && manager.hasGeneration(trackedSubscriptionID(command), command.generation) {
+			return trackedSubscriptionID(command), nil
+		}
+	}
 	commandID := client.makeCommandID()
 	command.SetCommandID(commandID)
+	var trackedSubscribeID string
+	defer func() {
+		if resultError != nil && trackedSubscribeID != "" {
+			if manager, ok := subscriptionManager.(interface{ forgetGeneration(string, string) }); ok {
+				manager.forgetGeneration(trackedSubscribeID, commandID)
+			}
+		}
+	}()
 
 	stopUnsubscribeReplayTracking := func() {
 		if !retryCommandOnDisconnect || subscriptionManager == nil || command.header.command != CommandUnsubscribe {
@@ -2513,6 +2667,14 @@ func (client *Client) executeAsync(
 	}
 
 	if !client.connected.Load() {
+		if command.header.command == CommandPublish || command.header.command == CommandDeltaPublish {
+			if client.PublishStore() != nil {
+				if _, err := client.storePublishCommand(command); err != nil {
+					return commandID, err
+				}
+				return commandID, nil
+			}
+		}
 		unlockClient()
 		if retryCommandOnDisconnect {
 			stopUnsubscribeReplayTracking()
@@ -2642,6 +2804,7 @@ func (client *Client) executeAsync(
 		}
 		if retryCommandOnDisconnect && subscriptionManager != nil {
 			subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
+			trackedSubscribeID = trackedSubscriptionID(command)
 		}
 
 	case CommandUnsubscribe:
@@ -2723,8 +2886,11 @@ func (client *Client) executeAsync(
 		command.header.ackType = &systemAcks
 	}
 
+	var retained bool
 	if isPublish {
-		if storeErr := client.storePublishCommand(command); storeErr != nil {
+		var storeErr error
+		retained, storeErr = client.storePublishCommand(command)
+		if storeErr != nil {
 			return commandID, storeErr
 		}
 	}
@@ -2800,6 +2966,9 @@ func (client *Client) executeAsync(
 				return routeID, err
 			}
 
+			if retained && !IsErrorKind(sendErr, ProtocolError) && !IsErrorKind(sendErr, CommandError) {
+				return commandID, nil
+			}
 			client.handleSendFailure(command, sendErr)
 			return commandID, NewError(DisconnectedError, sendErr)
 		}
@@ -3033,6 +3202,7 @@ func (client *Client) Disconnect() (err error) {
 		heartbeatStop.header.options = []byte("stop")
 		_ = client.send(heartbeatStop)
 	}
+	client.resetPublishBatch()
 
 	client.connectionStateLock.Lock()
 	client.connected.Store(false)
@@ -3110,6 +3280,7 @@ func NewClient(clientName ...string) *Client {
 		unsubscribeRoutes: new(sync.Map),
 		disconnectCh:      newClientSignal(true),
 	}
+	client.generation.Store(1)
 	client.clientNameBytes = make([]byte, len(clientNameInternal), len(clientNameInternal)+16)
 	copy(client.clientNameBytes, clientNameInternal)
 	client.errorHandler = defaultErrorHandler(client)
@@ -3125,4 +3296,25 @@ func NewClient(clientName ...string) *Client {
 	}
 
 	return client
+}
+
+func dialTCPPreference(ctx context.Context, network, address, preference string, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	if preference == "" || network != "tcp" {
+		return dial(ctx, network, address)
+	}
+	var primary, fallback = "tcp4", "tcp6"
+	if preference == "ipv6" {
+		primary, fallback = fallback, primary
+	}
+	var connection, err = dial(ctx, primary, address)
+	if err == nil {
+		return connection, nil
+	}
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return dial(ctx, fallback, address)
 }

@@ -164,7 +164,7 @@ type retryCommand struct {
 
 type pendingAckBatch struct {
 	topic     string
-	subID     string
+	options   string
 	bookmarks []string
 }
 
@@ -196,6 +196,7 @@ type clientParityState struct {
 	pendingAcks            map[string]*pendingAckBatch
 	pendingAckCount        uint
 	ackTimer               *time.Timer
+	ackFlushLock           sync.Mutex
 	bookmarkStore          BookmarkStore
 	publishStore           PublishStore
 	hasPublishStore        atomic.Bool

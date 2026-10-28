@@ -55,6 +55,7 @@ var pureFileThresholds = map[string]float64{
 }
 
 var ioFiles = []string{
+	"amps/client_publish_batch.go",
 	"amps/client.go",
 	"amps/client_parity_methods.go",
 	"amps/client_cpp_full_methods.go",

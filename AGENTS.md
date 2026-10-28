@@ -23,7 +23,7 @@ Copilot-specific rules:
 ## Project Context
 
 - Module: `github.com/Thejuampi/amps-client-go`
-- Go version: minimum `1.25`, current release/performance toolchain `1.25.13`, performance candidate `1.26.3`
+- Go version: minimum `1.25`, exact compatibility toolchain `1.25.13`, current release/performance/security toolchain `1.26.10`, performance candidate `1.27.3`
 - Public package: `amps`
 - Internal helpers: `amps/internal/...`
 - Fake broker: `tools/fakeamps`
@@ -51,7 +51,8 @@ Copilot-specific rules:
   - verify the likely regression path, not just correctness
 - If a simpler implementation is materially slower, it is not automatically the right implementation here.
 - `make perf-check` is mandatory for performance-sensitive changes and strongly preferred whenever changed code appears in the perf suite.
-- For toolchain-driven performance work, run `make perf-compare-toolchains` before refreshing `tools/perf_baseline.json` or recommending release. Keep Go 1.25.13 as the release/performance default unless Go 1.26.3 proves faster on the AMPS client benchmark set with no unexplained allocation regressions; neutral, noisy, or slower results are not release evidence.
+- For toolchain-driven performance work, run `make perf-compare-toolchains` before refreshing `tools/perf_baseline.json` or recommending release. Security updates must use a patched supported Go release and pass the existing performance limits without changing the baseline. Performance-only promotions need a measured AMPS client speedup with no unexplained allocation regressions; neutral, noisy, or slower results are not evidence for a performance release.
+- Make exports the exact release `GOTOOLCHAIN` to nested Go commands. Keep compatibility and historical comparison pins exact (without `+auto`) so `go.mod`'s toolchain preference cannot silently upgrade them.
 
 ## Mutation-First Development Policy
 
@@ -114,9 +115,9 @@ go vet ./...
 go run ./tools/paritycheck -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
 go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
-go run ./tools/withtoolchain -toolchain go1.25.13+auto -- test ./... -skip Integration
-go run ./tools/withtoolchain -toolchain go1.25.13+auto -- build ./...
-go run ./tools/withtoolchain -toolchain go1.25.13+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.25.13 -- test ./... -skip Integration
+go run ./tools/withtoolchain -toolchain go1.25.13 -- build ./...
+go run ./tools/withtoolchain -toolchain go1.26.10 -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 go run ./tools/perfgate -baseline tools/perf_baseline.json
 ```
 

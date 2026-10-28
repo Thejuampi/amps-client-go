@@ -1,8 +1,20 @@
-# C++ 5.3.5.1 to Go Parity Matrix
+# C++ to Go Surface Mapping and Behavior Review
 
-## Source of Truth
+The behavior review uses **C++ 5.3.5.14** (verified 2026-10-24).
+The [audit](behavior_parity_audit.md) records the original implementation differences,
+with a [748-declaration inventory](behavior_parity_inventory.md) and opt-in
+regressions. All 23 finding groups are [corrected](behavior_parity_fixes.md); the
+[gap register](gap_register.md) has **zero open registered entries**.
+Symbol presence is not behavioral equivalence.
 
-Parity is defined by a machine-readable manifest:
+The 2026-10-26 [stress follow-up](behavior_parity_fixes.md#seguimiento-del-stress-2026-10-26)
+adds deterministic regressions for a disconnect at HA recovery completion and
+processed-ack warning lifecycle. The stress gate now includes fakeamps and both
+integration suites with race detection and shuffled ordering.
+
+## Symbol Mapping
+
+The API surface mapping is recorded in a machine-readable manifest:
 
 - `tools/parity_manifest.json`
 

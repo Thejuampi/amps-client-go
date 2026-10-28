@@ -199,37 +199,37 @@ func (client *Client) registerPendingPublishCommandBytes(commandID []byte, comma
 	state.lock.Unlock()
 }
 
-func (client *Client) storePublishCommand(command *Command) error {
+func (client *Client) storePublishCommand(command *Command) (bool, error) {
 	if command == nil {
-		return nil
+		return false, nil
 	}
 
 	state := ensureClientState(client)
 	if state == nil {
-		return nil
+		return false, nil
 	}
 
 	if !state.hasPublishStore.Load() {
-		return nil
+		return false, nil
 	}
 
 	state.lock.Lock()
 	store := state.publishStore
 	state.lock.Unlock()
 	if store == nil {
-		return nil
+		return false, nil
 	}
 
 	sequence, err := store.Store(command)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if sequence > 0 {
 		command.SetSequenceID(sequence)
 		command.AddAckType(AckTypePersisted)
 	}
-	return nil
+	return true, nil
 }
 
 func commandToMessage(command *Command) *Message {
@@ -480,11 +480,14 @@ func (client *Client) detectAndTrackDuplicate(message *Message) bool {
 	if bookmarkStore == nil {
 		return false
 	}
+	if bookmarkStore.IsDiscarded(message) {
+		return true
+	}
 
 	if _, err := bookmarkStoreLog(bookmarkStore, message); err != nil {
 		client.reportException(err)
 	}
-	return bookmarkStore.IsDiscarded(message)
+	return false
 }
 
 func (client *Client) callDuplicateHandler(message *Message) error {
@@ -543,181 +546,182 @@ func commandTextBytes(extras *_HeaderTextExtras, selector func(*_HeaderTextExtra
 	return selector(extras)
 }
 
-func (client *Client) maybeAutoAck(message *Message) {
-	if message == nil {
-		return
+func (client *Client) maybeAutoAck(message *Message) error {
+	if message == nil || message.GetIgnoreAutoAck() {
+		return nil
 	}
-	if message.GetIgnoreAutoAck() {
-		return
+	var header = messageHeader(message)
+	var extras = headerTextExtras(header)
+	if header == nil || extras == nil || extras.leasePeriod == nil || len(header.topic) == 0 || len(header.bookmark) == 0 {
+		return nil
 	}
+	var state = ensureClientState(client)
+	if state == nil || !state.autoAckValue.Load() {
+		return nil
+	}
+	if err := client.Ack(string(header.topic), string(header.bookmark)); err != nil {
+		client.reportException(err)
+		return err
+	}
+	return nil
+}
 
-	header := messageHeader(message)
-	if header == nil {
-		return
-	}
-	var textExtras = headerTextExtras(header)
-	if textExtras == nil || textExtras.leasePeriod == nil {
-		return
-	}
-	if len(header.topic) == 0 || len(header.bookmark) == 0 {
-		return
-	}
-
-	state := ensureClientState(client)
-	if state == nil {
-		return
-	}
-
+func (client *Client) queueAck(topic, bookmark, options string) error {
+	var state = ensureClientState(client)
+	var key = makeAckBatchKey(topic, options)
 	state.lock.Lock()
-	autoAck := state.autoAck
-	if !autoAck {
-		state.lock.Unlock()
-		return
-	}
-
-	topic := unsafeStringFromBytes(header.topic)
-	subID := unsafeStringFromBytes(header.subID)
-	key := makeAckBatchKey(topic, subID)
-	batch := state.pendingAcks[key]
+	var batch = state.pendingAcks[key]
 	if batch == nil {
-		sep := strings.Index(key, "\x1f")
-		batch = &pendingAckBatch{topic: key[:sep], subID: key[sep+1:]}
+		batch = &pendingAckBatch{topic: topic, options: options}
 		state.pendingAcks[key] = batch
 	}
-	bookmark := string(header.bookmark)
 	batch.bookmarks = append(batch.bookmarks, bookmark)
 	state.pendingAckCount++
-	batchSize := state.ackBatchSize
-	timeout := state.ackTimeout
-	shouldFlush := batchSize > 0 && state.pendingAckCount >= batchSize
-
-	if timeout > 0 {
-		if state.ackTimer != nil {
-			state.ackTimer.Reset(timeout)
-		} else {
-			state.ackTimer = time.AfterFunc(timeout, func() {
-				_ = client.FlushAcks()
-			})
-		}
+	var flush = state.pendingAckCount >= state.ackBatchSize
+	if state.ackTimeout > 0 && state.ackTimer == nil {
+		state.ackTimer = time.AfterFunc(state.ackTimeout, func() {
+			if err := client.FlushAcks(); err != nil {
+				client.reportException(err)
+			}
+		})
 	}
 	state.lock.Unlock()
-
-	if shouldFlush {
-		_ = client.FlushAcks()
+	if flush {
+		return client.FlushAcks()
 	}
+	return nil
 }
 
 // FlushAcks sends all pending queue acknowledgement batches immediately.
 func (client *Client) FlushAcks() error {
-	state := ensureClientState(client)
+	var state = ensureClientState(client)
 	if state == nil {
 		return nil
 	}
-
+	state.ackFlushLock.Lock()
+	defer state.ackFlushLock.Unlock()
 	state.lock.Lock()
+	if state.ackTimer != nil {
+		state.ackTimer.Stop()
+		state.ackTimer = nil
+	}
 	if len(state.pendingAcks) == 0 {
 		state.lock.Unlock()
 		return nil
 	}
-
-	if state.ackTimer != nil {
-		_ = state.ackTimer.Stop()
-		state.ackTimer = nil
-	}
-
-	keys := make([]string, 0, len(state.pendingAcks))
-	for key := range state.pendingAcks {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	batches := make([]pendingAckBatch, 0, len(keys))
-	for _, key := range keys {
-		entry := state.pendingAcks[key]
-		if entry == nil || len(entry.bookmarks) == 0 {
-			continue
-		}
-		batch := pendingAckBatch{
-			topic:     entry.topic,
-			subID:     entry.subID,
-			bookmarks: append([]string(nil), entry.bookmarks...),
-		}
-		batches = append(batches, batch)
-	}
+	var pending = state.pendingAcks
 	state.pendingAcks = make(map[string]*pendingAckBatch)
 	state.pendingAckCount = 0
 	state.lock.Unlock()
-
-	var firstErr error
-	for _, batch := range batches {
-		if len(batch.bookmarks) == 0 {
+	var keys = make([]string, 0, len(pending))
+	for key := range pending {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for index, key := range keys {
+		var batch = pending[key]
+		if batch == nil || len(batch.bookmarks) == 0 {
 			continue
 		}
-		bookmarkValue := strings.Join(batch.bookmarks, ",")
-		if err := client.Ack(batch.topic, bookmarkValue, batch.subID); err != nil && firstErr == nil {
-			firstErr = err
+		var command = NewCommand("sow_delete").SetCommandID("AMPS-queue-ack").SetTopic(batch.topic).SetBookmark(strings.Join(batch.bookmarks, ","))
+		if batch.options != "" {
+			command.SetOptions(batch.options)
+		}
+		client.lock.Lock()
+		var err = client.send(command)
+		client.lock.Unlock()
+		if err != nil {
+			// A partial write may already have applied an ack. Repeating the
+			// same bookmarks is safe; forgetting an unsent batch is not.
+			state.lock.Lock()
+			for _, unsentKey := range keys[index:] {
+				var unsent = pending[unsentKey]
+				if unsent == nil {
+					continue
+				}
+				if newer := state.pendingAcks[unsentKey]; newer != nil {
+					unsent.bookmarks = append(unsent.bookmarks, newer.bookmarks...)
+				}
+				state.pendingAcks[unsentKey] = unsent
+			}
+			// Recount after merging concurrently queued acknowledgements.
+			state.pendingAckCount = 0
+			for _, entry := range state.pendingAcks {
+				if entry != nil {
+					state.pendingAckCount += uint(len(entry.bookmarks))
+				}
+			}
+			state.lock.Unlock()
+			return NewError(ConnectionError, err)
 		}
 	}
-	return firstErr
+	return nil
 }
 
-func (client *Client) postLogonRecovery() {
-	state := ensureClientState(client)
+func (client *Client) postLogonRecovery() error {
+	var state = ensureClientState(client)
 	if state == nil {
-		return
+		return nil
 	}
-
+	state.lock.Lock()
+	if state.recoveryInProgress {
+		state.recoveryRequested = true
+		state.lock.Unlock()
+		return nil
+	}
+	state.recoveryInProgress = true
+	state.recoveryRequested = false
+	state.lock.Unlock()
+	var ownsRecovery = true
+	defer func() {
+		if ownsRecovery {
+			state.lock.Lock()
+			state.recoveryInProgress = false
+			state.lock.Unlock()
+		}
+	}()
 	for {
 		state.lock.Lock()
-		if state.recoveryInProgress {
-			// Concurrent recovery requests are coalesced into one additional pass.
-			// The active recovery loop will observe this flag and rerun before it exits.
-			state.recoveryRequested = true
-			state.lock.Unlock()
-			return
-		}
-		state.recoveryInProgress = true
-		state.recoveryRequested = false
 		state.manualDisconnect = false
-		store := state.publishStore
-		subscriptionManager := state.subscriptionManager
-		pendingRetry := append([]retryCommand(nil), state.pendingRetry...)
-		deferredExecutions := append([]deferredExecutionCall(nil), state.deferredExecutions...)
-		state.deferredExecutions = nil
-		state.pendingRetry = nil
+		var store = state.publishStore
+		var manager = state.subscriptionManager
+		var retries = state.pendingRetry
+		var deferred = state.deferredExecutions
+		state.pendingRetry, state.deferredExecutions = nil, nil
 		state.lock.Unlock()
-
+		var failed = func(err error, pending []retryCommand) error {
+			state.lock.Lock()
+			state.pendingRetry = append(pending, state.pendingRetry...)
+			state.deferredExecutions = append(deferred, state.deferredExecutions...)
+			state.lock.Unlock()
+			client.reportException(err)
+			return err
+		}
 		if store != nil {
-			replayErr := store.Replay(func(command *Command) error {
+			if err := store.Replay(func(command *Command) error {
 				client.lock.Lock()
 				defer client.lock.Unlock()
 				return client.send(command)
-			})
-			if replayErr != nil {
-				client.reportException(replayErr)
-			} else {
-				client.notifyConnectionState(ConnectionStatePublishReplayed)
+			}); err != nil {
+				return failed(err, retries)
 			}
+			client.notifyConnectionState(ConnectionStatePublishReplayed)
 		}
-
-		if subscriptionManager != nil {
-			if resubscribeErr := subscriptionManager.Resubscribe(client); resubscribeErr != nil {
-				client.reportException(resubscribeErr)
-			} else {
-				client.notifyConnectionState(ConnectionStateResubscribed)
+		if manager != nil {
+			if err := manager.Resubscribe(client); err != nil {
+				return failed(err, retries)
 			}
+			client.notifyConnectionState(ConnectionStateResubscribed)
 		}
-
-		for _, pending := range pendingRetry {
+		for index, pending := range retries {
 			if pending.command == nil {
 				continue
 			}
-			if _, retryErr := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); retryErr != nil {
-				client.reportException(retryErr)
+			if _, err := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); err != nil {
+				return failed(err, retries[index:])
 			}
 		}
-
-		for _, entry := range deferredExecutions {
+		for _, entry := range deferred {
 			if entry.callback == nil {
 				continue
 			}
@@ -730,14 +734,16 @@ func (client *Client) postLogonRecovery() {
 				entry.callback(client, entry.userData)
 			}(entry)
 		}
-
 		state.lock.Lock()
-		rerun := state.recoveryRequested
-		state.recoveryInProgress = false
+		var rerun = state.recoveryRequested
 		state.recoveryRequested = false
+		if !rerun {
+			state.recoveryInProgress = false
+			ownsRecovery = false
+		}
 		state.lock.Unlock()
 		if !rerun {
-			return
+			return nil
 		}
 	}
 }
@@ -852,8 +858,8 @@ func (client *Client) resolveBookmark(command *Command, bookmark string) string 
 	return bookmark
 }
 
-// Ack sends an explicit queue acknowledgement for a topic and bookmark.
-func (client *Client) Ack(topic string, bookmark string, subID ...string) error {
+// Ack acknowledges queue bookmarks, optionally with C++ queue options such as cancel.
+func (client *Client) Ack(topic string, bookmark string, options ...string) error {
 	if topic == "" {
 		return NewError(CommandError, "topic is required for ack")
 	}
@@ -863,15 +869,11 @@ func (client *Client) Ack(topic string, bookmark string, subID ...string) error 
 	if !client.connected.Load() {
 		return NewError(DisconnectedError, "Client is not connected while trying to ack")
 	}
-
-	command := NewCommand("ack").SetTopic(topic).SetBookmark(bookmark)
-	if len(subID) > 0 && subID[0] != "" {
-		command.SetSubID(subID[0])
+	var option string
+	if len(options) > 0 {
+		option = options[0]
 	}
-
-	client.lock.Lock()
-	defer client.lock.Unlock()
-	return client.send(command)
+	return client.queueAck(topic, bookmark, option)
 }
 
 // AckMessage extracts topic and bookmark fields from a message and acknowledges it.
@@ -884,8 +886,7 @@ func (client *Client) AckMessage(message *Message) error {
 	if !hasTopic || !hasBookmark {
 		return NewError(CommandError, "message does not contain topic/bookmark for ack")
 	}
-	subID, _ := message.SubID()
-	return client.Ack(topic, bookmark, subID)
+	return client.Ack(topic, bookmark)
 }
 
 // SetAutoAck sets auto ack on the receiver.

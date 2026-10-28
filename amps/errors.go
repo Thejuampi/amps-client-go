@@ -52,6 +52,8 @@ const (
 	MessageHandlerError
 
 	UnknownError
+
+	ReplayFailedError
 )
 
 func reasonToError(reason string) error {
@@ -70,9 +72,17 @@ func reasonToError(reason string) error {
 		err = BadRegexTopicError
 	case "already exists":
 		err = AlreadyExistsError
+	case "subid in use":
+		err = SubidInUseError
+	case "name in use":
+		err = nameInUseError
+	case "subscription already exists":
+		err = SubscriptionAlreadyExistsError
+	case "txn replay failed":
+		err = ReplayFailedError
 	}
 
-	return NewError(err)
+	return NewError(err, reason)
 }
 
 // AMPSError is an AMPS client error with a machine-readable kind and an
@@ -161,6 +171,8 @@ func errorKindName(errorCode int) string {
 		errorName = "TransportDisabledError"
 	case AlreadyExistsError:
 		errorName = "AlreadyExistsError"
+	case ReplayFailedError:
+		errorName = "ReplayFailedError"
 	case MessageHandlerError:
 		errorName = "MessageHandlerError"
 	default:

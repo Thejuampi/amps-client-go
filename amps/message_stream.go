@@ -1,6 +1,7 @@
 package amps
 
 import (
+	"errors"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,8 @@ const (
 	messageStreamStateComplete     = 0x02
 )
 
+var errMessageStreamFull = errors.New("message stream is full")
+
 const maxMessageStreamTimeoutMillis = uint64(math.MaxInt64 / int64(time.Millisecond))
 
 // MessageStream stores exported state used by AMPS client APIs.
@@ -32,6 +35,7 @@ type MessageStream struct {
 	queryID       string
 	unsubscribeID string
 	current       *Message
+	previous      *Message
 	sowKeyMap     map[string]*Message
 
 	state    int32
@@ -96,6 +100,7 @@ func (ms *MessageStream) resetForConfiguration() {
 		return
 	}
 	ms.current = nil
+	ms.previous = nil
 	ms.timedOut.Store(false)
 	if ms.queue != nil {
 		ms.queue.clear()
@@ -208,6 +213,15 @@ func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
 
 // HasNext reports whether the receiver has next configured.
 func (ms *MessageStream) HasNext() bool {
+	if ms.previous != nil {
+		var previous = ms.previous
+		ms.previous = nil
+		if client := ms.getClient(); client != nil {
+			if err := client.maybeAutoAck(previous); err != nil {
+				return false
+			}
+		}
+	}
 	if ms.current != nil {
 		return true
 	}
@@ -306,7 +320,16 @@ func (ms *MessageStream) Next() (message *Message) {
 	}
 
 	returnVal := ms.current
+	if returnVal != nil {
+		if extras := headerTextExtras(messageHeader(returnVal)); extras != nil && extras.leasePeriod != nil && !returnVal.ignoreAutoAck {
+			ms.previous = returnVal
+		}
+	}
 	ms.current = nil
+	var state = atomic.LoadInt32(&ms.state)
+	if state != messageStreamStateSOWOnly && state != messageStreamStateStatsOnly {
+		return returnVal
+	}
 	ms.lifecycleLock.Lock()
 	defer ms.lifecycleLock.Unlock()
 
@@ -328,7 +351,7 @@ func (ms *MessageStream) Next() (message *Message) {
 		}
 	}
 
-	var state = atomic.LoadInt32(&ms.state)
+	state = atomic.LoadInt32(&ms.state)
 	if state == messageStreamStateSOWOnly && returnVal != nil && returnVal.header.command == CommandGroupEnd {
 		ms.setState(messageStreamStateComplete)
 		cleanupRoutes()
@@ -454,80 +477,53 @@ func (ms *MessageStream) setRunning() {
 	ms.setState(messageStreamStateReading)
 }
 
-func (ms *MessageStream) enqueueMessage(message *Message) {
-	ms.lock.Lock()
-	defer ms.lock.Unlock()
-	ms.enqueueMessageLocked(message)
-}
-
-func (ms *MessageStream) enqueueMessageLocked(message *Message) {
-	var droppedMessages = ms.queue.enqueueWithDepth(message, ms.depth.Load())
-	ms.removeConflatedMessagesLocked(droppedMessages)
-}
-
-func (ms *MessageStream) removeConflatedMessagesLocked(messages []*Message) {
-	if len(messages) == 0 {
-		return
-	}
-	if ms.sowKeyMap == nil {
-		return
-	}
-
-	for _, message := range messages {
-		if message == nil {
-			continue
-		}
-		sowKey, isPresent := message.SowKey()
-		if !isPresent || sowKey == "" || ms.sowKeyMap[sowKey] != message {
-			continue
-		}
-		delete(ms.sowKeyMap, sowKey)
-	}
-}
-
-func (ms *MessageStream) messageHandler(message *Message) (err error) {
+func (ms *MessageStream) messageHandler(message *Message) error {
 	if message == nil {
 		return nil
 	}
-
+	if atomic.LoadInt32(&ms.state) == messageStreamStateComplete {
+		return NewError(DisconnectedError, "message stream is closed")
+	}
+	var accepted bool
 	if !ms.isConflating() {
-		ms.queue.enqueueWithDepth(message.Copy(), ms.depth.Load())
-		return nil
+		_, accepted = ms.queue.enqueueCopyWithDepth(message, ms.depth.Load())
+	} else {
+		var key, hasKey = message.SowKey()
+		if hasKey && key != "" {
+			accepted = ms.enqueueConflatedMessage(message, key)
+		} else {
+			_, accepted = ms.queue.enqueueCopyWithDepth(message, ms.depth.Load())
+		}
 	}
-
-	var copiedMessage = message.Copy()
-	var sowKey, hasSowKey = copiedMessage.SowKey()
-	if !hasSowKey || sowKey == "" {
-		ms.enqueueMessage(copiedMessage)
-		return nil
+	if !accepted {
+		return errMessageStreamFull
 	}
-
-	// isConflating() released the lock before we re-acquire it here, so the
-	// stream may have been reconfigured in between. resetForConfiguration nils
-	// sowKeyMap, and writing to a nil map panics on the client receive
-	// goroutine, which has no recover, taking down the process. Deferring the
-	// unlock also stops a panic below from leaving the stream locked forever.
-	ms.enqueueConflatedMessage(copiedMessage, sowKey)
+	// The queued copy retains its original flag; the receive loop must defer
+	// auto-ack until the consumer advances past that copy.
+	if extras := headerTextExtras(messageHeader(message)); extras != nil && extras.leasePeriod != nil {
+		if client := ms.getClient(); client != nil && client.AutoAck() {
+			message.ignoreAutoAck = true
+		}
+	}
 	return nil
 }
 
-func (ms *MessageStream) enqueueConflatedMessage(message *Message, sowKey string) {
+func (ms *MessageStream) enqueueConflatedMessage(message *Message, sowKey string) bool {
 	ms.lock.Lock()
 	defer ms.lock.Unlock()
-
-	if ms.sowKeyMap == nil {
-		// Reconfigured out of conflation while this message was in flight; it
-		// belongs to the previous configuration, so deliver it unconflated.
-		ms.enqueueMessageLocked(message)
-		return
+	if existing, exists := ms.sowKeyMap[sowKey]; exists {
+		existing.Replace(message)
+		return true
 	}
-
-	if existingMessage, exists := ms.sowKeyMap[sowKey]; exists {
-		existingMessage.Replace(message)
-		return
+	var copied, accepted = ms.queue.enqueueCopyWithDepth(message, ms.depth.Load())
+	if !accepted {
+		return false
 	}
-	ms.sowKeyMap[sowKey] = message
-	ms.enqueueMessageLocked(message)
+	if ms.sowKeyMap != nil {
+		var ownedKey, _ = copied.SowKey()
+		ms.sowKeyMap[ownedKey] = copied
+	}
+	return true
 }
 
 func (ms *MessageStream) setState(state int32) {
@@ -623,26 +619,34 @@ func (queue *_MessageQueue) enqueue(message *Message) {
 func (queue *_MessageQueue) enqueueWithDepth(message *Message, depth uint64) []*Message {
 	queue.lock.Lock()
 	defer queue.lock.Unlock()
-	if queue.closed {
-		return nil
+	if queue.closed || (depth != 0 && queue._length >= depth) {
+		return []*Message{message}
 	}
+	queue.enqueueLocked(message)
+	return nil
+}
 
-	var droppedMessages []*Message
-	for depth != 0 && queue._length >= depth {
-		droppedMessages = append(droppedMessages, queue.dequeueLocked())
+func (queue *_MessageQueue) enqueueCopyWithDepth(message *Message, depth uint64) (*Message, bool) {
+	queue.lock.Lock()
+	defer queue.lock.Unlock()
+	if queue.closed || (depth != 0 && queue._length >= depth) {
+		return nil, false
 	}
+	var copied = message.Copy()
+	queue.enqueueLocked(copied)
+	return copied, true
+}
 
+func (queue *_MessageQueue) enqueueLocked(message *Message) {
 	if queue.capacity == queue._length {
 		queue.resize()
 	}
-
 	if queue._length != 0 {
 		queue.last = (queue.last + 1) % queue.capacity
 	}
 	queue.ring[queue.last] = message
 	queue._length++
 	queue.notifyNotEmptyLocked()
-	return droppedMessages
 }
 
 func (queue *_MessageQueue) dequeueLocked() *Message {

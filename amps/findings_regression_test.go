@@ -41,8 +41,8 @@ func TestFileBookmarkStoreWithoutWALPersistsMutations(t *testing.T) {
 	}
 
 	reloaded := NewFileBookmarkStoreWithOptions(path, options)
-	if got := reloaded.GetMostRecent("sub-no-wal"); got != "10|1|" {
-		t.Fatalf("GetMostRecent() = %q, want %q", got, "10|1|")
+	if got := reloaded.GetMostRecent("sub-no-wal"); got != BookmarksEPOCH || reloaded.GetOldestBookmarkSeq("sub-no-wal") != seqNo {
+		t.Fatalf("GetMostRecent() = %q, want %q with pending sequence preserved", got, BookmarksEPOCH)
 	}
 }
 

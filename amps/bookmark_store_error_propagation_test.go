@@ -36,6 +36,7 @@ func TestFileBookmarkStoreMutationsPropagateWALErrors(t *testing.T) {
 		t.Fatalf("expected WAL failure to leave bookmark state unchanged, got oldest %d", oldest)
 	}
 
+	seqNo = store.MemoryBookmarkStore.Log(message)
 	if err = store.DiscardWithError("sub-1", seqNo); err == nil {
 		t.Fatalf("expected Discard to propagate WAL append failure")
 	}
@@ -123,7 +124,7 @@ func TestFileBookmarkStoreAppendUpsertForWritesExistingRecord(t *testing.T) {
 	}
 
 	reloaded := NewFileBookmarkStoreWithOptions(path, options)
-	if mostRecent := reloaded.GetMostRecent("sub-upsert"); mostRecent != "12|1|" {
+	if mostRecent := reloaded.GetMostRecent("sub-upsert"); mostRecent != BookmarksEPOCH || reloaded.GetOldestBookmarkSeq("sub-upsert") == 0 {
 		t.Fatalf("expected WAL replay to recover bookmark, got %q", mostRecent)
 	}
 }

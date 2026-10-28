@@ -10,10 +10,12 @@ GOVULNCHECK_VERSION ?= v1.1.4
 GITLEAKS_VERSION ?= v8.30.1
 GOSEC_VERSION ?= v2.22.4
 BENCHSTAT_VERSION ?= latest
-MIN_GO_TOOLCHAIN ?= go1.25.13+auto
-CANDIDATE_GO_TOOLCHAIN ?= go1.26.3+auto
-PERF_GO_TOOLCHAIN ?= $(MIN_GO_TOOLCHAIN)
-VULN_GO_TOOLCHAIN ?= go1.25.13+auto
+MIN_GO_TOOLCHAIN ?= go1.25.13
+RELEASE_GO_TOOLCHAIN ?= go1.26.10
+CANDIDATE_GO_TOOLCHAIN ?= go1.27.3
+export GOTOOLCHAIN := $(RELEASE_GO_TOOLCHAIN)
+PERF_GO_TOOLCHAIN ?= $(RELEASE_GO_TOOLCHAIN)
+VULN_GO_TOOLCHAIN ?= $(RELEASE_GO_TOOLCHAIN)
 COVERPROFILE ?= $(abspath coverage.out)
 FUZZTIME ?= 5s
 STRESS_COUNT ?= 20
@@ -24,14 +26,14 @@ PERF_COMPARE_DIR ?= $(abspath .tmp/perf)
 PERF_COMPARE_OLD_TOOLCHAIN ?= $(MIN_GO_TOOLCHAIN)
 PERF_COMPARE_NEW_TOOLCHAIN ?= $(CANDIDATE_GO_TOOLCHAIN)
 PERF_COMPARE_OLD_LABEL ?= go1.25.13
-PERF_COMPARE_NEW_LABEL ?= go1.26.3
+PERF_COMPARE_NEW_LABEL ?= go1.27.3
 PERF_COMPARE_BENCHTIME ?= 1s
 PERF_COMPARE_SAMPLES ?= 10
 PERF_COMPARE_MAX_REGRESSION ?= 1000000
 PERF_COMPARE_OLD_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_OLD_LABEL).bench.txt
 PERF_COMPARE_NEW_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_NEW_LABEL).bench.txt
 PERF_COMPARE_REPORT ?= $(PERF_COMPARE_DIR)/benchstat.txt
-STRESS_PKG ?= ./amps/... ./cmd/gofer ./internal/... ./tools/coveragegate ./tools/patterncheck ./tools/perfgate ./tools/perfreport ./tools/publicationcheck ./tools/withtoolchain
+STRESS_PKG ?= ./...
 MARKDOWNLINT ?= npx --yes markdownlint-cli2
 MARKDOWNLINT_REPORT ?= $(abspath markdownlint-report.txt)
 GITLEAKS_REPORT ?= $(abspath gitleaks-report.sarif)
@@ -72,7 +74,7 @@ help:
 	@echo   make publication-scan Prevent publication of unauthorized external-client benchmark results
 	@echo   make leak-check       Run goroutine leak detection on key packages
 	@echo   make fuzz-smoke       Run short fuzzing smoke tests for parser-heavy code
-	@echo   make stress-check     Run repeated shuffled race tests before pre-prod
+	@echo   make stress-check     Repeat shuffled race tests and fakeamps-backed integration
 	@echo   make integration-live-smoke Run live-broker pre-prod smoke tests when AMPS_TEST_* env vars are set
 	@echo   make preprod-check    Run the expanded pre-production analysis gates
 	@echo   make security-scan    Run blocking security scans (gosec, govulncheck, gitleaks)
@@ -157,6 +159,7 @@ fuzz-smoke:
 stress-check:
 	@$(ENSURE_FUZZ_TMPDIR)
 	$(FUZZ_ENV) $(GO) test -race -shuffle=$(STRESS_SHUFFLE) -count=$(STRESS_COUNT) $(STRESS_PKG) -skip Integration
+	$(FUZZ_ENV) $(GO) run ./tools/fakeampsgate -race -count=$(STRESS_COUNT) -shuffle=$(STRESS_SHUFFLE)
 
 preprod-check: scan leak-check fuzz-smoke stress-check coverage-check perf-check
 	@echo Pre-production checks passed for $(VERSION).

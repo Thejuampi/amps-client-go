@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"log"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,187 +56,195 @@ type headerFields struct {
 // parseAMPSHeader — fast, minimal JSON header parser.
 //
 // Extracts all fields the client may send. Operates on raw frame bytes
-// without allocating intermediate structures. Dispatch is by key length
-// + first byte for speed on the hot path.
+// without allocating intermediate structures for plain scalar fields. Field
+// names are matched exactly; escaped strings use the JSON decoder.
 // ---------------------------------------------------------------------------
 
 func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 	var h headerFields
-	n := len(frame)
-	if n == 0 || frame[0] != '{' {
-		return h, frame
-	}
-
-	i := 1
-	foundEnd := false
-	for i < n {
-		// Skip whitespace / commas.
-		for i < n && (frame[i] == ' ' || frame[i] == ',' || frame[i] == '\n' || frame[i] == '\r' || frame[i] == '\t') {
-			i++
-		}
-		if i >= n || frame[i] == '}' {
-			if i < n && frame[i] == '}' {
-				foundEnd = true
-			}
-			i++
-			break
-		}
-		if frame[i] != '"' {
-			i++
-			continue
-		}
-
-		// ---- Key ----
-		i++
-		keyStart := i
-		for i < n && frame[i] != '"' {
-			if frame[i] == '\\' {
-				i++
-			}
-			i++
-		}
-		if i >= n {
-			break
-		}
-		keyEnd := i
-		i++
-
-		// Skip ':'
-		for i < n && (frame[i] == ' ' || frame[i] == ':') {
-			i++
-		}
-		if i >= n {
-			break
-		}
-
-		// ---- Value ----
-		var valueStart, valueEnd int
-		if frame[i] == '"' {
-			i++
-			valueStart = i
-			for i < n && frame[i] != '"' {
-				if frame[i] == '\\' {
-					i++
-				}
-				i++
-			}
-			if i >= n {
-				break
-			}
-			valueEnd = i
-			i++
-		} else {
-			valueStart = i
-			for i < n && frame[i] != ',' && frame[i] != '}' {
-				i++
-			}
-			valueEnd = i
-		}
-
-		// ---- Dispatch by key length + first byte ----
-		keyLen := keyEnd - keyStart
-		switch keyLen {
-		case 1:
-			switch frame[keyStart] {
-			case 'c':
-				h.c = string(frame[valueStart:valueEnd])
-			case 't':
-				h.t = string(frame[valueStart:valueEnd])
-			case 'a':
-				h.a = string(frame[valueStart:valueEnd])
-			case 'o':
-				h.o = string(frame[valueStart:valueEnd])
-			case 's':
-				h.s = string(frame[valueStart:valueEnd])
-			case 'k':
-				h.k = string(frame[valueStart:valueEnd])
-			case 'x':
-				h.x = string(frame[valueStart:valueEnd])
-			case 'e':
-				h.e = string(frame[valueStart:valueEnd])
-			case 'f':
-				h.filter = string(frame[valueStart:valueEnd])
-			}
-		case 2:
-			switch {
-			case frame[keyStart] == 'b' && frame[keyStart+1] == 'm':
-				h.bm = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 'b' && frame[keyStart+1] == 's':
-				h.bs = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 'm' && frame[keyStart+1] == 't':
-				h.mt = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 'l' && frame[keyStart+1] == 'p':
-				// lp = lease_period (inbound — ignore, we set our own)
-			case frame[keyStart] == 'p' && frame[keyStart+1] == 'w':
-				h.pw = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 't' && frame[keyStart+1] == 's':
-				// ts = timestamp (inbound — ignore)
-			}
-		case 3:
-			if frame[keyStart] == 'c' && frame[keyStart+1] == 'i' && frame[keyStart+2] == 'd' {
-				h.cid = string(frame[valueStart:valueEnd])
-			} else if frame[keyStart] == 'u' && frame[keyStart+1] == 'r' && frame[keyStart+2] == 'i' {
-				h.uri = string(frame[valueStart:valueEnd])
-			}
-		case 4:
-			switch {
-			case frame[keyStart] == 'o' && frame[keyStart+1] == 'p': // opts
-				h.opts = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 's' && frame[keyStart+1] == 'i': // sids
-				h.subIDs = string(frame[valueStart:valueEnd])
-			}
-		case 5:
-			if frame[keyStart] == 't' && frame[keyStart+1] == 'o' { // top_n
-				h.topN = string(frame[valueStart:valueEnd])
-			} else if frame[keyStart] == '_' && frame[keyStart+1] == 'r' && frame[keyStart+2] == 'e' && frame[keyStart+3] == 'p' && frame[keyStart+4] == 'l' {
-				h.repl = string(frame[valueStart:valueEnd])
-			}
-		case 6:
-			switch {
-			case frame[keyStart] == 's' && frame[keyStart+1] == 'u': // sub_id
-				h.subID = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 'f' && frame[keyStart+1] == 'i': // filter
-				h.filter = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 's' && frame[keyStart+1] == 't': // status
-				h.status = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 'r' && frame[keyStart+1] == 'e': // reason
-				h.reason = string(frame[valueStart:valueEnd])
-			}
-		case 7:
-			switch frame[keyStart] {
-			case 'v': // version
-				h.version = string(frame[valueStart:valueEnd])
-			case 'o': // orderby
-				h.orderBy = string(frame[valueStart:valueEnd])
-			case 'u': // user_id
-				h.userID = string(frame[valueStart:valueEnd])
-			case 'm': // matches (ignore inbound)
-			}
-		case 8:
-			switch {
-			case frame[keyStart] == 'q': // query_id
-				h.queryID = string(frame[valueStart:valueEnd])
-			case frame[keyStart] == 's': // sow_keys
-				h.sowKeys = string(frame[valueStart:valueEnd])
-			}
-		default:
-			switch {
-			case keyLen == 11 && frame[keyStart] == 'c': // client_name
-				h.clientName = string(frame[valueStart:valueEnd])
-			case keyLen == 10 && frame[keyStart] == '_' && frame[keyStart+1] == 'r' && frame[keyStart+2] == 'e' && frame[keyStart+3] == 'p' && frame[keyStart+4] == 'l' && frame[keyStart+5] == '_' && frame[keyStart+6] == 's' && frame[keyStart+7] == 'y' && frame[keyStart+8] == 'n' && frame[keyStart+9] == 'c':
-				h.replSync = string(frame[valueStart:valueEnd])
-			}
-		}
-	}
-
-	if !foundEnd {
-		log.Printf("fakeamps: malformed AMPS header: missing closing brace")
+	var i = skipHeaderWhitespace(frame, 0)
+	if i == len(frame) || frame[i] != '{' {
 		return headerFields{}, nil
 	}
-	if i <= n {
-		return h, frame[i:]
+	i = skipHeaderWhitespace(frame, i+1)
+	if i < len(frame) && frame[i] == '}' {
+		return h, frame[i+1:]
 	}
-	return h, nil
+	for i < len(frame) {
+		var key, next, ok = readHeaderString(frame, i)
+		if !ok {
+			return headerFields{}, nil
+		}
+		i = skipHeaderWhitespace(frame, next)
+		if i == len(frame) || frame[i] != ':' {
+			return headerFields{}, nil
+		}
+		i = skipHeaderWhitespace(frame, i+1)
+		var value []byte
+		value, next, ok = readHeaderValue(frame, i)
+		if !ok {
+			return headerFields{}, nil
+		}
+		switch string(key) {
+		case "c":
+			h.c = string(value)
+		case "cid":
+			h.cid = string(value)
+		case "t":
+			h.t = string(value)
+		case "a":
+			h.a = string(value)
+		case "o":
+			h.o = string(value)
+		case "s":
+			h.s = string(value)
+		case "k":
+			h.k = string(value)
+		case "x":
+			h.x = string(value)
+		case "e":
+			h.e = string(value)
+		case "f", "filter":
+			h.filter = string(value)
+		case "bm":
+			h.bm = string(value)
+		case "bs":
+			h.bs = string(value)
+		case "mt":
+			h.mt = string(value)
+		case "pw":
+			h.pw = string(value)
+		case "uri":
+			h.uri = string(value)
+		case "opts":
+			h.opts = string(value)
+		case "sids":
+			h.subIDs = string(value)
+		case "top_n":
+			h.topN = string(value)
+		case "_repl":
+			h.repl = string(value)
+		case "_repl_sync":
+			h.replSync = string(value)
+		case "sub_id":
+			h.subID = string(value)
+		case "status":
+			h.status = string(value)
+		case "reason":
+			h.reason = string(value)
+		case "version":
+			h.version = string(value)
+		case "orderby":
+			h.orderBy = string(value)
+		case "user_id":
+			h.userID = string(value)
+		case "query_id":
+			h.queryID = string(value)
+		case "sow_keys":
+			h.sowKeys = string(value)
+		case "client_name":
+			h.clientName = string(value)
+		}
+		i = skipHeaderWhitespace(frame, next)
+		if i == len(frame) {
+			return headerFields{}, nil
+		}
+		switch frame[i] {
+		case '}':
+			return h, frame[i+1:]
+		case ',':
+			i = skipHeaderWhitespace(frame, i+1)
+		default:
+			return headerFields{}, nil
+		}
+	}
+	return headerFields{}, nil
+}
+
+func skipHeaderWhitespace(frame []byte, index int) int {
+	for index < len(frame) {
+		switch frame[index] {
+		case ' ', '\t', '\r', '\n':
+			index++
+		default:
+			return index
+		}
+	}
+	return index
+}
+
+func readHeaderString(frame []byte, index int) ([]byte, int, bool) {
+	if index == len(frame) || frame[index] != '"' {
+		return nil, index, false
+	}
+	var start = index
+	var escaped bool
+	for index++; index < len(frame); index++ {
+		switch frame[index] {
+		case '"':
+			if !escaped {
+				return frame[start+1 : index], index + 1, true
+			}
+			var decoded string
+			if err := json.Unmarshal(frame[start:index+1], &decoded); err != nil {
+				return nil, index, false
+			}
+			return []byte(decoded), index + 1, true
+		case '\\':
+			escaped = true
+			index++
+		default:
+			if frame[index] < 0x20 {
+				return nil, index, false
+			}
+		}
+	}
+	return nil, index, false
+}
+
+func readHeaderValue(frame []byte, index int) ([]byte, int, bool) {
+	if index == len(frame) {
+		return nil, index, false
+	}
+	if frame[index] == '"' {
+		return readHeaderString(frame, index)
+	}
+	if frame[index] == '{' || frame[index] == '[' {
+		// Future fields may contain structured values. Decode only this uncommon
+		// case so the payload and nested field names cannot become header fields.
+		var decoder = json.NewDecoder(bytes.NewReader(frame[index:]))
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, index, false
+		}
+		return nil, index + int(decoder.InputOffset()), true
+	}
+	var start = index
+	for index < len(frame) {
+		switch frame[index] {
+		case ',', '}', ' ', '\t', '\r', '\n':
+			var value = frame[start:index]
+			return value, index, validHeaderScalar(value)
+		default:
+			index++
+		}
+	}
+	return nil, index, false
+}
+
+func validHeaderScalar(value []byte) bool {
+	if len(value) == 0 {
+		return false
+	}
+	if value[0] >= '1' && value[0] <= '9' {
+		for _, digit := range value[1:] {
+			if digit < '0' || digit > '9' {
+				return json.Valid(value)
+			}
+		}
+		return true
+	}
+	return json.Valid(value)
 }
 
 // ---------------------------------------------------------------------------

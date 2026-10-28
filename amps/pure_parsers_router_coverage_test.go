@@ -38,8 +38,8 @@ func TestCompositeMessageBuilderAndParserCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
-	if count != 2 || parser.Size() != 2 {
-		t.Fatalf("expected 2 parts, got %d", parser.Size())
+	if count != 3 || parser.Size() != 3 {
+		t.Fatalf("expected 3 parts including the empty part, got %d", parser.Size())
 	}
 
 	part0, err := parser.Part(0)
@@ -59,7 +59,7 @@ func TestCompositeMessageBuilderAndParserCoverage(t *testing.T) {
 
 	message := &Message{header: new(_Header)}
 	message.SetData(raw)
-	if parsed, err := parser.ParseMessage(message); err != nil || parsed != 2 {
+	if parsed, err := parser.ParseMessage(message); err != nil || parsed != 3 {
 		t.Fatalf("parse message failed: parsed=%d err=%v", parsed, err)
 	}
 

@@ -62,10 +62,7 @@ func TestMessageStreamConflateDataRace(t *testing.T) {
 	wg.Wait()
 }
 
-// TestMessageStreamSlowConsumerDoesNotStallReceivePath guards against
-// head-of-line blocking from a full bounded stream queue. messageHandler runs
-// on the shared receive goroutine, so bounded queues must evict instead of
-// blocking indefinitely.
+// A full handler returns backpressure promptly and leaves the oldest entry intact.
 func TestMessageStreamSlowConsumerDoesNotStallReceivePath(t *testing.T) {
 	var stream = newMessageStream(nil)
 	stream.SetSubscription("sub-slow", "sub-slow")
@@ -90,12 +87,12 @@ func TestMessageStreamSlowConsumerDoesNotStallReceivePath(t *testing.T) {
 	}
 
 	var next = stream.Next()
-	if next == nil || string(next.Data()) != "2" {
-		t.Fatalf("expected bounded queue to keep newest message, got %#v", next)
+	if next == nil || string(next.Data()) != "1" {
+		t.Fatalf("expected bounded queue to preserve oldest message, got %#v", next)
 	}
 }
 
-func TestMessageStreamConflateEvictionRemovesStaleSowKey(t *testing.T) {
+func TestMessageStreamConflationDoesNotDisplaceAnotherSowKey(t *testing.T) {
 	var stream = newMessageStream(nil)
 	stream.SetSubscription("sub-evict", "sub-evict")
 	stream.SetMaxDepth(1)
@@ -111,7 +108,7 @@ func TestMessageStreamConflateEvictionRemovesStaleSowKey(t *testing.T) {
 
 	var next = stream.Next()
 	if next == nil || string(next.Data()) != "third" {
-		t.Fatalf("expected evicted SOW key to be enqueueable again, got %#v", next)
+		t.Fatalf("expected the queued SOW key to be updated in place, got %#v", next)
 	}
 }
 

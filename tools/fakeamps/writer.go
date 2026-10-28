@@ -15,7 +15,7 @@ import (
 //
 // Real AMPS spawns a dedicated writer thread per transport that drains an
 // internal outbound queue. This goroutine models that behavior:
-//   - Drains all available frames before flushing (write coalescing)
+//   - Coalesces data frames and flushes acknowledgements in queue order
 //   - Uses bufio.Writer to batch small frames into fewer syscalls
 //   - Never blocks the reader goroutine
 //   - Optional zlib compression for continuous streaming
@@ -58,6 +58,7 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 
 	for frame := range cw.ch {
 		channelClosed := false
+		var flushAck = isAcknowledgementFrame(frame)
 		// Compress frame if compression is enabled.
 		if cw.compress && len(frame) > 64 {
 			frame = cw.compressFrame(frame)
@@ -69,11 +70,9 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 		cw.stats.messagesOut.Add(1)
 		cw.stats.bytesOut.Add(uint64(len(frame)))
 
-		// Drain all available frames before flushing — write coalescing.
-		// This minimizes syscalls under high throughput while keeping
-		// latency low when the queue is empty (we flush immediately
-		// when there's nothing else pending).
-		drained := true
+		// A processed ack must reach the client before queued snapshot data
+		// can delay it. Keep FIFO order and coalesce data between acks.
+		drained := !flushAck
 		for drained {
 			select {
 			case f, ok := <-cw.ch:
@@ -82,6 +81,7 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 					drained = false
 					continue
 				}
+				flushAck = isAcknowledgementFrame(f)
 				if cw.compress && len(f) > 64 {
 					f = cw.compressFrame(f)
 				}
@@ -90,6 +90,9 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 				}
 				cw.stats.messagesOut.Add(1)
 				cw.stats.bytesOut.Add(uint64(len(f)))
+				if flushAck {
+					drained = false
+				}
 			default:
 				drained = false
 			}
@@ -103,6 +106,10 @@ func (cw *connWriter) run(conn interface{ Write([]byte) (int, error) }) {
 		}
 	}
 	_ = bw.Flush()
+}
+
+func isAcknowledgementFrame(frame []byte) bool {
+	return len(frame) >= 4 && bytes.HasPrefix(frame[4:], []byte(`{"c":"ack"`))
 }
 
 func (cw *connWriter) compressFrame(frame []byte) []byte {

@@ -34,7 +34,7 @@ func TestAutoAckBatchFlush(t *testing.T) {
 
 	client.maybeAutoAck(makeAutoAckMessage("1|2|"))
 	payload := conn.WrittenPayload()
-	if !strings.Contains(payload, `"c":"ack"`) {
+	if !strings.Contains(payload, `"c":"sow_delete"`) {
 		t.Fatalf("expected ack command payload, got %q", payload)
 	}
 	if !strings.Contains(payload, `1|1|,1|2|`) {
@@ -53,7 +53,7 @@ func TestAutoAckTimeoutFlush(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 
 	payload := conn.WrittenPayload()
-	if !strings.Contains(payload, `"c":"ack"`) {
+	if !strings.Contains(payload, `"c":"sow_delete"`) {
 		t.Fatalf("expected timeout ack payload, got %q", payload)
 	}
 	if !strings.Contains(payload, `2|1|`) {

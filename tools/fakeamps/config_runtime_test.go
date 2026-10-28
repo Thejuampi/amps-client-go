@@ -310,6 +310,7 @@ func TestConfigureLoggingTargetsSupportsMultipleStandardOutputs(t *testing.T) {
 }
 
 func snapshotRuntimeFlags() func() {
+	var config = effectiveConfig
 	var addr = *flagAddr
 	var version = *flagVersion
 	var sowEnabled = *flagSOWEnabled
@@ -343,6 +344,7 @@ func snapshotRuntimeFlags() func() {
 	var actions = append(actionFlags(nil), flagActions...)
 
 	return func() {
+		effectiveConfig = config
 		*flagAddr = addr
 		*flagVersion = version
 		*flagSOWEnabled = sowEnabled

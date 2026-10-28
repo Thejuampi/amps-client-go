@@ -801,6 +801,26 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 
+			if isQueueTopic && bookmark != "" {
+				// C++ uses a fixed cid for every queue ack. Bookmarks, rather
+				// than the command id, identify the messages being removed.
+				var topicMatches int
+				if cache := getSOW(); cache != nil {
+					topicMatches = cache.count(topic)
+				}
+				var released = acknowledgeQueueBookmarks(topic, bookmark, containsToken(options, "cancel"))
+				if wantProcessed {
+					writer.send(buildSOWDeleteAck(buf, "processed", commandID, released, topicMatches))
+				}
+				if wantStats {
+					writer.send(buildSOWDeleteAck(buf, "stats", commandID, released, topicMatches))
+				}
+				if wantPersisted {
+					writer.send(buildPersistedAck(buf, commandID, seqID))
+				}
+				continue
+			}
+
 			filter = applyEntitlementFilter(connUserID, filter)
 			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
 			var isDuplicateCommand = connCommandDedupe.seenBefore(dedupeClientID, commandID)
@@ -1043,12 +1063,8 @@ func handleConnection(conn net.Conn) {
 		// UNKNOWN
 		// ---------------------------------------------------------------
 		default:
-			if wantStats {
-				writer.send(buildStatsAck(buf, commandID, &stats))
-			} else {
-				writer.send(buildAck(buf, "processed", commandID, "failure",
-					kv{k: "reason", v: "unknown command"}))
-			}
+			writer.send(buildAck(buf, "processed", commandID, "failure",
+				kv{k: "reason", v: "unknown command"}))
 		}
 	}
 }

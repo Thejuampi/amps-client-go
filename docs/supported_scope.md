@@ -2,11 +2,18 @@
 
 ## Scope Baseline
 
+The 2026-10-24 [behavior audit](behavior_parity_audit.md) compares this implementation
+with **C++ 5.3.5.14**. Its 23 finding groups are [corrected](behavior_parity_fixes.md),
+with 32 original probes in the ordinary suite and zero open registered gaps.
+The scope below still distinguishes compatibility limits from verified contracts;
+this does not certify complete behavioral equivalence against a production server.
+
 This document defines the supported behavior scope for `github.com/Thejuampi/amps-client-go/amps`.
 
 Parity target:
 
-- C++ AMPS client behavior baseline: `5.3.5.1`
+- Original C++ client port baseline: `5.3.5.1`
+- Current behavior review reference: `5.3.5.14`
 - Scope focus: full public C++ client families, including compatibility layers in `amps/capi` and `amps/cppcompat`
 
 Symbol gate baseline:
@@ -53,27 +60,29 @@ Performance regression gate:
 
 | Workflow | Status | Primary APIs |
 |---|---|---|
-| Connection and session lifecycle | Supported | `NewClient`, `Connect`, `Logon`, `Disconnect`, `Close` |
-| Publish and delta publish | Supported | `Publish`, `PublishBytes`, `DeltaPublish`, `DeltaPublishBytes` |
-| Streaming subscribe flows | Supported | `Subscribe*`, `DeltaSubscribe*`, `Unsubscribe` |
-| SOW query flows | Supported | `Sow*`, `SowAndSubscribe*`, `SowAndDeltaSubscribe*`, `SOWHistoricalQueryAndSubscribe`, `SOWPaginatedQueryAndSubscribe`, `SowDelete*` |
-| Queue acknowledgement controls | Supported | `Ack`, `AckMessage`, `SetAutoAck`, `SetAckBatchSize`, `SetAckTimeout`, `FlushAcks` |
+| Connection and session lifecycle | Corrected; R08, R09, R20 | `NewClient`, `Connect`, `Logon`, `Disconnect`, `Close` |
+| Publish and delta publish | Corrected; R06, R11 | `Publish`, `PublishBytes`, `DeltaPublish`, `DeltaPublishBytes` |
+| Streaming subscribe flows | Corrected; R02, R03, R07 | `Subscribe*`, `DeltaSubscribe*`, `Unsubscribe` |
+| SOW query flows | Corrected; R02, R21 | `Sow*`, `SowAndSubscribe*`, `SowAndDeltaSubscribe*`, `SOWHistoricalQueryAndSubscribe`, `SOWPaginatedQueryAndSubscribe`, `SowDelete*` |
+| Queue acknowledgement controls | Corrected; R01, R03 | `Ack`, `AckMessage`, `SetAutoAck`, `SetAckBatchSize`, `SetAckTimeout`, `FlushAcks` |
 | Queue backlog requests | Supported | `SetMaxBacklog`, `SubscribeWithMaxBacklog`, `SubscribeAsyncWithMaxBacklog` |
-| Bookmark resume and duplicate detection | Supported | `BookmarkSubscribe*`, bookmark constants/helpers, `BookmarkStore` implementations |
+| Bookmark resume and duplicate detection | Corrected; R04, R05 | `BookmarkSubscribe*`, bookmark constants/helpers, `BookmarkStore` implementations |
 | Bookmark replay controls | Supported | `SetBookmarkNotFound*`, `SetFullyDurable`, `FullyDurableSubscribe` |
-| Publish replay and persistence tracking | Supported | `PublishStore` implementations, `PublishFlush` |
-| Retry and reconnect recovery | Supported | `SetRetryOnDisconnect`, `HAClient.ConnectAndLogon`, chooser/strategy controls |
+| Publish replay and persistence tracking | Corrected; R06, R16, R23 | `PublishStore` implementations, `PublishFlush` |
+| Retry and reconnect recovery | Corrected R07, R08, R20; C04 limits remain | `SetRetryOnDisconnect`, `HAClient.ConnectAndLogon`, chooser/strategy controls |
 | Transport compression on TCP/TLS | Supported | `SetCompression`, `compression=zlib` on `tcp`/`tcps` URIs |
 | Kerberos compatibility auth (best effort, pure Go) | Supported with limits | `amps/auth/kerberos.NewAuthenticator`, additive capability/challenge interfaces |
 | Transport and routing hooks | Supported | transport filter, receive-start callback, global handlers, listener APIs |
-| C compatibility layer | Supported | `amps/capi` client/message handle APIs, TLS/zlib compatibility entrypoints |
-| C++ utility compatibility | Supported | `amps/cppcompat` utility/store/recovery/FIX families |
+| C compatibility layer | Corrected R18; partial/emulated C01, C03 | `amps/capi` client/message handle APIs, TLS/zlib compatibility entrypoints |
+| C++ utility compatibility | Corrected R13, R22, R23; partial C02 | `amps/cppcompat` utility/store/recovery/FIX families |
+
+Rxx and Cxx references identify findings in the [behavior audit](behavior_parity_audit.md).
 
 ## Compatibility Guarantees
 
 - Existing public method signatures in package `amps` remain available.
 - C++-style alias methods are retained where implemented (`SetName`/`Name`, correlation aliases, store and hook aliases).
-- Protocol-facing command and topic semantics are preserved.
+- Protocol-facing semantics target C++ behavior; the audit records current divergences.
 - C and C++ compatibility entrypoints are additive and do not break existing Go-first API usage.
 
 ## Constraints and Operational Assumptions
@@ -103,3 +112,9 @@ Performance regression gate:
 - [C++ to Go Parity Matrix](cpp_to_go_parity_matrix.md)
 - [C API Compatibility Reference](capi_reference.md)
 - [C++ Compatibility Reference](cppcompat_reference.md)
+
+## Behavior correction migration notes
+
+`cppcompat.CRC.Compute` now returns uint64 and matches the portable C++ CRC.
+`Client.Ack` treats its optional third argument as options; `SetTopN(0)` is an
+explicit zero limit. See the [fix record](behavior_parity_fixes.md) for details.

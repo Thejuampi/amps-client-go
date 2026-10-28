@@ -2,6 +2,13 @@
 
 This runbook defines the offline acceptance commands for enterprise parity closure.
 
+**Current identified-contract status (2026-10-24): closed.** The 23 groups
+identified against C++ 5.3.5.14 are fixed, their 32 regression probes run without
+build tags, and the [gap register](gap_register.md) has no open entries. See the
+[fix record](behavior_parity_fixes.md) for executed checks and limitations.
+Release acceptance still requires all gates below and the security scan; closing
+identified behavior gaps does not replace those controls.
+
 All commands are local/offline. No live AMPS endpoint is required for these gates.
 
 ## Required Commands

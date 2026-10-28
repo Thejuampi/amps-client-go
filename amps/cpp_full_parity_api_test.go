@@ -211,7 +211,7 @@ func TestMessageAckParityPath(t *testing.T) {
 	if err := message.Ack(); err != nil {
 		t.Fatalf("expected Ack helper to succeed: %v", err)
 	}
-	if !strings.Contains(string(conn.WrittenBytes()), `"c":"ack"`) {
+	if !strings.Contains(string(conn.WrittenBytes()), `"c":"sow_delete"`) {
 		t.Fatalf("expected ack command to be written")
 	}
 }

@@ -918,9 +918,10 @@ func runReconnectStressFreshClientIteration(t *testing.T, server *reconnectStres
 
 	var unexpectedErrCh = make(chan error, 8)
 	var client = amps.NewClient(fmt.Sprintf("fakeamps-fresh-sow-sub-client-%d", iteration))
+	var trace = traceReconnectStressClient(client)
 	client.SetErrorHandler(func(err error) {
 		select {
-		case unexpectedErrCh <- err:
+		case unexpectedErrCh <- server.diagnostic(err, trace):
 		default:
 		}
 	})
@@ -1162,6 +1163,14 @@ func startReconnectStressServer(t *testing.T) *reconnectStressServer {
 			if acceptErr != nil {
 				return
 			}
+			if tcp, ok := conn.(*net.TCPConn); ok {
+				_ = tcp.SetNoDelay(*flagNoDelay)
+				_ = tcp.SetWriteBuffer(*flagWriteBuf)
+				_ = tcp.SetReadBuffer(*flagReadBuf)
+				_ = tcp.SetKeepAlive(true)
+				_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+			}
+			conn = &reconnectStressTraceConn{Conn: conn}
 			server.setActive(conn)
 			server.handlers.Add(1)
 			go func(current net.Conn) {

@@ -15,6 +15,7 @@ var defaultResubscriptionTimeout atomic.Int64
 type DefaultSubscriptionManager struct {
 	lock                     sync.RWMutex
 	subscriptions            map[string]trackedSubscription
+	generations              map[string]subscriptionGeneration
 	resumed                  map[string]*trackedResumeGroup
 	resumedGroups            map[*trackedResumeGroup]struct{}
 	failedResubscribeHandler FailedResubscribeHandler
@@ -278,6 +279,7 @@ func (manager *DefaultSubscriptionManager) removeResumeGroup(group *trackedResum
 	delete(manager.resumedGroups, group)
 	for _, memberID := range group.memberIDs() {
 		delete(manager.resumed, memberID)
+		delete(manager.generations, memberID)
 	}
 }
 
@@ -286,6 +288,7 @@ func (manager *DefaultSubscriptionManager) removeTrackedSubscription(subID strin
 		return
 	}
 	delete(manager.subscriptions, subID)
+	delete(manager.generations, subID)
 	manager.removeResumedSubID(subID)
 }
 
@@ -401,6 +404,17 @@ func (manager *DefaultSubscriptionManager) Subscribe(messageHandler func(*Messag
 		return
 	}
 
+	defer func() {
+		manager.lock.Lock()
+		defer manager.lock.Unlock()
+		if manager.generations == nil {
+			manager.generations = make(map[string]subscriptionGeneration)
+		}
+		var commandID, _ = command.CommandID()
+		for _, id := range splitSubscriptionIDs(subscriptionID) {
+			manager.generations[id] = subscriptionGeneration{generation: command.generation, commandID: commandID}
+		}
+	}()
 	var options, _ = command.Options()
 	if hasCommandOption(options, "resume") {
 		manager.lock.Lock()
@@ -451,11 +465,13 @@ func (manager *DefaultSubscriptionManager) Unsubscribe(subID string) {
 
 	if subID == "" || subID == "all" {
 		manager.subscriptions = make(map[string]trackedSubscription)
+		manager.generations = nil
 		manager.resumed = make(map[string]*trackedResumeGroup)
 		manager.resumedGroups = make(map[*trackedResumeGroup]struct{})
 		return
 	}
 	delete(manager.subscriptions, subID)
+	delete(manager.generations, subID)
 	manager.removeResumedSubID(subID)
 }
 
@@ -466,6 +482,7 @@ func (manager *DefaultSubscriptionManager) Clear() {
 	}
 	manager.lock.Lock()
 	manager.subscriptions = make(map[string]trackedSubscription)
+	manager.generations = nil
 	manager.resumed = make(map[string]*trackedResumeGroup)
 	manager.resumedGroups = make(map[*trackedResumeGroup]struct{})
 	manager.lock.Unlock()
@@ -554,6 +571,7 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 
 	for _, subscription := range subscriptions {
 		command := prepareResubscribeCommand(client, subscription)
+		command.replay = true
 		command.SetTimeout(resubscriptionTimeout)
 		if subscription.paused {
 			manager.lock.RLock()
@@ -589,6 +607,7 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 			command:           group.command,
 			requestedAckTypes: group.requestedAckTypes,
 		})
+		resumeCommand.replay = true
 		resumeCommand.SetTimeout(resubscriptionTimeout)
 		if _, err := client.ExecuteAsync(resumeCommand, nil); err != nil {
 			if failedHandler != nil {
@@ -617,4 +636,34 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 	}
 
 	return nil
+}
+
+func (manager *DefaultSubscriptionManager) hasGeneration(subID string, generation uint64) bool {
+	manager.lock.RLock()
+	defer manager.lock.RUnlock()
+	var ids = splitSubscriptionIDs(subID)
+	if len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		if stored, exists := manager.generations[id]; !exists || stored.generation != generation {
+			return false
+		}
+	}
+	return true
+}
+
+type subscriptionGeneration struct {
+	generation uint64
+	commandID  string
+}
+
+func (manager *DefaultSubscriptionManager) forgetGeneration(subIDs, commandID string) {
+	manager.lock.Lock()
+	defer manager.lock.Unlock()
+	for _, id := range splitSubscriptionIDs(subIDs) {
+		if current, exists := manager.generations[id]; exists && current.commandID == commandID {
+			delete(manager.generations, id)
+		}
+	}
 }

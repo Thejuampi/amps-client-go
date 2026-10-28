@@ -135,8 +135,17 @@ func TestBookmarkSubscribePersistsMostRecentOnCompletedAck(t *testing.T) {
 	client.SetBookmarkStore(store)
 
 	var deliveryBookmarkCh = make(chan string, 1)
+	var completedBookmarkCh = make(chan string, 1)
 	var subID, subErr = client.BookmarkSubscribeAsync(func(message *amps.Message) error {
 		var command, _ = message.Command()
+		if command == amps.CommandAck {
+			var ackType, _ = message.AckType()
+			if ackType == amps.AckTypeCompleted {
+				var bookmark, _ = message.Bookmark()
+				completedBookmarkCh <- bookmark
+			}
+			return nil
+		}
 		if command != amps.CommandPublish {
 			return nil
 		}
@@ -187,17 +196,14 @@ func TestBookmarkSubscribePersistsMostRecentOnCompletedAck(t *testing.T) {
 		t.Fatalf("timed out waiting for bookmark replay delivery")
 	}
 
-	var deadline = time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		var mostRecent = store.GetMostRecent(subID)
-		if mostRecent != "" {
-			if mostRecent != deliveredBookmark {
-				t.Fatalf("most recent bookmark = %q, want %q", mostRecent, deliveredBookmark)
-			}
-			return
+	select {
+	case completedBookmark := <-completedBookmarkCh:
+		if mostRecent := store.GetMostRecent(subID); mostRecent != deliveredBookmark || completedBookmark != deliveredBookmark {
+			t.Fatalf("completed bookmark = %q, most recent = %q, want %q", completedBookmark, mostRecent, deliveredBookmark)
 		}
-		time.Sleep(20 * time.Millisecond)
+	case err := <-errCh:
+		t.Fatalf("unexpected client error before completed ack: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for bookmark store persistence after completed ack")
 	}
-
-	t.Fatalf("timed out waiting for bookmark store persistence after completed ack")
 }

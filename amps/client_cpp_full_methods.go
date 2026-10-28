@@ -268,10 +268,19 @@ func (client *Client) SetPublishBatching(batchSizeBytes uint64, batchTimeoutMill
 	if state == nil {
 		return client
 	}
+	client.lock.Lock()
+	var flushErr = client.flushPublishBatch()
+	var timeout = time.Duration(min(batchTimeoutMillis, uint64((1<<63-1)/int64(time.Millisecond)))) * time.Millisecond // #nosec G115 -- min bounds milliseconds before conversion and multiplication; covered at MaxUint64.
+	client.batchLimit.Store(batchSizeBytes)
+	client.batchTimeout.Store(int64(timeout))
 	state.lock.Lock()
 	state.publishBatchSizeBytes = batchSizeBytes
-	state.publishBatchTimeout = time.Millisecond * time.Duration(batchTimeoutMillis) // #nosec G115 -- configuration value from caller
+	state.publishBatchTimeout = timeout
 	state.lock.Unlock()
+	client.lock.Unlock()
+	if flushErr != nil {
+		client.reportException(flushErr)
+	}
 	return client
 }
 

@@ -88,9 +88,17 @@ func (store *MemoryPublishStore) rebuildDrainSignalLocked() {
 
 // NewMemoryPublishStore returns a new MemoryPublishStore.
 func NewMemoryPublishStore() *MemoryPublishStore {
+	return newMemoryPublishStore(initialPublishSequence())
+}
+
+func initialPublishSequence() uint64 {
+	return uint64(time.Now().UnixMilli())*1000000 + 1 // #nosec G115 -- current Unix time is non-negative.
+}
+
+func newMemoryPublishStore(initialSequence uint64) *MemoryPublishStore {
 	return &MemoryPublishStore{
 		entries:       make(map[uint64]*Command),
-		nextSequence:  1,
+		nextSequence:  initialSequence,
 		lastPersisted: 0,
 		drainedCh:     newPublishStoreSignal(true),
 	}
@@ -336,12 +344,15 @@ func NewFilePublishStore(path string) *FilePublishStore {
 // NewFilePublishStoreWithOptions returns a new FilePublishStore with explicit options.
 func NewFilePublishStoreWithOptions(path string, options FileStoreOptions) *FilePublishStore {
 	fileStore := &FilePublishStore{
-		MemoryPublishStore: NewMemoryPublishStore(),
+		MemoryPublishStore: newMemoryPublishStore(1),
 		path:               path,
 		walPath:            path + ".wal",
 		options:            normalizeFileStoreOptions(options),
 	}
 	fileStore.loadErr = fileStore.load()
+	if fileStore.loadErr == nil && len(fileStore.entries) == 0 && fileStore.lastPersisted == 0 && fileStore.nextSequence <= 1 && !fileStore.sequenceExhausted {
+		fileStore.nextSequence = initialPublishSequence()
+	}
 	return fileStore
 }
 

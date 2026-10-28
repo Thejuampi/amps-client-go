@@ -307,7 +307,7 @@ func TestCommandSettersAndGettersCoverage(t *testing.T) {
 		SetSowKeys("").
 		SetSubID("").
 		SetSubIDs("").
-		SetTopN(0).
+		SetTopN(uint(^uint32(0))).
 		SetTopic("")
 
 	if _, ok := command.BatchSize(); ok {

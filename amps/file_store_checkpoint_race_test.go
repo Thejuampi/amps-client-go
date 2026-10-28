@@ -76,7 +76,7 @@ func TestFileBookmarkStoreCheckpointPreservesConcurrentMutation(t *testing.T) {
 	}
 
 	reloaded := NewFileBookmarkStoreWithOptions(path, options)
-	if got := reloaded.GetMostRecent("sub-1"); got != "10|2|" {
+	if got := reloaded.GetMostRecent("sub-1"); got != BookmarksEPOCH || reloaded.records["sub-1"]["10|2|"] == nil {
 		t.Fatalf("expected reloaded store to retain concurrent bookmark mutation, got %q", got)
 	}
 }

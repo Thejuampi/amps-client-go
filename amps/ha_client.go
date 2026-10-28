@@ -84,17 +84,24 @@ func (ha *HAClient) handleDisconnect(err error) {
 	ha.lock.Unlock()
 
 	go func() {
+		var connectErr error
 		defer func() {
-			ha.reconnecting.Store(false)
+			cancel()
 			ha.lock.Lock()
 			ha.reconnectCancel = nil
+			ha.reconnecting.Store(false)
+			// A disconnect can arrive after logon succeeds while this worker
+			// still owns the reconnect flag. Hand it off after releasing ownership.
+			var retry = connectErr == nil && !ha.stopped.Load() && !ha.client.connected.Load()
 			ha.lock.Unlock()
+			if retry {
+				ha.handleDisconnect(err)
+			}
 		}()
-		connectErr := ha.connectAndLogon(ctx)
+		connectErr = ha.connectAndLogon(ctx)
 		if ha.client != nil && shouldReportHAReconnectError(connectErr) {
 			ha.client.reportException(connectErr)
 		}
-		_ = err
 	}()
 }
 

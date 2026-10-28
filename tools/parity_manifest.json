@@ -1,4 +1,11 @@
 {
+  "behavior_review": {
+    "reference_version": "5.3.5.14",
+    "verified_on": "2026-10-24",
+    "inventory": "docs/behavior_parity_inventory.md",
+    "report": "docs/behavior_parity_audit.md",
+    "symbol_presence_is_not_behavioral_equivalence": true
+  },
   "source_headers": [
     "include/amps/ampsplusplus.hpp",
     "include/amps/HAClient.hpp",

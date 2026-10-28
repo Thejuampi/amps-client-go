@@ -273,7 +273,11 @@ func commandFromSnapshot(snapshot commandSnapshot) *Command {
 }
 
 func cloneCommand(command *Command) *Command {
-	return commandFromSnapshot(snapshotFromCommand(command))
+	var copy = commandFromSnapshot(snapshotFromCommand(command))
+	if command != nil && copy != nil {
+		copy.generation, copy.replay = command.generation, command.replay
+	}
+	return copy
 }
 
 func marshalCommandSnapshot(command *Command) ([]byte, error) {

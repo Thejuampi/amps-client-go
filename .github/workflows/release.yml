@@ -70,7 +70,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.13"
+          go-version: "1.26.10"
           check-latest: true
 
       - name: Configure git identity
@@ -101,17 +101,20 @@ jobs:
           fi
 
       - name: Update version files
+        id: version_files
         shell: bash
         run: |
           set -euo pipefail
 
           printf '%s\n' "${RELEASE_VERSION}" > VERSION
-          RELEASE_VERSION="${RELEASE_VERSION}" perl -0pi -e 's/^Version:\s*`[^`]+`$/"Version: `" . $ENV{RELEASE_VERSION} . "`"/me' README.md
+          RELEASE_VERSION="${RELEASE_VERSION}" perl -0pi -e 's/^Version:\s*`[^`]+`(?=\r?$)/"Version: `" . $ENV{RELEASE_VERSION} . "`"/me' README.md
           RELEASE_VERSION="${RELEASE_VERSION}" perl -0pi -e 's/^(\s*ClientVersion\s*=\s*)"[^"]+"/$1 . "\"" . $ENV{RELEASE_VERSION} . "\""/me' amps/client.go
 
           if git diff --quiet -- VERSION README.md amps/client.go; then
-            echo "Release version files did not change."
-            exit 1
+            echo "Using the release version already prepared in main."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Release gates
@@ -122,7 +125,7 @@ jobs:
         run: make integration-live-smoke
 
       - name: Commit release bump
-        if: env.RELEASE_DRY_RUN != 'true'
+        if: env.RELEASE_DRY_RUN != 'true' && steps.version_files.outputs.changed == 'true'
         shell: bash
         run: |
           set -euo pipefail

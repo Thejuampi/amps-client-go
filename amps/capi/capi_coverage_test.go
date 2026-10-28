@@ -34,7 +34,7 @@ func TestNormalizeFieldAndMessageCRUDCoverage(t *testing.T) {
 		"cid":           "cid",
 		"topic":         "t",
 		"bookmark":      "bm",
-		"sub_id":        "s",
+		"sub_id":        "sub_id",
 		"query_id":      "query_id",
 		"filter":        "filter",
 		"opts":          "opts",

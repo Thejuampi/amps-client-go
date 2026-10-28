@@ -289,7 +289,9 @@ func normalizeField(field string) string {
 		return "t"
 	case "bookmark", "bm":
 		return "bm"
-	case "subid", "sub_id", "s":
+	case "subid", "sub_id":
+		return "sub_id"
+	case "s", "sequence", "sequenceid":
 		return "s"
 	case "queryid", "query_id":
 		return "query_id"
@@ -332,8 +334,13 @@ func commandFromMessage(message *messageObject) *amps.Command {
 	if value := message.fields["bm"]; value != "" {
 		command.SetBookmark(value)
 	}
-	if value := message.fields["s"]; value != "" {
+	if value := message.fields["sub_id"]; value != "" {
 		command.SetSubID(value)
+	}
+	if value := message.fields["s"]; value != "" {
+		if sequence, err := strconv.ParseUint(value, 10, 64); err == nil {
+			command.SetSequenceID(sequence)
+		}
 	}
 	if value := message.fields["query_id"]; value != "" {
 		command.SetQueryID(value)
@@ -366,6 +373,25 @@ func commandFromMessage(message *messageObject) *amps.Command {
 	if value := message.fields["a"]; value != "" {
 		if parsed, err := strconv.Atoi(value); err == nil {
 			command.SetAckType(parsed)
+		} else {
+			var ackTypes int
+			for _, token := range strings.Split(value, ",") {
+				switch strings.TrimSpace(token) {
+				case "received":
+					ackTypes |= amps.AckTypeReceived
+				case "parsed":
+					ackTypes |= amps.AckTypeParsed
+				case "processed":
+					ackTypes |= amps.AckTypeProcessed
+				case "persisted":
+					ackTypes |= amps.AckTypePersisted
+				case "completed":
+					ackTypes |= amps.AckTypeCompleted
+				case "stats":
+					ackTypes |= amps.AckTypeStats
+				}
+			}
+			command.SetAckType(ackTypes)
 		}
 	}
 	if message.data != nil {
@@ -429,7 +455,10 @@ func messageFromAmps(message *amps.Message) Handle {
 		object.fields["bm"] = value
 	}
 	if value, ok := message.SubID(); ok {
-		object.fields["s"] = value
+		object.fields["sub_id"] = value
+	}
+	if value, ok := message.SequenceID(); ok {
+		object.fields["s"] = strconv.FormatUint(value, 10)
 	}
 	if value, ok := message.QueryID(); ok {
 		object.fields["query_id"] = value
