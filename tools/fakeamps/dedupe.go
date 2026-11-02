@@ -113,3 +113,65 @@ func (tracker *publishSequenceTracker) reset() {
 }
 
 var publishSequenceDedupe = newPublishSequenceTracker()
+
+type publisherIdentity struct {
+	name      string
+	user      string
+	anonymous string
+}
+
+type publisherSequenceState struct {
+	mu        sync.Mutex
+	accepted  uint64
+	persisted uint64
+}
+
+type brokerPublishTracker struct {
+	mu         sync.Mutex
+	publishers map[publisherIdentity]*publisherSequenceState
+}
+
+func newBrokerPublishTracker() *brokerPublishTracker {
+	return &brokerPublishTracker{publishers: make(map[publisherIdentity]*publisherSequenceState)}
+}
+
+// begin serializes a publisher until the caller commits the applied sequence.
+func (tracker *brokerPublishTracker) begin(identity publisherIdentity, raw string) (*publisherSequenceState, uint64, bool, bool) {
+	var sequence, err = strconv.ParseUint(raw, 10, 64)
+	if err != nil || sequence == 0 {
+		return nil, 0, false, false
+	}
+	tracker.mu.Lock()
+	var state = tracker.publishers[identity]
+	if state == nil {
+		state = &publisherSequenceState{}
+		tracker.publishers[identity] = state
+	}
+	tracker.mu.Unlock()
+	state.mu.Lock()
+	if sequence <= state.accepted {
+		var persisted = sequence <= state.persisted
+		state.mu.Unlock()
+		return nil, sequence, true, persisted
+	}
+	return state, sequence, false, false
+}
+
+func (state *publisherSequenceState) finish(sequence uint64, persisted bool) {
+	if state == nil {
+		return
+	}
+	state.accepted = sequence
+	if persisted {
+		state.persisted = sequence
+	}
+	state.mu.Unlock()
+}
+
+func (state *publisherSequenceState) abort() {
+	if state != nil {
+		state.mu.Unlock()
+	}
+}
+
+var fallbackBrokerPublishTracker = newBrokerPublishTracker()

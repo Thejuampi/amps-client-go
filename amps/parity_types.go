@@ -367,13 +367,13 @@ func (client *Client) buildConnectionInfo() ConnectionInfo {
 			}
 		}
 	}
-	if client.serverVersion != "" {
-		info["server_version"] = client.serverVersion
-		if versionNum := ConvertVersionToNumber(client.serverVersion); versionNum > 0 {
+	if serverVersion := client.ServerVersion(); serverVersion != "" {
+		info["server_version"] = serverVersion
+		if versionNum := ConvertVersionToNumber(serverVersion); versionNum > 0 {
 			info["server_version_number"] = strconv.FormatUint(versionNum, 10)
 		}
 	}
-	info["client_name"] = client.clientName
+	info["client_name"] = client.ClientName()
 	if client.replicationGroup != "" {
 		info["replication_group"] = client.replicationGroup
 	}

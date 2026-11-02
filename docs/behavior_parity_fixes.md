@@ -7,7 +7,11 @@ sin build tag, sin skips y sin cambiar sus contratos para aceptar los defectos.
 
 Los [manifiestos](../tools/parity_behavior_manifest.json) cierran las 23 entradas
 nuevas y las dos entradas generales reabiertas por la auditoría. El registro queda
-con `OPEN_GAPS=0` para los contratos registrados. Las limitaciones C01–C08 de la
+con `OPEN_GAPS=0` al terminar esa primera corrección. La
+[segunda pasada del 2026-11-01](behavior_parity_second_audit.md) registra 16 grupos
+reproducidos y reabrió tres contratos generales. Su
+[registro de correcciones y gates](behavior_parity_second_fixes.md) documenta
+el cierre posterior de esas 19 entradas. Las limitaciones C01–C08 de la
 revisión siguen diferenciadas de esos contratos; no se certifica equivalencia
 completa contra un servidor AMPS real.
 

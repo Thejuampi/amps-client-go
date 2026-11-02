@@ -30,11 +30,14 @@ const (
 
 // Command stores exported state used by AMPS client APIs.
 type Command struct {
-	header     *_Header
-	data       []byte
-	timeout    int
-	generation uint64
-	replay     bool
+	header         *_Header
+	data           []byte
+	timeout        int
+	generation     uint64
+	replay         bool
+	replayOriginal *Command
+	replayGroup    *trackedResumeGroup
+	replayOwner    *DefaultSubscriptionManager
 }
 
 func commandHeader(com *Command) *_Header {

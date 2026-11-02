@@ -1,5 +1,82 @@
 # Changelog
 
+## [1.1.0] - 2026-11-02
+
+This minor release corrects the 16 finding groups from the second behavioral review,
+strengthens fakeamps interoperability with the official C++ 5.3.5.14 client,
+and reduces release-validation time. Existing public client signatures and the
+Go module path remain unchanged. The new exported error types and sequence
+accessor require a minor version under [SemVer](https://semver.org/spec/v2.0.0.html).
+
+### Compatible public API additions
+
+- `PublishStoreAcceptedError` identifies maintenance failures after acceptance
+  and exposes the underlying error through `Unwrap`.
+- `PublishStoreUncertainError` exposes the attempted sequence and cause when a
+  durable rollback cannot be confirmed.
+- `MemoryPublishStore.NextPublishSequence` reports the next automatic sequence
+  and whether the sequence space remains available.
+
+### Recovery and client correctness
+
+- Serialize retained publish and delete commands with replay, connection
+  generations, and the sequence floor received during logon.
+- Repair incomplete WAL tails before appending. Preserve accepted messages
+  after maintenance failures, roll back confirmed rejections, and retain
+  evidence when a durable outcome is uncertain.
+- Coordinate hybrid-store sequence floors and preserve persisted-ack requests
+  when replaying both new and legacy retained commands.
+- Apply one HA connection budget to transport preflight, logon, and recovery;
+  prevent stale callbacks and workers from replacing a recovered session or
+  dropping a newer reconnect request.
+- Preserve pending queue acknowledgements and retained-command handlers across
+  disconnects. Correct failed-handler cancellation and AutoAck ownership.
+- Decode escaped JSON headers for getters, routing, and copies; reject invalid
+  escapes and emit valid JSON controls and Unicode from message builders.
+- Synchronize logon metadata readers and reject obsolete subscription-recovery
+  snapshots after unsubscribe.
+
+### Fake broker interoperability
+
+- Recover publisher identity and publish/delete watermarks from disk journals;
+  preserve distinct commands that reuse a command ID.
+- Emit subscription route lists consumed by the official C++ client for live,
+  queue, and out-of-focus deliveries, and escape their topic headers.
+- Accept both bookmark field spellings used by clients. Recognize bookmark
+  subscriptions without a Go-specific option, honor EPOCH and explicit resume
+  positions, and keep NOW subscriptions from replaying historical messages.
+- Redeliver an expired queue lease to the original eligible subscriber when no
+  alternative can accept it; distinguish subscription ownership by connection.
+- Honor explicit OOF subscriptions independently of delta commands, including
+  delete and filter-mismatch events.
+- Build owned SOW frames with fewer copies and allocations, and escape topics
+  consistently in both SOW headers.
+
+New journal readers accept older records. Downgrading fakeamps after writing
+new typed metadata is not guaranteed. Its journal and SOW snapshot remain
+separate files, without an atomic transaction across a power failure.
+
+### Tests and release validation
+
+- Promote diagnostic regressions into the normal suite, strengthen mutation
+  checks, and restore unit tests accidentally excluded by the Integration name
+  filter.
+- Add a strict native C++ interoperability gate to local `make release`, using
+  the unmodified pinned SDK library against isolated fakeamps processes.
+- Add bounded TLA+/TLC checks for recovery, reconnect ownership, publisher
+  deduplication, C++ replay routing, and queue lease dispatch, with broken
+  variants and corresponding real-code mutations.
+- Run two isolated integration workers while preserving the 20 stress rounds,
+  race detection, datasets, timing limits, and performance baseline. Remove
+  repeated JSON decoding, redundant frame copies, and duplicate CI scanning.
+- Keep Windows test and tooling subprocesses hidden. Remove race-runtime exit
+  delays only from isolated native console probes.
+
+See the [second fix record](docs/behavior_parity_second_fixes.md) and
+[native C++ interoperability report](docs/cpp_fakeamps_interop.md) for contracts
+and scope, and the [release timing evidence](docs/test_suite_timings.md) for
+the measured validation costs.
+
 ## [1.0.0] - 2026-10-27
 
 This major release consolidates the behavioral parity review against C++

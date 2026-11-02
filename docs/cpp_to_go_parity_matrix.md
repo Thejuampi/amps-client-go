@@ -1,10 +1,22 @@
 # C++ to Go Surface Mapping and Behavior Review
 
-The behavior review uses **C++ 5.3.5.14** (verified 2026-10-24).
+The [native C++/fakeamps check](cpp_fakeamps_interop.md) additionally exercises
+the official C++ 5.3.5.14 client as a broker test client. It corrects delivery
+route lists, bookmark recognition, escaped topics, lease fallback and explicit
+OOF behavior. This is separate from public-symbol presence and does not
+certify complete server compatibility.
+
+The behavior review uses **C++ 5.3.5.14** (verified again 2026-11-01).
 The [audit](behavior_parity_audit.md) records the original implementation differences,
-with a [748-declaration inventory](behavior_parity_inventory.md) and opt-in
-regressions. All 23 finding groups are [corrected](behavior_parity_fixes.md); the
-[gap register](gap_register.md) has **zero open registered entries**.
+with a [753-declaration inventory](behavior_parity_inventory.md).
+The original 23 finding groups have their
+[corrections and regression tests](behavior_parity_fixes.md). The
+[second audit](behavior_parity_second_audit.md) reproduced **16 finding
+groups**, including the previously noted fakeamps reconnect limitation, with
+19 probe functions. Those functions now run in the normal suite alongside
+additional boundary regressions. The [correction report](behavior_parity_second_fixes.md)
+records the fixes, independent review and release gates. The
+[gap register](gap_register.md) has **0 open entries** across 53 contracts, including the native C++ interoperability contracts.
 Symbol presence is not behavioral equivalence.
 
 The 2026-10-26 [stress follow-up](behavior_parity_fixes.md#seguimiento-del-stress-2026-10-26)

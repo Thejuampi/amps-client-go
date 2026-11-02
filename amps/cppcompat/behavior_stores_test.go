@@ -2,6 +2,8 @@ package cppcompat
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Thejuampi/amps-client-go/amps"
@@ -13,6 +15,18 @@ type switchablePublishStore struct {
 }
 
 type savedThenFailedStore struct{ amps.PublishStore }
+
+type uncertainPublishStore struct {
+	amps.PublishStore
+	sequence uint64
+	err      error
+	calls    int
+}
+
+func (store *uncertainPublishStore) Store(*amps.Command) (uint64, error) {
+	store.calls++
+	return store.sequence, store.err
+}
 
 func (store savedThenFailedStore) Store(command *amps.Command) (uint64, error) {
 	var sequence, err = store.PublishStore.Store(command)
@@ -89,8 +103,11 @@ func TestHybridReplayRecoveryAndCallbackErrors(t *testing.T) {
 	if _, err := backend.Store(amps.NewCommand("publish").SetSequenceID(10)); err != nil {
 		t.Fatal(err)
 	}
-	var hybrid = NewHybridPublishStore(backend, amps.NewMemoryPublishStore())
-	if sequence, err := hybrid.Store(amps.NewCommand("publish")); err != nil || sequence != 11 {
+	var secondary = amps.NewMemoryPublishStore()
+	var backendFloor, _ = backend.NextPublishSequence()
+	var secondaryFloor, _ = secondary.NextPublishSequence()
+	var hybrid = NewHybridPublishStore(backend, secondary)
+	if sequence, err := hybrid.Store(amps.NewCommand("publish")); err != nil || sequence != max(backendFloor, secondaryFloor) {
 		t.Fatalf("recovery reused sequence: %d %v", sequence, err)
 	}
 	var callbackError = errors.New("callback failed")
@@ -99,6 +116,96 @@ func TestHybridReplayRecoveryAndCallbackErrors(t *testing.T) {
 	}
 	if err := hybrid.Replay(nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHybridPreservesBackingFloorsAcrossFallback(t *testing.T) {
+	var primary = &switchablePublishStore{PublishStore: amps.NewMemoryPublishStore(), fail: true}
+	var secondary = amps.NewMemoryPublishStore()
+	secondary.SetInitialSequence(1 << 63)
+	var hybrid = NewHybridPublishStore(primary, secondary)
+	hybrid.SetInitialSequence(42)
+	var first, err = hybrid.Store(amps.NewCommand("publish"))
+	if err != nil || first != (1<<63)+1 {
+		t.Fatalf("fallback sequence = %d, error %v", first, err)
+	}
+	primary.fail = false
+	var second, err2 = hybrid.Store(amps.NewCommand("publish"))
+	if err2 != nil || second != first+1 {
+		t.Fatalf("primary after fallback sequence = %d, error %v", second, err2)
+	}
+}
+
+func TestHybridBackingFloorExhaustion(t *testing.T) {
+	var primary = amps.NewMemoryPublishStore()
+	primary.SetInitialSequence(^uint64(0))
+	var hybrid = NewHybridPublishStore(primary, amps.NewMemoryPublishStore())
+	if _, err := hybrid.Store(amps.NewCommand("publish")); err == nil {
+		t.Fatal("exhausted backing sequence accepted")
+	}
+}
+
+func TestHybridCheckpointMaintenanceDoesNotFallbackOrReuseSequence(t *testing.T) {
+	for _, failPrimary := range []bool{false, true} {
+		var name = "primary-accepted"
+		if failPrimary {
+			name = "secondary-accepted"
+		}
+		t.Run(name, func(t *testing.T) {
+			var path = filepath.Join(t.TempDir(), "publish")
+			var fileStore = amps.NewFilePublishStore(path)
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			var memory = &switchablePublishStore{PublishStore: amps.NewMemoryPublishStore(), fail: failPrimary}
+			var hybrid *HybridPublishStore
+			if failPrimary {
+				hybrid = NewHybridPublishStore(memory, fileStore)
+			} else {
+				hybrid = NewHybridPublishStore(fileStore, memory)
+			}
+			var first, err = hybrid.Store(amps.NewCommand("publish").SetTopic("orders"))
+			var accepted *amps.PublishStoreAcceptedError
+			if !errors.As(err, &accepted) || first == 0 || fileStore.UnpersistedCount() != 1 || memory.UnpersistedCount() != 0 {
+				t.Fatalf("first sequence=%d error=%v file=%d memory=%d", first, err, fileStore.UnpersistedCount(), memory.UnpersistedCount())
+			}
+			if err = os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			var second, secondErr = hybrid.Store(amps.NewCommand("publish").SetTopic("orders"))
+			if secondErr != nil || second != first+1 {
+				t.Fatalf("next sequence=%d first=%d error=%v", second, first, secondErr)
+			}
+		})
+	}
+}
+
+func TestHybridUnknownStoreOutcomeBlocksFallbackAndFurtherWrites(t *testing.T) {
+	for _, failPrimary := range []bool{false, true} {
+		var name = "primary-uncertain"
+		if failPrimary {
+			name = "secondary-uncertain"
+		}
+		t.Run(name, func(t *testing.T) {
+			var failure = errors.New("injected uncertain WAL outcome")
+			var outcome = &amps.PublishStoreUncertainError{Sequence: 123, Cause: failure}
+			var uncertain = &uncertainPublishStore{PublishStore: amps.NewMemoryPublishStore(), sequence: 123, err: outcome}
+			var memory = &switchablePublishStore{PublishStore: amps.NewMemoryPublishStore(), fail: failPrimary}
+			var hybrid *HybridPublishStore
+			if failPrimary {
+				hybrid = NewHybridPublishStore(memory, uncertain)
+			} else {
+				hybrid = NewHybridPublishStore(uncertain, memory)
+			}
+			var first, err = hybrid.Store(amps.NewCommand("publish"))
+			if first != 123 || !errors.Is(err, failure) || uncertain.calls != 1 || memory.UnpersistedCount() != 0 {
+				t.Fatalf("uncertain sequence=%d error=%v calls=%d other=%d", first, err, uncertain.calls, memory.UnpersistedCount())
+			}
+			var _, retryErr = hybrid.Store(amps.NewCommand("publish"))
+			if !errors.Is(retryErr, failure) || uncertain.calls != 1 {
+				t.Fatalf("hybrid continued after uncertainty: error=%v calls=%d", retryErr, uncertain.calls)
+			}
+		})
 	}
 }
 

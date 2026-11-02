@@ -1,6 +1,7 @@
 package amps
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -8,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 )
+
+var errReplaySuperseded = errors.New("subscription replay superseded")
 
 var defaultResubscriptionTimeout atomic.Int64
 
@@ -572,6 +575,8 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 	for _, subscription := range subscriptions {
 		command := prepareResubscribeCommand(client, subscription)
 		command.replay = true
+		command.replayOriginal = subscription.command
+		command.replayOwner = manager
 		command.SetTimeout(resubscriptionTimeout)
 		if subscription.paused {
 			manager.lock.RLock()
@@ -587,6 +592,9 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 		}
 
 		if _, err := client.ExecuteAsync(command, subscription.messageHandler); err != nil {
+			if errors.Is(err, errReplaySuperseded) {
+				continue
+			}
 			if failedHandler != nil {
 				handled, handlerErr := invokeFailedResubscribeHandler(failedHandler, command, subscription.requestedAckTypes, err)
 				if handlerErr != nil {
@@ -603,24 +611,43 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 	}
 
 	for _, group := range resumedGroups {
-		var resumeCommand = prepareResubscribeCommand(client, trackedSubscription{
-			command:           group.command,
-			requestedAckTypes: group.requestedAckTypes,
-		})
-		resumeCommand.replay = true
-		resumeCommand.SetTimeout(resubscriptionTimeout)
-		if _, err := client.ExecuteAsync(resumeCommand, nil); err != nil {
-			if failedHandler != nil {
-				handled, handlerErr := invokeFailedResubscribeHandler(failedHandler, resumeCommand, group.requestedAckTypes, err)
-				if handlerErr != nil {
-					return handlerErr
-				}
-				if handled {
-					removedResumeGroups = append(removedResumeGroups, group)
+		for {
+			var memberIDs = group.memberIDs()
+			if len(memberIDs) == 0 {
+				break
+			}
+			var resumeCommand = prepareResubscribeCommand(client, trackedSubscription{
+				command:           group.command,
+				requestedAckTypes: group.requestedAckTypes,
+			})
+			resumeCommand.replay = true
+			resumeCommand.replayGroup = group
+			resumeCommand.replayOwner = manager
+			resumeCommand.SetSubID(strings.Join(memberIDs, ","))
+			resumeCommand.SetTimeout(resubscriptionTimeout)
+			if _, err := client.ExecuteAsync(resumeCommand, nil); err != nil {
+				if errors.Is(err, errReplaySuperseded) {
+					manager.lock.RLock()
+					_, exists := manager.resumedGroups[group]
+					manager.lock.RUnlock()
+					if !exists {
+						break
+					}
 					continue
 				}
+				if failedHandler != nil {
+					handled, handlerErr := invokeFailedResubscribeHandler(failedHandler, resumeCommand, group.requestedAckTypes, err)
+					if handlerErr != nil {
+						return handlerErr
+					}
+					if handled {
+						removedResumeGroups = append(removedResumeGroups, group)
+						break
+					}
+				}
+				return err
 			}
-			return err
+			break
 		}
 	}
 
@@ -636,6 +663,30 @@ func (manager *DefaultSubscriptionManager) Resubscribe(client *Client) error {
 	}
 
 	return nil
+}
+
+func (manager *DefaultSubscriptionManager) replayIsCurrent(command *Command) bool {
+	manager.lock.RLock()
+	defer manager.lock.RUnlock()
+	var ids = splitSubscriptionIDs(trackedSubscriptionID(command))
+	if command.replayOriginal != nil {
+		if len(ids) != 1 {
+			return false
+		}
+		var tracked, exists = manager.subscriptions[ids[0]]
+		return exists && tracked.command == command.replayOriginal
+	}
+	if command.replayGroup != nil {
+		if _, exists := manager.resumedGroups[command.replayGroup]; !exists || len(ids) != command.replayGroup.memberCount() {
+			return false
+		}
+		for _, id := range ids {
+			if manager.resumed[id] != command.replayGroup {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (manager *DefaultSubscriptionManager) hasGeneration(subID string, generation uint64) bool {

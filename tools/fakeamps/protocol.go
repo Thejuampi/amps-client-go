@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,7 +107,7 @@ func parseAMPSHeader(frame []byte) (headerFields, []byte) {
 			h.e = string(value)
 		case "f", "filter":
 			h.filter = string(value)
-		case "bm":
+		case "bm", "bookmark":
 			h.bm = string(value)
 		case "bs":
 			h.bs = string(value)
@@ -400,9 +401,10 @@ func buildPublishDelivery(buf *bytes.Buffer, topic, subID string, payload []byte
 	// Short-form "p" — matches real AMPS wire format and exercises the
 	// Go client's parseHeaderTrustedCTSubID fast-path parser.
 	buf.WriteString(`{"c":"p","t":"`)
-	buf.WriteString(topic)
+	writeJSONString(buf, topic)
 	buf.WriteByte('"')
 	writeField(buf, "sub_id", subID)
+	writeField(buf, "sids", subID)
 	writeField(buf, "bm", bookmark)
 	writeField(buf, "ts", timestamp)
 	writeField(buf, "k", sowKey)
@@ -421,6 +423,26 @@ func buildPublishDelivery(buf *bytes.Buffer, topic, subID string, payload []byte
 
 // ---- SOW Record Delivery ----
 
+func sowFrameBodyLength(headerLength, payloadLength int) (uint32, bool) {
+	var header, ok = safecast.Uint32FromIntChecked(headerLength)
+	if !ok {
+		return 0, false
+	}
+	var payload uint32
+	payload, ok = safecast.Uint32FromIntChecked(payloadLength)
+	if !ok || payload > math.MaxUint32-header {
+		return 0, false
+	}
+	return header + payload, true
+}
+
+func sowFrameAllocationSize(headerLength, payloadLength int) int {
+	if payloadLength > math.MaxInt-headerLength {
+		panic(bytes.ErrTooLarge)
+	}
+	return headerLength + payloadLength
+}
+
 func buildSOWRecord(buf *bytes.Buffer, topic, queryID, sowKey, bookmark, messageType string, payload []byte) []byte {
 	startFrame(buf)
 	buf.WriteString(`{"c":"sow"`)
@@ -429,17 +451,35 @@ func buildSOWRecord(buf *bytes.Buffer, topic, queryID, sowKey, bookmark, message
 	buf.WriteByte('}')
 
 	buf.WriteString(`{"t":"`)
-	buf.WriteString(topic)
+	writeJSONString(buf, topic)
 	buf.WriteByte('"')
 	writeField(buf, "query_id", queryID)
 	writeField(buf, "k", sowKey)
 	writeField(buf, "bm", bookmark)
 	writeField(buf, "mt", messageType)
 	buf.WriteString(`,"l":`)
-	buf.WriteString(strconv.Itoa(len(payload)))
+	var lengthBuffer [20]byte
+	buf.Write(strconv.AppendInt(lengthBuffer[:0], int64(len(payload)), 10))
 	buf.WriteByte('}')
-	buf.Write(payload)
-	return finalizeFrame(buf)
+
+	var raw = buf.Bytes()
+	var length, ok = sowFrameBodyLength(len(raw)-4, len(payload))
+	if !ok {
+		buf.Reset()
+		return nil
+	}
+	var frameSize int
+	if strconv.IntSize == 32 {
+		frameSize = sowFrameAllocationSize(len(raw), len(payload))
+	} else {
+		frameSize = len(raw) + len(payload)
+	}
+	var frame = make([]byte, frameSize)
+	binary.BigEndian.PutUint32(frame[:4], length)
+	copy(frame[4:], raw[4:])
+	copy(frame[len(raw):], payload)
+	buf.Reset()
+	return frame
 }
 
 // ---- OOF (Out-of-Focus) Delivery ----
@@ -451,9 +491,10 @@ func buildOOFDelivery(buf *bytes.Buffer, topic, subID, sowKey, bookmark string) 
 func buildOOFDeliveryWithReason(buf *bytes.Buffer, topic, subID, sowKey, bookmark, reason string) []byte {
 	startFrame(buf)
 	buf.WriteString(`{"c":"oof","t":"`)
-	buf.WriteString(topic)
+	writeJSONString(buf, topic)
 	buf.WriteByte('"')
 	writeField(buf, "sub_id", subID)
+	writeField(buf, "sids", subID)
 	writeField(buf, "k", sowKey)
 	writeField(buf, "bm", bookmark)
 	writeField(buf, "reason", reason)
@@ -507,7 +548,12 @@ func writeNumericField(buf *bytes.Buffer, key, value string) {
 }
 
 func writeJSONString(buf *bytes.Buffer, s string) {
-	for i := 0; i < len(s); i++ {
+	var i int
+	for i < len(s) && s[i] >= 0x20 && s[i] != '"' && s[i] != '\\' {
+		i++
+	}
+	buf.WriteString(s[:i])
+	for ; i < len(s); i++ {
 		switch s[i] {
 		case '"':
 			buf.WriteString(`\"`)

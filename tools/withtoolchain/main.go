@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Thejuampi/amps-client-go/internal/hiddenprocess"
 )
 
 func withToolchainEnv(base []string, toolchain string) []string {
@@ -65,6 +67,7 @@ func runWithToolchain(toolchain string, args []string) int {
 	}
 
 	var cmd = exec.Command("go", goArgs...) // #nosec G204 -- wrapper is intentionally restricted to the Go toolchain only.
+	hiddenprocess.HideConsole(cmd)
 	cmd.Env = withToolchainEnv(os.Environ(), toolchain)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

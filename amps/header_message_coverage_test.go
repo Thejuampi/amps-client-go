@@ -233,10 +233,10 @@ func TestHeaderParseAndWriteCoverage(t *testing.T) {
 	if string(leftover) != "tail" {
 		t.Fatalf("unexpected escaped parse leftover: %q", string(leftover))
 	}
-	if subID, ok := escaped.SubID(); !ok || subID != `sub\\\"id` {
+	if subID, ok := escaped.SubID(); !ok || subID != `sub\"id` {
 		t.Fatalf("unexpected escaped sub_id value: %q (ok=%v)", subID, ok)
 	}
-	if filter, ok := escaped.Filter(); !ok || filter != `a\\\\b` {
+	if filter, ok := escaped.Filter(); !ok || filter != `a\\b` {
 		t.Fatalf("unexpected escaped filter value: %q (ok=%v)", filter, ok)
 	}
 }

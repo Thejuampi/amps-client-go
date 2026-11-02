@@ -28,15 +28,16 @@ const maxMessageStreamTimeoutMillis = uint64(math.MaxInt64 / int64(time.Millisec
 
 // MessageStream stores exported state used by AMPS client APIs.
 type MessageStream struct {
-	client        *Client
-	clientLock    sync.RWMutex
-	lifecycleLock sync.Mutex
-	commandID     string
-	queryID       string
-	unsubscribeID string
-	current       *Message
-	previous      *Message
-	sowKeyMap     map[string]*Message
+	client            *Client
+	clientLock        sync.RWMutex
+	lifecycleLock     sync.Mutex
+	commandID         string
+	queryID           string
+	unsubscribeID     string
+	current           *Message
+	previous          *Message
+	previousAckQueued bool
+	sowKeyMap         map[string]*Message
 
 	state    int32
 	depth    atomic.Uint64
@@ -101,6 +102,7 @@ func (ms *MessageStream) resetForConfiguration() {
 	}
 	ms.current = nil
 	ms.previous = nil
+	ms.previousAckQueued = false
 	ms.timedOut.Store(false)
 	if ms.queue != nil {
 		ms.queue.clear()
@@ -214,13 +216,20 @@ func (ms *MessageStream) SetMaxDepth(depth uint64) *MessageStream {
 // HasNext reports whether the receiver has next configured.
 func (ms *MessageStream) HasNext() bool {
 	if ms.previous != nil {
-		var previous = ms.previous
-		ms.previous = nil
 		if client := ms.getClient(); client != nil {
-			if err := client.maybeAutoAck(previous); err != nil {
+			var err error
+			if ms.previousAckQueued {
+				err = client.FlushAcks()
+			} else {
+				ms.previousAckQueued, err = client.queueAutoAck(ms.previous, "")
+			}
+			if err != nil {
+				client.reportException(err)
 				return false
 			}
 		}
+		ms.previous = nil
+		ms.previousAckQueued = false
 	}
 	if ms.current != nil {
 		return true

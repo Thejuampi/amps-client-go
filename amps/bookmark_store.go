@@ -535,7 +535,7 @@ func NewFileBookmarkStoreWithOptions(path string, options FileStoreOptions) *Fil
 	return store
 }
 
-// LoadError returns the most recent constructor-time load error, if any.
+// LoadError returns a retained recovery error or an uncertain WAL append error.
 func (store *FileBookmarkStore) LoadError() error {
 	if store == nil {
 		return nil
@@ -666,6 +666,11 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	}
 
 	store.lock.Lock()
+	if store.loadErr != nil {
+		var err = store.loadErr
+		store.lock.Unlock()
+		return err
+	}
 	subIDs := make([]string, 0, len(store.records))
 	for subID := range store.records {
 		subIDs = append(subIDs, subID)
@@ -734,9 +739,7 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	return nil
 }
 
-// appendWalNoLock writes a WAL record for the given bookmark store operation.
-// It never acquires store.lock; callers may invoke it with or without the
-// store mutex held.
+// appendWalNoLock writes a WAL record while the caller holds store.lock.
 func (store *FileBookmarkStore) appendWalNoLock(record bookmarkWalRecord) error {
 	if store == nil || !store.options.UseWAL || store.walPath == "" {
 		return nil
@@ -744,7 +747,18 @@ func (store *FileBookmarkStore) appendWalNoLock(record bookmarkWalRecord) error 
 	if currentFileStoreTestHooks.bookmarkWalBeforeAppend != nil {
 		currentFileStoreTestHooks.bookmarkWalBeforeAppend()
 	}
-	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
+	var err error
+	if currentFileStoreTestHooks.bookmarkWalAppendError != nil {
+		err = currentFileStoreTestHooks.bookmarkWalAppendError()
+	}
+	if err == nil {
+		err = wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
+	}
+	var uncertain *wal.AppendOutcomeError
+	if errors.As(err, &uncertain) {
+		store.loadErr = err
+	}
+	return err
 }
 
 func (store *FileBookmarkStore) bumpMutationAndMaybeCheckpoint() error {
@@ -822,14 +836,14 @@ func (store *FileBookmarkStore) replayWal() error {
 	if store == nil || !store.options.UseWAL || store.walPath == "" {
 		return nil
 	}
-	return wal.ReplayNoCopy(store.walPath, func(line []byte) error {
+	return wal.ReplayAndRepair(store.walPath, func(line []byte) error {
 		record := bookmarkWalRecord{}
 		if err := json.Unmarshal(line, &record); err != nil {
 			return err
 		}
 		store.applyWalRecord(record)
 		return nil
-	})
+	}, store.options.SyncOnWrite)
 }
 
 func (store *FileBookmarkStore) load() error {
@@ -853,12 +867,15 @@ func (store *FileBookmarkStore) appendUpsertFor(subID string, bookmark string) e
 		return nil
 	}
 	store.lock.Lock()
+	defer store.lock.Unlock()
+	if store.loadErr != nil {
+		return store.loadErr
+	}
 	var recordCopy *bookmarkRecord
 	if records := store.records[subID]; records != nil && records[bookmark] != nil {
 		value := *records[bookmark]
 		recordCopy = &value
 	}
-	store.lock.Unlock()
 	if recordCopy == nil {
 		return nil
 	}

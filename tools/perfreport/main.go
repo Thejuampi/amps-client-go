@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/hiddenprocess"
 )
 
 const (
@@ -323,6 +325,7 @@ func runCommand(command []string, timeout time.Duration, progressInterval time.D
 	defer cancel()
 
 	var cmd = exec.CommandContext(ctx, command[0], command[1:]...) // #nosec G204 -- structured arguments only
+	hiddenprocess.HideConsole(cmd)
 	var done = make(chan struct{}, 1)
 	var outputBytes []byte
 	var runErr error

@@ -43,7 +43,8 @@ jobs:
           sarif_file: gosec-report.sarif
 
       - name: Blocking scans
-        run: make scan
+        # The blocking gosec report above already performed that scan.
+        run: make static-scan vuln-scan secret-scan
 
       - name: Leak check
         run: make leak-check

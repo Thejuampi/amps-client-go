@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Thejuampi/amps-client-go/internal/gofercli/testutil"
+	"github.com/Thejuampi/amps-client-go/internal/hiddenprocess"
 )
 
 type builtFakeamps struct {
@@ -55,6 +56,7 @@ func ensureFakeampsBinary(t *testing.T) builtFakeamps {
 		}
 
 		var build = exec.Command("go", "build", "-o", fakeampsBinary.path, "./tools/fakeamps")
+		hiddenprocess.HideConsole(build)
 		build.Dir = root
 		if out, err := build.CombinedOutput(); err != nil {
 			fakeampsBuildErr = fmt.Errorf("build fakeamps: %w\n%s", err, out)
@@ -86,6 +88,7 @@ func startBrokerWithArgs(t *testing.T, extraArgs ...string) *broker {
 	var args = []string{"-addr", addr}
 	args = append(args, extraArgs...)
 	var cmd = exec.Command(built.path, args...)
+	hiddenprocess.HideConsole(cmd)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start fakeamps: %v", err)

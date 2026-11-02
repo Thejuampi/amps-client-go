@@ -1,6 +1,7 @@
 package amps
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"sort"
@@ -199,6 +200,16 @@ func (client *Client) registerPendingPublishCommandBytes(commandID []byte, comma
 	state.lock.Unlock()
 }
 
+func (client *Client) releasePendingPublishCommand(commandID string) {
+	var state = client.parityState.Load()
+	if state == nil || commandID == "" {
+		return
+	}
+	state.lock.Lock()
+	releasePendingPublishLocked(state, commandID)
+	state.lock.Unlock()
+}
+
 func (client *Client) storePublishCommand(command *Command) (bool, error) {
 	if command == nil {
 		return false, nil
@@ -220,16 +231,17 @@ func (client *Client) storePublishCommand(command *Command) (bool, error) {
 		return false, nil
 	}
 
+	command.AddAckType(AckTypePersisted)
 	sequence, err := store.Store(command)
-	if err != nil {
+	var accepted *PublishStoreAcceptedError
+	if err != nil && (sequence == 0 || !errors.As(err, &accepted)) {
 		return false, err
 	}
 
 	if sequence > 0 {
 		command.SetSequenceID(sequence)
-		command.AddAckType(AckTypePersisted)
 	}
-	return true, nil
+	return true, err
 }
 
 func commandToMessage(command *Command) *Message {
@@ -547,23 +559,31 @@ func commandTextBytes(extras *_HeaderTextExtras, selector func(*_HeaderTextExtra
 }
 
 func (client *Client) maybeAutoAck(message *Message) error {
+	_, err := client.queueAutoAck(message, "")
+	if err != nil {
+		client.reportException(err)
+	}
+	return err
+}
+
+// queueAutoAck reports whether ownership of the ack moved to the batch queue.
+func (client *Client) queueAutoAck(message *Message, options string) (bool, error) {
 	if message == nil || message.GetIgnoreAutoAck() {
-		return nil
+		return false, nil
 	}
 	var header = messageHeader(message)
 	var extras = headerTextExtras(header)
 	if header == nil || extras == nil || extras.leasePeriod == nil || len(header.topic) == 0 || len(header.bookmark) == 0 {
-		return nil
+		return false, nil
 	}
 	var state = ensureClientState(client)
 	if state == nil || !state.autoAckValue.Load() {
-		return nil
+		return false, nil
 	}
-	if err := client.Ack(string(header.topic), string(header.bookmark)); err != nil {
-		client.reportException(err)
-		return err
+	if !client.connected.Load() {
+		return false, NewError(DisconnectedError, "Client is not connected while trying to ack")
 	}
-	return nil
+	return true, client.queueAck(string(header.topic), string(header.bookmark), options)
 }
 
 func (client *Client) queueAck(topic, bookmark, options string) error {
@@ -658,6 +678,49 @@ func (client *Client) FlushAcks() error {
 	return nil
 }
 
+func (client *Client) replayPublishStore() (bool, error) {
+	client.publishLock.Lock()
+	defer client.publishLock.Unlock()
+	var state = ensureClientState(client)
+	state.lock.Lock()
+	var store = state.publishStore
+	state.lock.Unlock()
+	client.lock.Lock()
+	var generation = client.generation.Load()
+	var wasConnected = client.connected.Load()
+	client.awaitingReplay = true
+	client.lock.Unlock()
+	if store != nil {
+		if err := store.Replay(func(command *Command) error {
+			client.lock.Lock()
+			defer client.lock.Unlock()
+			if generation != client.generation.Load() || !client.connected.Load() {
+				return NewError(DisconnectedError, "connection changed during publish replay")
+			}
+			if ack, _ := command.AckType(); ack&AckTypePersisted == 0 {
+				var replay = *command
+				var header = *command.header
+				header.ackTypeValue = ack | AckTypePersisted
+				header.ackType = &header.ackTypeValue
+				replay.header = &header
+				command = &replay
+			}
+			return client.send(command)
+		}); err != nil {
+			return true, err
+		}
+	}
+	client.lock.Lock()
+	if generation == client.generation.Load() && client.connected.Load() {
+		client.awaitingReplay = false
+	} else if wasConnected {
+		client.lock.Unlock()
+		return store != nil, NewError(DisconnectedError, "connection changed during publish replay")
+	}
+	client.lock.Unlock()
+	return store != nil, nil
+}
+
 func (client *Client) postLogonRecovery() error {
 	var state = ensureClientState(client)
 	if state == nil {
@@ -683,7 +746,6 @@ func (client *Client) postLogonRecovery() error {
 	for {
 		state.lock.Lock()
 		state.manualDisconnect = false
-		var store = state.publishStore
 		var manager = state.subscriptionManager
 		var retries = state.pendingRetry
 		var deferred = state.deferredExecutions
@@ -697,15 +759,15 @@ func (client *Client) postLogonRecovery() error {
 			client.reportException(err)
 			return err
 		}
-		if store != nil {
-			if err := store.Replay(func(command *Command) error {
-				client.lock.Lock()
-				defer client.lock.Unlock()
-				return client.send(command)
-			}); err != nil {
-				return failed(err, retries)
-			}
+		var replayed, replayErr = client.replayPublishStore()
+		if replayErr != nil {
+			return failed(replayErr, retries)
+		}
+		if replayed {
 			client.notifyConnectionState(ConnectionStatePublishReplayed)
+		}
+		if err := client.FlushAcks(); err != nil {
+			return failed(err, retries)
 		}
 		if manager != nil {
 			if err := manager.Resubscribe(client); err != nil {
@@ -718,6 +780,9 @@ func (client *Client) postLogonRecovery() error {
 				continue
 			}
 			if _, err := client.ExecuteAsync(cloneCommand(pending.command), pending.messageHandler); err != nil {
+				if errors.Is(err, errReplaySuperseded) {
+					continue
+				}
 				return failed(err, retries[index:])
 			}
 		}
@@ -1098,20 +1163,27 @@ func (client *Client) BookmarkStore() BookmarkStore {
 	return state.bookmarkStore
 }
 
-// SetPublishStore sets publish store on the receiver.
+// SetPublishStore sets the publish store after in-flight publications and replay.
+// It must not be called reentrantly from this client's store Store or Replay methods.
 func (client *Client) SetPublishStore(store PublishStore) *Client {
 	state := ensureClientState(client)
 	if state == nil {
 		return client
 	}
+	client.publishLock.Lock()
+	client.lock.Lock()
 	state.lock.Lock()
 	state.publishStore = store
 	state.hasPublishStore.Store(store != nil)
 	state.lock.Unlock()
+	client.lock.Unlock()
+	client.publishLock.Unlock()
 	return client
 }
 
-// PublishStore returns the configured store instance used by the receiver.
+// PublishStore returns the configured store. Replacement waits for in-flight
+// stored publishes and replay; SetPublishStore must not be called from those
+// store callbacks on the same client.
 func (client *Client) PublishStore() PublishStore {
 	state := ensureClientState(client)
 	if state == nil {

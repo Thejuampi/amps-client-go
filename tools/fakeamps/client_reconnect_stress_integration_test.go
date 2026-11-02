@@ -39,10 +39,13 @@ type reconnectStressRow struct {
 }
 
 type reconnectStressTopicData struct {
-	Topic       string
-	MessageType string
-	Rows        []reconnectStressRow
-	Expected    map[string]string
+	Topic              string
+	MessageType        string
+	Rows               []reconnectStressRow
+	Expected           map[string]string
+	expectedByPayload  map[string]string
+	indexedTopic       string
+	indexedMessageType string
 }
 
 type reconnectStressEnvelope struct {
@@ -523,12 +526,16 @@ func buildReconnectStressDatasets(t *testing.T) []reconnectStressTopicData {
 			expected[recordID] = row.Raw
 		}
 
-		datasets = append(datasets, reconnectStressTopicData{
+		var dataset = reconnectStressTopicData{
 			Topic:       spec.Topic,
 			MessageType: spec.MessageType,
 			Rows:        rows,
 			Expected:    expected,
-		})
+		}
+		if err := indexReconnectStressDataset(&dataset); err != nil {
+			t.Fatalf("invalid generated corpus for %s: %v", spec.Topic, err)
+		}
+		datasets = append(datasets, dataset)
 	}
 
 	return datasets
@@ -575,6 +582,40 @@ func reconnectStressDatasetSize(datasets []reconnectStressTopicData) int {
 		total += len(dataset.Rows)
 	}
 	return total
+}
+
+func indexReconnectStressDataset(dataset *reconnectStressTopicData) error {
+	if dataset == nil {
+		return fmt.Errorf("nil dataset")
+	}
+	dataset.expectedByPayload = nil
+	dataset.indexedTopic = ""
+	dataset.indexedMessageType = ""
+	if len(dataset.Rows) != len(dataset.Expected) {
+		return fmt.Errorf("rows=%d expected=%d", len(dataset.Rows), len(dataset.Expected))
+	}
+	var index = make(map[string]string, len(dataset.Rows))
+	for _, row := range dataset.Rows {
+		var expected, ok = dataset.Expected[row.RecordID]
+		if !ok || expected != row.Raw {
+			return fmt.Errorf("record %s does not match expected payload", row.RecordID)
+		}
+		var envelope reconnectStressEnvelope
+		if err := json.Unmarshal([]byte(row.Raw), &envelope); err != nil {
+			return fmt.Errorf("record %s is invalid JSON: %w", row.RecordID, err)
+		}
+		if envelope.Topic != dataset.Topic || envelope.MessageType != dataset.MessageType || envelope.RecordID != row.RecordID {
+			return fmt.Errorf("record %s has inconsistent topic, type, or ID", row.RecordID)
+		}
+		if _, duplicate := index[row.Raw]; duplicate {
+			return fmt.Errorf("record %s has duplicate payload", row.RecordID)
+		}
+		index[row.Raw] = row.RecordID
+	}
+	dataset.expectedByPayload = index
+	dataset.indexedTopic = dataset.Topic
+	dataset.indexedMessageType = dataset.MessageType
+	return nil
 }
 
 func seedReconnectStressDatasets(t *testing.T, uri string, datasets []reconnectStressTopicData) {
@@ -660,6 +701,20 @@ func (tracker *reconnectStressTracker) handleMessage(topic string, message *amps
 }
 
 func (tracker *reconnectStressTracker) handleSOW(topic string, message *amps.Message) error {
+	tracker.lock.Lock()
+	var dataset, ok = tracker.datasets[topic]
+	if ok && dataset.indexedTopic == topic && dataset.indexedMessageType == dataset.MessageType {
+		var recordID, found = dataset.expectedByPayload[string(message.Data())]
+		if found && dataset.Expected[recordID] == string(message.Data()) {
+			defer tracker.lock.Unlock()
+			return tracker.recordSOWLocked(topic, recordID)
+		}
+	}
+	tracker.lock.Unlock()
+	return tracker.handleSOWSlow(topic, message)
+}
+
+func (tracker *reconnectStressTracker) handleSOWSlow(topic string, message *amps.Message) error {
 	var envelope reconnectStressEnvelope
 	if err := json.Unmarshal(message.Data(), &envelope); err != nil {
 		tracker.fail(fmt.Errorf("cycle %d topic %s unmarshal failed: %w", tracker.cycle(), topic, err))
@@ -691,7 +746,10 @@ func (tracker *reconnectStressTracker) handleSOW(topic string, message *amps.Mes
 		tracker.failLocked(fmt.Errorf("cycle %d topic %s record %s payload mismatch", tracker.currentCycle, topic, envelope.RecordID))
 		return nil
 	}
+	return tracker.recordSOWLocked(topic, envelope.RecordID)
+}
 
+func (tracker *reconnectStressTracker) recordSOWLocked(topic, recordID string) error {
 	var state = tracker.topicStates[topic]
 	if state == nil {
 		tracker.failLocked(fmt.Errorf("ycle %d topic %s missing topic state", tracker.currentCycle, topic))
@@ -701,11 +759,11 @@ func (tracker *reconnectStressTracker) handleSOW(topic string, message *amps.Mes
 		tracker.failLocked(fmt.Errorf("cycle %d topic %s received data after completion", tracker.currentCycle, topic))
 		return nil
 	}
-	if _, duplicate := state.seen[envelope.RecordID]; duplicate {
-		tracker.failLocked(fmt.Errorf("cycle %d topic %s duplicate record %s", tracker.currentCycle, topic, envelope.RecordID))
+	if _, duplicate := state.seen[recordID]; duplicate {
+		tracker.failLocked(fmt.Errorf("cycle %d topic %s duplicate record %s", tracker.currentCycle, topic, recordID))
 		return nil
 	}
-	state.seen[envelope.RecordID] = struct{}{}
+	state.seen[recordID] = struct{}{}
 	return nil
 }
 

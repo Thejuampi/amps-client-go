@@ -28,18 +28,24 @@ func (client *Client) GetNameHash() string {
 	if client == nil {
 		return ""
 	}
-	if client.nameHash != "" {
-		return client.nameHash
+	client.configLock.RLock()
+	var nameHash, name = client.nameHash, client.clientName
+	client.configLock.RUnlock()
+	if nameHash != "" {
+		return nameHash
 	}
-	return fmt.Sprintf("%x", unsafeStringHash(client.clientName))
+	return fmt.Sprintf("%x", unsafeStringHash(name))
 }
 
 func (client *Client) GetNameHashValue() uint64 {
 	if client == nil {
 		return 0
 	}
-	if client.nameHashValue != 0 {
-		return client.nameHashValue
+	client.configLock.RLock()
+	var nameHashValue = client.nameHashValue
+	client.configLock.RUnlock()
+	if nameHashValue != 0 {
+		return nameHashValue
 	}
 	return unsafeStringHash(client.GetNameHash())
 }
@@ -64,14 +70,14 @@ func (client *Client) GetServerVersionInfo() VersionInfo {
 	if client == nil {
 		return VersionInfo{}
 	}
-	return ParseVersionInfo(client.serverVersion)
+	return ParseVersionInfo(client.ServerVersion())
 }
 
 func (client *Client) GetServerVersion() uint64 {
 	if client == nil {
 		return 0
 	}
-	return ConvertVersionToNumber(client.serverVersion)
+	return ConvertVersionToNumber(client.ServerVersion())
 }
 
 // AddHttpPreflightHeader appends a preflight header.

@@ -276,6 +276,7 @@ func cloneCommand(command *Command) *Command {
 	var copy = commandFromSnapshot(snapshotFromCommand(command))
 	if command != nil && copy != nil {
 		copy.generation, copy.replay = command.generation, command.replay
+		copy.replayOriginal, copy.replayGroup, copy.replayOwner = command.replayOriginal, command.replayGroup, command.replayOwner
 	}
 	return copy
 }

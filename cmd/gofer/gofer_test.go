@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Thejuampi/amps-client-go/internal/gofercli/testutil"
+	"github.com/Thejuampi/amps-client-go/internal/hiddenprocess"
 )
 
 type builtBinaries struct {
@@ -61,6 +62,7 @@ func ensureBinaries(t *testing.T) builtBinaries {
 		}
 
 		var buildFakeamps = exec.Command("go", "build", "-o", binaries.fakeamps, "./tools/fakeamps")
+		hiddenprocess.HideConsole(buildFakeamps)
 		buildFakeamps.Dir = root
 		if out, err := buildFakeamps.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build fakeamps: %w\n%s", err, out)
@@ -68,6 +70,7 @@ func ensureBinaries(t *testing.T) builtBinaries {
 		}
 
 		var buildGofer = exec.Command("go", "build", "-o", binaries.gofer, "./cmd/gofer")
+		hiddenprocess.HideConsole(buildGofer)
 		buildGofer.Dir = root
 		if out, err := buildGofer.CombinedOutput(); err != nil {
 			buildErr = fmt.Errorf("build gofer: %w\n%s", err, out)
@@ -100,6 +103,7 @@ func startFakeBroker(t *testing.T) *fakeBroker {
 	_ = adminListener.Close()
 
 	var cmd = exec.Command(built.fakeamps, "-addr", addr, "-admin", adminAddr)
+	hiddenprocess.HideConsole(cmd)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start fakeamps: %v", err)
@@ -166,6 +170,7 @@ func runGofer(t *testing.T, stdin string, env []string, args ...string) (string,
 
 	var built = ensureBinaries(t)
 	var cmd = exec.Command(built.gofer, args...)
+	hiddenprocess.HideConsole(cmd)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

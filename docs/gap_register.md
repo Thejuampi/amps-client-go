@@ -1,16 +1,16 @@
 # Gap Register
 
-Behavioral review reference: **C++ 5.3.5.14**, verified 2026-10-24.
+Behavioral review reference: **C++ 5.3.5.14**, verified again 2026-11-01.
 
-The symbol mapping covers 261 entries. The public-declaration review covers 748 entries. Neither count establishes behavioral equivalence. See the [behavior audit](behavior_parity_audit.md) and [individual inventory](behavior_parity_inventory.md).
+The symbol mapping covers 261 entries. The public-declaration inventory covers 753 entries. Neither count establishes behavioral equivalence. See the [initial audit](behavior_parity_audit.md), [individual inventory](behavior_parity_inventory.md) and [second audit](behavior_parity_second_audit.md).
 
 The source of truth for current open/closed state is `tools/parity_behavior_manifest.json`.
 
-Current status: **OPEN_GAPS=0** for the registered contracts. All 23 audit finding groups are fixed and their 32 contract probes run in the ordinary test suite. See the [fix record](behavior_parity_fixes.md) for validation and remaining compatibility limits. This status does not replace the other release gates.
+Current contract status: **OPEN_GAPS=0** across 53 entries. All 16 groups from the second audit and the three reopened general contracts have normal-suite regressions and [recorded corrections](behavior_parity_second_fixes.md). The 19 original diagnostic functions no longer require an overlay. Release validation is tracked separately in that correction report; a closed manifest does not establish behavioral equivalence or replace the gates. The original 23 groups retain their [fixes and regression tests](behavior_parity_fixes.md).
 
 | ID | Priority/domain | Status | Contract |
 | --- | --- | --- | --- |
-| `contract-parity-gating` | parity-contract | closed | Symbol presence and manually closed statuses do not establish behavioral equivalence; the 2026-10-24 audit reproduces divergences against C++ 5.3.5.14. |
+| `contract-parity-gating` | parity-contract | closed | Symbol presence and manually closed statuses do not establish behavioral equivalence; the second audit reproduces additional divergences against C++ 5.3.5.14. |
 | `correctness-parser-builder-hardening` | correctness | closed | Composite/FIX/NVFIX and header/message parsing paths handle invalid ranges and malformed wire data without panics. |
 | `logon-timeout-enforcement` | session | closed | LogonParams.Timeout is enforced during logon ack wait. |
 | `transport-compression-parity` | transport | closed | tcp/tcps URI compression=zlib and Client.SetCompression(true) enable compressed transport for regular and HA clients while rejecting unsupported transports. |
@@ -45,11 +45,35 @@ Current status: **OPEN_GAPS=0** for the registered contracts. All 23 audit findi
 | `audit-r21-topn-zero-default-boundaries` | P2 | closed | TopN cambia los límites cero y default |
 | `audit-r22-cpp-crc-algorithm` | P2 | closed | CRC es otro algoritmo |
 | `audit-r23-hybrid-publish-sequence` | P1 | closed | HybridPublishStore puede repetir secuencias al cambiar de store |
+| `audit-d01-replay-live-publish-ordering` | P1 | closed | Una publicación concurrente adelanta al replay y su ack acumulativo elimina mensajes todavía no enviados. |
+| `audit-d02-wal-torn-tail-append-restart` | P1 | closed | Una cola parcial ignorada al recuperar el WAL corrompe la siguiente escritura y el segundo reinicio. |
+| `audit-d03-checkpoint-publish-acceptance` | P1 | closed | Publish devuelve error después de que el WAL retuvo el mensaje, induciendo reintentos ambiguos. |
+| `audit-d04-hybrid-initial-sequence-floor` | P1 | closed | HybridPublishStore reemplaza el piso de secuencia de sus backends nuevos por un ack antiguo. |
+| `audit-d05-decoded-header-routing` | P1 | closed | Los headers conservan escapes JSON y el sub_id decodificado no encuentra su ruta. |
+| `audit-d06-ha-logon-deadline` | P1 | closed | HAClient.SetTimeout no limita el logon cuando el servidor acepta TCP y no responde. |
+| `audit-d07-logon-metadata-data-race` | P1 | closed | Los getters de versión y name hash compiten con escrituras del logon. |
+| `audit-d08-fakeamps-publisher-reconnect-dedupe` | P1 | closed | fakeamps olvida la secuencia del publisher al cerrar la conexión y aplica otra vez un replay idéntico. |
+| `audit-d09-replay-persisted-ack-request` | P2 | closed | El store copia el comando antes de agregar persisted, por lo que el replay no solicita su confirmación. |
+| `audit-d10-unsubscribe-recovery-cancellation` | P2 | closed | Un snapshot de recuperación puede recrear una suscripción después de que Unsubscribe terminó. |
+| `audit-d11-stream-ack-failure-retry` | P2 | closed | HasNext olvida el mensaje previo cuando falla su ack y la siguiente llamada avanza. |
+| `audit-d12-offline-execute-ack-handler` | P2 | closed | ExecuteAsync desconectado retiene el publish pero no su callback de acknowledgements. |
+| `audit-d13-queue-handler-error-cancel` | P2 | closed | Un error del handler de cola deja el lease activo en vez de cancelarlo como C++. |
+| `audit-d14-message-ack-autoack-guard` | P2 | closed | Message.Ack envía otra confirmación cuando AutoAck está habilitado, a diferencia de C++. |
+| `audit-d15-json-builder-control-escapes` | P2 | closed | JSONMessageBuilder usa escapes de literales Go que producen JSON inválido para 27 controles ASCII. |
+| `audit-d16-fakeamps-command-id-is-not-sequence` | P2 | closed | fakeamps descarta publicaciones distintas que comparten command ID. |
+
+The native [C++/fakeamps gate](cpp_fakeamps_interop.md) adds these contracts:
+
+| ID | Priority/domain | Status | Contract |
+| --- | --- | --- | --- |
+| `cpp-fakeamps-routing-bookmarks` | native C++ interoperability | closed | Route lists and escaped topics reach the official SDK; EPOCH, NOW and explicit bookmark resume select the expected history. |
+| `cpp-fakeamps-queue-and-oof` | native C++ interoperability | closed | Manual queue ack, lease redelivery, retained reconnect and explicitly enabled OOF pass with the official SDK. |
 
 Run the current reference check with:
 
 ```powershell
 go run ./tools/paritycheck -headers .tmp/parity-audit/reference/amps-c++-client-5.3.5.14-Windows -manifest tools/parity_manifest.json -behavior-manifest tools/parity_behavior_manifest.json
+pwsh -NoProfile -File tools/paritycheck/run_deep_audit.ps1
 ```
 
-Expected result for this audit: both missing-symbol counts are zero; OPEN_GAPS is zero. The ordinary suite includes the behavioral regression probes; symbol presence alone is still insufficient.
+Expected result: `PARITY_ENTRIES=261`, both missing-symbol counts zero, `BEHAVIOR_ENTRIES=53`, `OPEN_GAPS=0`, and exit code 0. The normal regressions and release gates remain required; changing metadata alone cannot validate a contract.

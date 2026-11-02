@@ -418,18 +418,8 @@ func TestRequeueMessagePrefersDifferentQueueSubscriber(t *testing.T) {
 func TestRequeueMessageSkipsSubscribersWhoseFiltersRejectPayload(t *testing.T) {
 	var topic = "queue://orders.requeue.filter"
 
-	var connA, peerA = net.Pipe()
-	var connB, peerB = net.Pipe()
-	defer connA.Close()
-	defer peerA.Close()
-	defer connB.Close()
-	defer peerB.Close()
-
-	var stats connStats
-	var writerA = newConnWriter(connA, &stats)
-	var writerB = newConnWriter(connB, &stats)
-	defer writerA.close()
-	defer writerB.close()
+	var writerA = &connWriter{ch: make(chan []byte, 2)}
+	var writerB = &connWriter{ch: make(chan []byte, 2)}
 
 	var subA = &subscription{subID: "subA", topic: topic, writer: writerA, isQueue: true}
 	var subB = &subscription{subID: "subB", topic: topic, filter: `/kind = 'match'`, writer: writerB, isQueue: true}
@@ -460,13 +450,17 @@ func TestRequeueMessageSkipsSubscribersWhoseFiltersRejectPayload(t *testing.T) {
 
 	requeueMessage(lease)
 
-	if body, ok := tryReadFrameBodyFromConn(peerB, 100*time.Millisecond); ok {
-		t.Fatalf("expected filter-mismatched subscriber to receive no redelivery, got %s", body)
+	if count := len(writerB.ch); count != 0 {
+		t.Fatalf("filter-mismatched subscriber received %d redeliveries", count)
 	}
-
-	var pending = popPendingQueueMessage(topic)
-	if pending == nil || pending.sowKey != "requeue-filter-key" {
-		t.Fatalf("expected rejected redelivery to remain pending, got %#v", pending)
+	if count := len(writerA.ch); count != 1 {
+		t.Fatalf("original subscriber received %d redeliveries, want one", count)
+	}
+	if body := string((<-writerA.ch)[4:]); !strings.Contains(body, `"sub_id":"subA"`) {
+		t.Fatalf("expected redelivery to the original subscriber, got %s", body)
+	}
+	if pending := popPendingQueueMessage(topic); pending != nil {
+		t.Fatalf("eligible original subscriber left message pending: %#v", pending)
 	}
 }
 

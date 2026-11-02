@@ -1,4 +1,5 @@
 GO ?= go
+PYTHON ?= python
 PKG ?= ./...
 GOFLAGS ?=
 VERSION ?= $(strip $(file < VERSION))
@@ -20,6 +21,8 @@ COVERPROFILE ?= $(abspath coverage.out)
 FUZZTIME ?= 5s
 STRESS_COUNT ?= 20
 STRESS_SHUFFLE ?= on
+STRESS_WORKERS ?= 2
+CPP_SDK_ROOT ?= $(abspath .tmp/parity-audit/reference/amps-c++-client-5.3.5.14-Windows)
 FUZZ_TMPDIR ?= $(abspath .tmp/go-tmp)
 GO_CACHE_DIR ?= $(abspath .tmp/go-cache)
 PERF_COMPARE_DIR ?= $(abspath .tmp/perf)
@@ -55,7 +58,7 @@ ENSURE_PERF_COMPARE_DIR = mkdir -p "$(PERF_COMPARE_DIR)"
 FUZZ_ENV = TMP=$(FUZZ_TMPDIR) TEMP=$(FUZZ_TMPDIR) TMPDIR=$(FUZZ_TMPDIR) GOTMPDIR=$(FUZZ_TMPDIR) GOCACHE=$(GO_CACHE_DIR)
 endif
 
-.PHONY: help build test test-race compat-check integration-test integration-fakeamps integration-live-smoke install fmt vet static-scan golangci-scan pattern-scan publication-scan leak-check fuzz-smoke stress-check preprod-check preprod-check-hosted security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check perf-compare-toolchains release release-hosted
+.PHONY: help build test test-race compat-check integration-test integration-fakeamps cpp-integration integration-live-smoke install fmt vet static-scan golangci-scan pattern-scan publication-scan leak-check fuzz-smoke stress-check preprod-check preprod-check-hosted security-scan gosec-scan gosec-report secret-scan secret-report scan markdown-scan markdown-report markdown-fix vuln-scan tidy clean parity-check parity-check-if-available coverage-check perf-check perf-compare-toolchains release release-hosted
 
 help:
 	@echo Available targets:
@@ -65,6 +68,7 @@ help:
 	@echo   make compat-check     Run unit tests and build with the minimum supported Go toolchain
 	@echo   make integration-test Run integration tests only (-run Integration)
 	@echo   make integration-fakeamps Run strict integration gates against ephemeral fakeamps endpoints
+	@echo   make cpp-integration  Test fakeamps with the pinned official Windows C++ client
 	@echo   make install          Install packages with go install
 	@echo   make fmt              Format Go source files
 	@echo   make vet              Run go vet
@@ -114,6 +118,10 @@ integration-test:
 integration-fakeamps:
 	$(GO) run ./tools/fakeampsgate
 
+cpp-integration:
+	$(PYTHON) -m unittest discover -s tools/cppfakeamps -p "test_*.py"
+	$(PYTHON) tools/cppfakeamps/run.py --sdk "$(CPP_SDK_ROOT)"
+
 integration-live-smoke:
 	$(GO) test -count=1 ./amps -run "^(TestIntegrationConnectLogonPublishSubscribe|TestIntegrationSOWAndSowAndSubscribeLifecycle|TestIntegrationQueueAutoAckBatching|TestIntegrationBookmarkResumeAcrossReconnect|TestIntegrationHAConnectAndLogonWithFailoverChooser)$$"
 
@@ -159,7 +167,7 @@ fuzz-smoke:
 stress-check:
 	@$(ENSURE_FUZZ_TMPDIR)
 	$(FUZZ_ENV) $(GO) test -race -shuffle=$(STRESS_SHUFFLE) -count=$(STRESS_COUNT) $(STRESS_PKG) -skip Integration
-	$(FUZZ_ENV) $(GO) run ./tools/fakeampsgate -race -count=$(STRESS_COUNT) -shuffle=$(STRESS_SHUFFLE)
+	$(FUZZ_ENV) $(GO) run ./tools/fakeampsgate -race -count=$(STRESS_COUNT) -shuffle=$(STRESS_SHUFFLE) -workers=$(STRESS_WORKERS)
 
 preprod-check: scan leak-check fuzz-smoke stress-check coverage-check perf-check
 	@echo Pre-production checks passed for $(VERSION).
@@ -225,7 +233,7 @@ perf-compare-toolchains:
 	$(GO) run golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION) "$(PERF_COMPARE_OLD_OUTPUT)" "$(PERF_COMPARE_NEW_OUTPUT)" > "$(PERF_COMPARE_REPORT)"
 	@echo Perf comparison written to $(PERF_COMPARE_REPORT)
 
-release: preprod-check test test-race build integration-fakeamps parity-check
+release: preprod-check test test-race build integration-fakeamps parity-check cpp-integration
 	@echo Release checks passed for $(VERSION).
 
 release-hosted: preprod-check-hosted test test-race build integration-fakeamps

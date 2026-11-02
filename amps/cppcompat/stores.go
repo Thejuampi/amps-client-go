@@ -2,6 +2,7 @@ package cppcompat
 
 import (
 	"bytes"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -171,11 +172,13 @@ func (store *BlockPublishStore) Replay(replayer func(*amps.Command) error) error
 
 // HybridPublishStore writes to primary and fallback publish stores.
 type HybridPublishStore struct {
-	primary      amps.PublishStore
-	secondary    amps.PublishStore
-	lock         sync.Mutex
-	lastSequence uint64
-	initialized  bool
+	primary       amps.PublishStore
+	secondary     amps.PublishStore
+	lock          sync.Mutex
+	lastSequence  uint64
+	sequenceFloor uint64
+	outcomeErr    error
+	initialized   bool
 }
 
 // NewHybridPublishStore creates a hybrid publish store.
@@ -199,8 +202,19 @@ func (store *HybridPublishStore) Store(command *amps.Command) (uint64, error) {
 	}
 	store.lock.Lock()
 	defer store.lock.Unlock()
+	if store.outcomeErr != nil {
+		return 0, store.outcomeErr
+	}
 	if !store.initialized {
 		for _, backend := range []amps.PublishStore{store.primary, store.secondary} {
+			if source, ok := backend.(interface{ NextPublishSequence() (uint64, bool) }); ok {
+				var next, available = source.NextPublishSequence()
+				if !available {
+					store.sequenceFloor = ^uint64(0)
+				} else if next > 0 {
+					store.sequenceFloor = max(store.sequenceFloor, next-1)
+				}
+			}
 			store.lastSequence = max(store.lastSequence, backend.GetLastPersisted())
 			if err := backend.Replay(func(saved *amps.Command) error {
 				var sequence, _ = saved.SequenceID()
@@ -217,21 +231,40 @@ func (store *HybridPublishStore) Store(command *amps.Command) (uint64, error) {
 		return 0, amps.NewError(amps.CommandError, "hybrid publish sequence is already in use")
 	}
 	if sequence, present := pending.SequenceID(); !present || sequence == 0 {
-		if store.lastSequence == ^uint64(0) {
+		var floor = max(store.lastSequence, store.sequenceFloor)
+		if floor == ^uint64(0) {
 			return 0, amps.NewError(amps.CommandError, "publish sequence space exhausted")
 		}
-		if store.lastSequence != 0 {
-			pending.SetSequenceID(store.lastSequence + 1)
+		if floor != 0 {
+			pending.SetSequenceID(floor + 1)
 		}
 	}
 	var sequence, err = store.primary.Store(pending)
 	if err != nil {
+		var uncertain *amps.PublishStoreUncertainError
+		if errors.As(err, &uncertain) {
+			store.outcomeErr = err
+			return sequence, err
+		}
+		var accepted *amps.PublishStoreAcceptedError
+		if sequence != 0 && errors.As(err, &accepted) {
+			store.lastSequence = max(store.lastSequence, sequence)
+			return sequence, err
+		}
 		if sequence != 0 {
 			pending.SetSequenceID(sequence)
 		}
 		sequence, err = store.secondary.Store(pending)
 	}
 	if err != nil {
+		var uncertain *amps.PublishStoreUncertainError
+		if errors.As(err, &uncertain) {
+			store.outcomeErr = err
+		}
+		var accepted *amps.PublishStoreAcceptedError
+		if sequence != 0 && errors.As(err, &accepted) {
+			store.lastSequence = max(store.lastSequence, sequence)
+		}
 		return sequence, err
 	}
 	if sequence <= store.lastSequence {

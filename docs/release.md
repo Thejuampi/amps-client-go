@@ -21,6 +21,7 @@ That target runs:
 - build
 - fakeamps-backed integration for `./amps`
 - `tools/fakeamps` integration tests
+- native official C++ 5.3.5.14 interoperability against fakeamps
 - parity check
 - coverage gate
 - performance gate
@@ -43,6 +44,17 @@ semantics can require application changes. See the
 Prepare `VERSION`, the README version, `amps.ClientVersion`, and the newest
 dated changelog entry together. Tests require those markers to agree. The
 module path stays `github.com/Thejuampi/amps-client-go` for v1.
+
+The 1.1.0 release is a minor: it adds the public error types
+`PublishStoreAcceptedError` and `PublishStoreUncertainError`, and
+`MemoryPublishStore.NextPublishSequence`, while preserving existing client
+signatures. Those compatible public additions require a minor version under
+[SemVer](https://semver.org/spec/v2.0.0.html). Its local strict gate also runs
+`make cpp-integration`, which requires Windows x64, Python, Visual Studio C++
+Build Tools, and the external unmodified Windows C++ 5.3.5.14 SDK. Supply its
+location with `CPP_SDK_ROOT`; the default is the local parity-audit cache.
+Missing prerequisites fail this gate. See the
+[C++ interoperability report](cpp_fakeamps_interop.md) for coverage and limits.
 
 ## Local Strict Release
 
@@ -67,6 +79,10 @@ That keeps the same release gates as local release, except parity is conditional
 - if it does not exist, parity is skipped and the rest of the hosted release gates still run
 
 Use local `make release` when you need the full strict parity-validated release path.
+
+The hosted target does not include the Windows native C++ probe. A hosted
+release alone therefore does not establish the C++ interoperability result
+recorded for a locally validated release.
 
 The workflow accepts a version already prepared and committed on `main`. It
 runs all gates and skips the version-bump commit when the markers already

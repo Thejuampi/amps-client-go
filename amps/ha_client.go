@@ -29,6 +29,10 @@ type HAClient struct {
 	stopped                atomic.Bool
 	reconnectCancel        context.CancelFunc
 	connectCancel          context.CancelFunc
+	connectInProgress      bool
+	pendingReconnect       bool
+	pendingReconnectError  error
+	disconnectEpoch        uint64
 }
 
 type logonOptionsSnapshot struct {
@@ -69,40 +73,64 @@ func (ha *HAClient) handleDisconnect(err error) {
 		return
 	}
 
-	if ha.stopped.Load() {
+	ha.lock.Lock()
+	if ha.stopped.Load() || ha.client == nil || ha.client.connected.Load() {
+		ha.lock.Unlock()
+		return
+	}
+	if ha.connectInProgress {
+		ha.pendingReconnect = true
+		ha.pendingReconnectError = err
+		ha.lock.Unlock()
 		return
 	}
 	if !ha.reconnecting.CompareAndSwap(false, true) {
+		ha.pendingReconnect = true
+		ha.pendingReconnectError = err
+		ha.lock.Unlock()
 		return
 	}
-
-	ha.client.notifyConnectionState(ConnectionStateReconnecting)
-
 	ctx, cancel := context.WithCancel(context.Background())
-	ha.lock.Lock()
 	ha.reconnectCancel = cancel
 	ha.lock.Unlock()
+
+	ha.client.notifyConnectionState(ConnectionStateReconnecting)
+	ha.lock.Lock()
+	var obsolete = ha.stopped.Load() || ctx.Err() != nil || ha.client.connected.Load()
+	ha.lock.Unlock()
+	if obsolete {
+		cancel()
+		ha.finishReconnect(err, false)
+		return
+	}
 
 	go func() {
 		var connectErr error
 		defer func() {
 			cancel()
-			ha.lock.Lock()
-			ha.reconnectCancel = nil
-			ha.reconnecting.Store(false)
-			// A disconnect can arrive after logon succeeds while this worker
-			// still owns the reconnect flag. Hand it off after releasing ownership.
-			var retry = connectErr == nil && !ha.stopped.Load() && !ha.client.connected.Load()
-			ha.lock.Unlock()
-			if retry {
-				ha.handleDisconnect(err)
-			}
+			ha.finishReconnect(err, connectErr == nil)
 		}()
 		connectErr = ha.connectAndLogon(ctx)
 		if ha.client != nil && shouldReportHAReconnectError(connectErr) {
 			ha.client.reportException(connectErr)
 		}
 	}()
+}
+
+func (ha *HAClient) finishReconnect(err error, succeeded bool) {
+	ha.lock.Lock()
+	ha.reconnectCancel = nil
+	ha.reconnecting.Store(false)
+	var retry = (ha.pendingReconnect || succeeded) && !ha.stopped.Load() && !ha.client.connected.Load()
+	if ha.pendingReconnect {
+		err = ha.pendingReconnectError
+	}
+	ha.pendingReconnect = false
+	ha.pendingReconnectError = nil
+	ha.lock.Unlock()
+	if retry {
+		ha.handleDisconnect(err)
+	}
 }
 
 func shouldReportHAReconnectError(err error) bool {
@@ -131,18 +159,22 @@ func (ha *HAClient) connectAndLogonOnceWithContext(ctx context.Context, uri stri
 	if err := ha.client.connectWithContext(ctx, uri); err != nil {
 		return err
 	}
+	ha.client.connectionStateLock.Lock()
+	var connection = ha.client.connection
+	var generation = ha.client.generation.Load()
+	ha.client.connectionStateLock.Unlock()
 	if authenticator != nil {
 		options.Authenticator = authenticator
 	}
 
 	var err error
 	if hasLogonOptions || authenticator != nil {
-		err = ha.client.Logon(options)
+		err = ha.client.logonWithContext(ctx, options)
 	} else {
-		err = ha.client.Logon()
+		err = ha.client.logonWithContext(ctx)
 	}
 	if err != nil {
-		_ = ha.client.Disconnect()
+		_ = ha.client.disconnectConnection(connection, generation, true)
 	}
 	return err
 }
@@ -172,13 +204,20 @@ func singleDefaultEndpoint(chooser ServerChooser) (string, Authenticator, bool) 
 
 // ConnectAndLogon loops through selected endpoints until connect and logon succeed or timeout occurs.
 func (ha *HAClient) ConnectAndLogon() error {
-	if ha != nil {
-		ha.stopped.Store(false)
+	if ha == nil {
+		return ha.connectAndLogon(context.Background())
 	}
-	return ha.connectAndLogon(context.Background())
+	ha.lock.Lock()
+	var epoch = ha.disconnectEpoch
+	ha.lock.Unlock()
+	return ha.connectAndLogonAttempt(context.Background(), true, epoch)
 }
 
 func (ha *HAClient) connectAndLogon(ctx context.Context) error {
+	return ha.connectAndLogonAttempt(ctx, false, 0)
+}
+
+func (ha *HAClient) connectAndLogonAttempt(ctx context.Context, restart bool, epoch uint64) (resultErr error) {
 	if ha == nil || ha.client == nil {
 		return NewError(CommandError, "nil HAClient")
 	}
@@ -195,16 +234,51 @@ func (ha *HAClient) connectAndLogon(ctx context.Context) error {
 	ha.lock.Unlock()
 
 	ha.connectAndLogonLock.Lock()
-	defer ha.connectAndLogonLock.Unlock()
-	ctx, connectCancel := context.WithCancel(ctx)
 	ha.lock.Lock()
+	if restart && epoch != ha.disconnectEpoch {
+		ha.lock.Unlock()
+		ha.connectAndLogonLock.Unlock()
+		return NewError(DisconnectedError, errHAClientStopped)
+	}
+	if ctx.Err() != nil || !restart && ha.stopped.Load() {
+		ha.lock.Unlock()
+		ha.connectAndLogonLock.Unlock()
+		return NewError(DisconnectedError, errHAReconnectCancelled)
+	}
+	if !restart && ha.client.connected.Load() {
+		ha.lock.Unlock()
+		ha.connectAndLogonLock.Unlock()
+		return nil
+	}
+	if restart {
+		ha.stopped.Store(false)
+	}
+	ctx, connectCancel := context.WithCancel(ctx)
+	ha.connectInProgress = true
+	ha.pendingReconnect = false
+	ha.pendingReconnectError = nil
 	ha.connectCancel = connectCancel
 	ha.lock.Unlock()
 	defer func() {
 		connectCancel()
 		ha.lock.Lock()
 		ha.connectCancel = nil
+		ha.connectInProgress = false
+		if resultErr != nil {
+			ha.stopped.Store(true)
+		}
+		var pendingErr = ha.pendingReconnectError
+		var needsRetry = resultErr == nil && ha.pendingReconnect && !ha.stopped.Load() && !ha.client.connected.Load()
+		var retry = needsRetry && !ha.reconnecting.Load()
+		if !needsRetry || retry {
+			ha.pendingReconnect = false
+			ha.pendingReconnectError = nil
+		}
 		ha.lock.Unlock()
+		ha.connectAndLogonLock.Unlock()
+		if retry {
+			ha.handleDisconnect(pendingErr)
+		}
 	}()
 
 	deadline := time.Time{}
@@ -498,8 +572,9 @@ func (ha *HAClient) Disconnect() error {
 	if ha == nil || ha.client == nil {
 		return nil
 	}
-	ha.stopped.Store(true)
 	ha.lock.Lock()
+	ha.stopped.Store(true)
+	ha.disconnectEpoch++
 	reconnectCancel := ha.reconnectCancel
 	ha.reconnectCancel = nil
 	connectCancel := ha.connectCancel

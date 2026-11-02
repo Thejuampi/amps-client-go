@@ -5,7 +5,10 @@ Fecha: 2026-10-24. Revisión de partida de Go: `217b06ee9a9849a8d1c45e8cde42ade3
 **Estado posterior:** los 23 grupos R01–R23 fueron corregidos. Las 32 pruebas
 originales están activas en la suite normal. Consultar el
 [registro de correcciones y validación](behavior_parity_fixes.md) para el estado
-actual. Las descripciones y cifras siguientes conservan la foto inicial del
+de esa primera corrección. La [segunda pasada del 2026-11-01](behavior_parity_second_audit.md)
+reprodujo 16 grupos de defectos sobre el commit del release; su
+[registro de correcciones](behavior_parity_second_fixes.md) contiene la validación
+posterior. Las descripciones y cifras siguientes conservan la foto inicial del
 checkout revisado, anterior a esas correcciones.
 
 La sospecha está confirmada: hay diferencias de implementación con consecuencias

@@ -194,6 +194,97 @@ func TestReplayIgnoresUnterminatedFinalLine(t *testing.T) {
 	if lines[0] != "{\"type\":\"first\"}" {
 		t.Fatalf("unexpected replayed line: %q", lines[0])
 	}
+	var unchanged, err = os.ReadFile(logPath)
+	if err != nil || !bytes.Equal(unchanged, content) {
+		t.Fatalf("read-only replay changed WAL: %q, %v", unchanged, err)
+	}
+}
+
+func TestReplayRepairTruncatesOnlyTornTail(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "ops.wal")
+	var content = []byte("first\nsecond\npartial")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	if err := ReplayAndRepair(path, func(line []byte) error {
+		lines = append(lines, string(line))
+		return nil
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	var repaired, err = os.ReadFile(path)
+	if err != nil || string(repaired) != "first\nsecond\n" || len(lines) != 2 || lines[0] != "first" || lines[1] != "second" {
+		t.Fatalf("repair: lines=%v contents=%q error=%v", lines, repaired, err)
+	}
+}
+
+func TestReplayRepairReturnsSyncFailure(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "ops.wal")
+	if err := os.WriteFile(path, []byte("first\npartial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var original = syncFile
+	var expected = errors.New("repair sync failed")
+	syncFile = func(*os.File) error { return expected }
+	defer func() { syncFile = original }()
+	if err := ReplayAndRepair(path, func([]byte) error { return nil }, true); !errors.Is(err, expected) {
+		t.Fatalf("repair error = %v, want %v", err, expected)
+	}
+}
+
+func TestReplayRepairDoesNotHideInvalidCommittedRecord(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "ops.wal")
+	var content = []byte("invalid\npartial")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var expected = errors.New("invalid committed record")
+	if err := ReplayAndRepair(path, func([]byte) error { return expected }, true); !errors.Is(err, expected) {
+		t.Fatalf("replay error = %v, want %v", err, expected)
+	}
+	var unchanged, err = os.ReadFile(path)
+	if err != nil || !bytes.Equal(unchanged, content) {
+		t.Fatalf("invalid WAL changed: %q, %v", unchanged, err)
+	}
+}
+
+func TestAppendSyncFailureRollsBackCompleteRecord(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "ops.wal")
+	if err := os.WriteFile(path, []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var original = syncFile
+	var failure = errors.New("append sync failed")
+	var calls int
+	syncFile = func(file *os.File) error {
+		calls++
+		if calls == 1 {
+			return failure
+		}
+		return file.Sync()
+	}
+	defer func() { syncFile = original }()
+	if err := Append(path, []byte("rejected\n"), true); !errors.Is(err, failure) {
+		t.Fatalf("append error = %v", err)
+	}
+	var contents, err = os.ReadFile(path)
+	if err != nil || string(contents) != "committed\n" || calls != 2 {
+		t.Fatalf("rollback contents=%q syncs=%d error=%v", contents, calls, err)
+	}
+}
+
+func TestAppendReportsUnknownOutcomeWhenRollbackSyncFails(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "ops.wal")
+	var original = syncFile
+	var failure = errors.New("sync failed")
+	syncFile = func(*os.File) error { return failure }
+	defer func() { syncFile = original }()
+	var err = Append(path, []byte("record\n"), true)
+	var uncertain *AppendOutcomeError
+	if !errors.As(err, &uncertain) || !errors.Is(err, failure) {
+		t.Fatalf("uncertain append error = %v", err)
+	}
 }
 
 func TestDurabilitySyncCoverage(t *testing.T) {

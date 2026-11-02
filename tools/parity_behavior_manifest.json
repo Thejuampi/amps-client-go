@@ -4,10 +4,12 @@
     {
       "id": "contract-parity-gating",
       "domain": "parity-contract",
-      "description": "Symbol presence and manually closed statuses do not establish behavioral equivalence; the 2026-10-24 audit reproduces divergences against C++ 5.3.5.14.",
+      "description": "Symbol presence and manually closed statuses do not establish behavioral equivalence; the second audit reproduces additional divergences against C++ 5.3.5.14.",
       "pass_criteria": "All open audit contract probes must pass as ordinary release tests; inventory completeness alone is insufficient.",
       "status": "closed",
-      "resolution_evidence": "docs/behavior_parity_fixes.md"
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "prior_resolution_evidence": "docs/behavior_parity_fixes.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
     },
     {
       "id": "correctness-parser-builder-hardening",
@@ -34,16 +36,20 @@
       "id": "wal-checkpoint-durability",
       "domain": "durability",
       "description": "File-backed stores use append/checkpoint persistence with crash-safe recovery semantics.",
-      "pass_criteria": "go test -count=1 ./amps/... passes publish/bookmark store persistence tests.",
-      "status": "closed"
+      "pass_criteria": "Normal-suite persistence tests include torn-tail recovery followed by append and another restart, plus unambiguous acceptance after checkpoint failure (D02/D03).",
+      "status": "closed",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
     },
     {
       "id": "ha-recovery-ordering",
       "domain": "high-availability",
       "description": "Recovery ordering is deterministic: publish replay, resubscribe, retry/deferred callbacks.",
-      "pass_criteria": "TestParityAuditSubscribeRecoveryGeneration and TestParityAuditResubscribeFailurePropagatesFromLogon pass in the ordinary suite.",
+      "pass_criteria": "Ordinary tests also prove live publishes cannot overtake recovery and unsubscribe cannot be undone by an older recovery snapshot (D01/D10).",
       "status": "closed",
-      "resolution_evidence": "docs/behavior_parity_fixes.md"
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "prior_resolution_evidence": "docs/behavior_parity_fixes.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
     },
     {
       "id": "ha-reconnect-completion-handoff",
@@ -318,6 +324,184 @@
       "priority": "P1",
       "evidence": "docs/behavior_parity_audit.md",
       "resolution_evidence": "docs/behavior_parity_fixes.md"
+    },
+    {
+      "id": "audit-d01-replay-live-publish-ordering",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Una publicación concurrente adelanta al replay y su ack acumulativo elimina mensajes todavía no enviados.",
+      "pass_criteria": "Promote and pass TestDeepAuditLivePublishCannotOvertakeRecovery and TestDeepAuditIntegrationLivePublishDuringReplayLosesBacklog without weakening order/count assertions. Also cover SOWDelete, publication from LoggedOn after installing the server sequence floor, and recovery generation changes.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d02-wal-torn-tail-append-restart",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Una cola parcial ignorada al recuperar el WAL corrompe la siguiente escritura y el segundo reinicio.",
+      "pass_criteria": "Promote and pass TestDeepAuditPublishWALTornTailThenAppendThenRestart and TestDeepAuditBookmarkWALTornTailThenAppendThenRestart, preserving exact retained state.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d03-checkpoint-publish-acceptance",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Publish devuelve error después de que el WAL retuvo el mensaje, induciendo reintentos ambiguos.",
+      "pass_criteria": "Promote and pass TestDeepAuditPublishCheckpointFailureIsNotRejectedAfterRetention, covering errors both before and after durable acceptance. Checkpoint-only rejection must roll back; uncertain WAL rollback must preserve the cause and block later mutations/checkpoints.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d04-hybrid-initial-sequence-floor",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "HybridPublishStore reemplaza el piso de secuencia de sus backends nuevos por un ack antiguo.",
+      "pass_criteria": "Promote and pass TestDeepAuditFreshHybridDoesNotReuseOldPublisherSequences; preserve monotonicity across fresh/reopened stores and fallback.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d05-decoded-header-routing",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Los headers conservan escapes JSON y el sub_id decodificado no encuentra su ruta.",
+      "pass_criteria": "Promote and pass TestDeepAuditReceivedHeaderUnescapesText and TestDeepAuditEscapedSubscriptionIDRoutes for both fast and checked parsers; keep current perf limits.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d06-ha-logon-deadline",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "HAClient.SetTimeout no limita el logon cuando el servidor acepta TCP y no responde.",
+      "pass_criteria": "Promote and pass TestDeepAuditHATimeoutIncludesLogon without increasing its 40ms setting or 300ms observation window; test successful logon and cancellation too. The same budget and cancellation cover HTTP preflight and recovery acknowledgements without closing a newer generation. Terminal failure must stop independent reconnects and late callbacks; successful recovery must hand off subsequent disconnects. Stale queued attempts and workers must preserve a newer session, including reentrant reconnect listeners.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d07-logon-metadata-data-race",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Los getters de versión y name hash compiten con escrituras del logon.",
+      "pass_criteria": "Promote TestDeepAuditLogonMetadataConcurrentReaders and pass it with -race; assert coherent metadata across logon transitions.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d08-fakeamps-publisher-reconnect-dedupe",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "fakeamps olvida la secuencia del publisher al cerrar la conexión y aplica otra vez un replay idéntico.",
+      "pass_criteria": "Promote and pass TestDeepAuditFakePublisherDedupSurvivesReconnect; retain separate identities and persistence semantics, and correct the contradictory existing test. Disk reload restores publisher identity and sequence; torn tails are repaired before append, malformed complete records and unavailable/uncertain storage reject writes.",
+      "status": "closed",
+      "priority": "P1",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d09-replay-persisted-ack-request",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "El store copia el comando antes de agregar persisted, por lo que el replay no solicita su confirmación.",
+      "pass_criteria": "Promote and pass all six TestDeepAuditReplayPreservesPersistedAck cases; verify recovery-only traffic drains on persisted acknowledgements. Legacy memory, WAL and checkpoint backlog also requests persisted after upgrade without changing sequence, payload, requested acknowledgements or a custom store's original command.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d10-unsubscribe-recovery-cancellation",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Un snapshot de recuperación puede recrear una suscripción después de que Unsubscribe terminó.",
+      "pass_criteria": "Promote and pass TestDeepAuditUnsubscribeDuringRecoveryIsNotResurrected, asserting final wire order and route removal.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d11-stream-ack-failure-retry",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "HasNext olvida el mensaje previo cuando falla su ack y la siguiente llamada avanza.",
+      "pass_criteria": "Promote and pass TestDeepAuditStreamAckFailureCannotBeBypassedByNextCall, then prove successful retry preserves each delivery. Explicit disconnect preserves pending acknowledgements and recovery flushes them without new traffic.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d12-offline-execute-ack-handler",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "ExecuteAsync desconectado retiene el publish pero no su callback de acknowledgements.",
+      "pass_criteria": "Promote and pass TestDeepAuditOfflineExecutePreservesAckHandler; retain requested-ack filtering and route cleanup.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d13-queue-handler-error-cancel",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Un error del handler de cola deja el lease activo en vez de cancelarlo como C++.",
+      "pass_criteria": "Promote and pass TestDeepAuditFailedQueueHandlerCancelsLease; cover ignore-auto-ack and cancellation send failures.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d14-message-ack-autoack-guard",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "Message.Ack envía otra confirmación cuando AutoAck está habilitado, a diferencia de C++.",
+      "pass_criteria": "Promote and pass TestDeepAuditMessageAckDefersToAutoAck; retain manual Ack behavior when AutoAck is disabled.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d15-json-builder-control-escapes",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "JSONMessageBuilder usa escapes de literales Go que producen JSON inválido para 27 controles ASCII.",
+      "pass_criteria": "Promote and pass TestDeepAuditJSONBuilderProducesValidJSONForControls; cover keys, values, quotes, backslashes and Unicode without changing perf limits.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "audit-d16-fakeamps-command-id-is-not-sequence",
+      "domain": "behavior-audit-2026-11-01",
+      "description": "fakeamps descarta publicaciones distintas que comparten command ID.",
+      "pass_criteria": "Promote and pass both TestDeepAuditFakeCommandIDIsNotPublishIdentity cases; preserve deduplication by publisher identity and sequence. Distinct SOW deletes may also share a command ID; sequence-based replay cannot delete a newly inserted row.",
+      "status": "closed",
+      "priority": "P2",
+      "evidence": "docs/behavior_parity_second_audit.md",
+      "resolution_evidence": "docs/behavior_parity_second_fixes.md"
+    },
+    {
+      "id": "cpp-fakeamps-routing-bookmarks",
+      "domain": "cpp-fakeamps-interop-2026-11-02",
+      "description": "The official C++ client consumes fakeamps live route lists, escaped topics, and EPOCH/NOW/explicit bookmark replay.",
+      "pass_criteria": "make cpp-integration passes live and all three bookmark scenarios; ordinary CPP routing/bookmark regressions and bounded formal checks pass.",
+      "status": "closed",
+      "evidence": "docs/cpp_fakeamps_interop.md",
+      "resolution_evidence": "docs/cpp_fakeamps_formal.md"
+    },
+    {
+      "id": "cpp-fakeamps-queue-and-oof",
+      "domain": "cpp-fakeamps-interop-2026-11-02",
+      "description": "The official C++ client can ack queue deliveries, receive lease redelivery with one or competing consumers, retain publishes through reconnect, and receive explicitly enabled OOF.",
+      "pass_criteria": "make cpp-integration passes queue-ack, queue-lease, queue-single-lease, retained-reconnect and oof; ordinary queue and OOF regressions pass.",
+      "status": "closed",
+      "evidence": "docs/cpp_fakeamps_interop.md",
+      "resolution_evidence": "docs/cpp_fakeamps_formal.md"
     }
   ],
   "audit_reference": {
@@ -329,5 +513,29 @@
     "inventory": "docs/behavior_parity_inventory.md",
     "resolution": "docs/behavior_parity_fixes.md",
     "regressions_in_normal_suite": true
+  },
+  "second_audit_reference": {
+    "cpp_version": "5.3.5.14",
+    "verified_on": "2026-11-01",
+    "go_revision": "91dd4a8224dcdc30cd866b24a595fdbb988b2e5b",
+    "report": "docs/behavior_parity_second_audit.md",
+    "probe_runner": "tools/paritycheck/run_deep_audit.ps1",
+    "finding_groups": 16,
+    "probe_functions": 19,
+    "regressions_in_normal_suite": true,
+    "resolution": "docs/behavior_parity_second_fixes.md",
+    "regression_files": [
+      "amps/deep_audit_probe_test.go",
+      "amps/cppcompat/deep_audit_probe_test.go",
+      "tools/fakeamps/deep_audit_probe_test.go",
+      "amps/deep_audit_followup_test.go",
+      "tools/fakeamps/deep_audit_followup_test.go",
+      "amps/mmap_io_windows_test.go",
+      "amps/deep_audit_sequence_test.go",
+      "tools/fakeamps/deep_audit_extra_test.go",
+      "amps/deep_audit_authenticator_test.go",
+      "amps/deep_audit_legacy_replay_test.go",
+      "amps/ha_lifecycle_regression_test.go"
+    ]
   }
 }
