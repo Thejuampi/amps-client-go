@@ -1,0 +1,24 @@
+---
+title: "Bounded C++ subscription and queue delivery"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: Breaks NoEligibleMessageStrandedAfterDispatch
+    lg1: Path to the NoEligibleMessageStrandedAfterDispatch bug
+  }
+  class lg0 breaks
+  class lg1 bugPath
+  s0: Lease expired#59; eligible [owner]#59; target none#59; sent false#59; pending false#59; leases [owner]
+  s1: Expired lease removed#59; eligible [owner]#59; target none#59; sent false#59; pending false#59; leases []
+  s2: No target selected#59; eligible [owner]#59; target none#59; sent false#59; pending false#59; leases []
+  s3: Redelivery processed#59; eligible [owner]#59; target none#59; sent false#59; pending true#59; leases []
+  [*] --> s0
+  s0 --> s1: Remove the expired lease
+  s1 --> s2: Choose a subscriber
+  s2 --> s3: Keep the message pending
+  classDef breaks fill:#ffecee,stroke:#e72e3b,stroke-width:2.5px,color:#cd2834
+  class s0 bugPath
+  class s1 bugPath
+  class s2 bugPath
+  class s3 breaks
+  class s3 bugPath

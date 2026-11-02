@@ -1,0 +1,14 @@
+{
+  "base_commit": "22c28b481fc150cd984a21bac8bc97f67c9d855d",
+  "uncommitted_sources": false,
+  "files": {
+    "amps/client.go": "a90c47da313aab79de91fb82e634ddc8ad3b8ec1f98c25219de3a80add41ce7a",
+    "amps/client_parity_methods.go": "c08b50a121d8514b59fb64cfc36d8c1d10d82414ba66b9c39e5d5a26c794140d",
+    "amps/ha_client.go": "370ec98aa047104b3170da5aeb944c205b00810b8454535dc50b4adff922067e",
+    "amps/publish_store.go": "015daf1a46939dd28cc034b237d547bb04b209cdd5c4a19058bf42192f1b7be7",
+    "amps/internal/wal/wal.go": "beb405164575b74704683ffd6d49e9ce2c91058048d8adb4fbc1b1e07e4e0528",
+    "tools/fakeamps/dedupe.go": "f2997ae03bcae005ec0dfbbf038ea67ef2d90e06d78d6c85bfd0706e3aa4bfbb",
+    "tools/fakeamps/handler.go": "dd3e65ebe2e75107a9279780542b8028150e95007826c52024cf2de74026b721",
+    "tools/fakeamps/journal.go": "37b69c611dda9281cd5fa86c7825aa3e7d33204c581ae96e0e47453fc05582d4"
+  }
+}

@@ -55,7 +55,6 @@ los paquetes y de los tests de `amps`. No se ejecutaron tests en Linux. El stres
 runner también pasó con race, shuffle y 20 repeticiones: 69,836 s y 1,262 s
 de duración de paquete, respectivamente; no están incluidos en los 37 min.
 
-
 La integración usa fakeamps, ahora también con el cliente C++ real. El
 [informe de interoperabilidad](cpp_fakeamps_interop.md) y el
 [alcance formal](cpp_fakeamps_formal.md) detallan qué queda sin verificar.

@@ -1,0 +1,27 @@
+---
+title: "Verificación acotada de recuperación AMPS"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: Breaks DeleteReplayIsIdempotent or NewRowSurvivesOldDelete
+    lg1: Path to the DeleteReplayIsIdempotent or NewRowSurvivesOldDelete bug
+  }
+  class lg0 breaks
+  class lg1 bugPath
+  s0: Paso 0#59; fila old#59; secuencias A=0, B=0#59; deletes aplicados 0#59; publicaciones aplicadas 0
+  s1: Paso 1#59; fila none#59; secuencias A=1, B=0#59; deletes aplicados 1#59; publicaciones aplicadas 0
+  s2: Paso 2#59; fila new#59; secuencias A=1, B=1#59; deletes aplicados 1#59; publicaciones aplicadas 1
+  s3: Paso 3#59; fila new#59; secuencias A=0, B=1#59; deletes aplicados 1#59; publicaciones aplicadas 1
+  s4: Paso 3#59; fila none#59; secuencias A=1, B=1#59; deletes aplicados 2#59; publicaciones aplicadas 1
+  [*] --> s0
+  s0 --> s1: Aplicar delete de A
+  s1 --> s2: Publicar fila nueva de B
+  s2 --> s3: Reabrir journal y SOW
+  s3 --> s4: Repetir delete de A
+  classDef breaks fill:#ffecee,stroke:#e72e3b,stroke-width:2.5px,color:#cd2834
+  class s0 bugPath
+  class s1 bugPath
+  class s2 bugPath
+  class s3 bugPath
+  class s4 breaks
+  class s4 bugPath
