@@ -102,8 +102,8 @@ func TestVersionHelpersCoverage(t *testing.T) {
 	if value := ConvertVersionToNumber(""); value != 0 {
 		t.Fatalf("expected 0 for empty version, got %d", value)
 	}
-	if value := ConvertVersionToNumber("abc"); value != 0 {
-		t.Fatalf("expected 0 for no-digit version, got %d", value)
+	if value := ConvertVersionToNumber("abc"); value != 99999999 {
+		t.Fatalf("expected current capabilities for a named version, got %d", value)
 	}
 	if value := ConvertVersionToNumber("5.3.5.1-extra"); value != 5030501 {
 		t.Fatalf("unexpected converted version: %d", value)

@@ -2,6 +2,8 @@ package cppcompat
 
 import (
 	"bytes"
+	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -170,8 +172,13 @@ func (store *BlockPublishStore) Replay(replayer func(*amps.Command) error) error
 
 // HybridPublishStore writes to primary and fallback publish stores.
 type HybridPublishStore struct {
-	primary   amps.PublishStore
-	secondary amps.PublishStore
+	primary       amps.PublishStore
+	secondary     amps.PublishStore
+	lock          sync.Mutex
+	lastSequence  uint64
+	sequenceFloor uint64
+	outcomeErr    error
+	initialized   bool
 }
 
 // NewHybridPublishStore creates a hybrid publish store.
@@ -190,11 +197,81 @@ func (store *HybridPublishStore) Store(command *amps.Command) (uint64, error) {
 	if store == nil {
 		return 0, nil
 	}
-	sequence, err := store.primary.Store(command)
-	if err == nil {
-		return sequence, nil
+	if command == nil {
+		return 0, amps.NewError(amps.CommandError, "nil hybrid publish command")
 	}
-	return store.secondary.Store(command)
+	store.lock.Lock()
+	defer store.lock.Unlock()
+	if store.outcomeErr != nil {
+		return 0, store.outcomeErr
+	}
+	if !store.initialized {
+		for _, backend := range []amps.PublishStore{store.primary, store.secondary} {
+			if source, ok := backend.(interface{ NextPublishSequence() (uint64, bool) }); ok {
+				var next, available = source.NextPublishSequence()
+				if !available {
+					store.sequenceFloor = ^uint64(0)
+				} else if next > 0 {
+					store.sequenceFloor = max(store.sequenceFloor, next-1)
+				}
+			}
+			store.lastSequence = max(store.lastSequence, backend.GetLastPersisted())
+			if err := backend.Replay(func(saved *amps.Command) error {
+				var sequence, _ = saved.SequenceID()
+				store.lastSequence = max(store.lastSequence, sequence)
+				return nil
+			}); err != nil {
+				return 0, err
+			}
+		}
+		store.initialized = true
+	}
+	var pending = command.Clone()
+	if sequence, present := pending.SequenceID(); present && sequence != 0 && sequence <= store.lastSequence {
+		return 0, amps.NewError(amps.CommandError, "hybrid publish sequence is already in use")
+	}
+	if sequence, present := pending.SequenceID(); !present || sequence == 0 {
+		var floor = max(store.lastSequence, store.sequenceFloor)
+		if floor == ^uint64(0) {
+			return 0, amps.NewError(amps.CommandError, "publish sequence space exhausted")
+		}
+		if floor != 0 {
+			pending.SetSequenceID(floor + 1)
+		}
+	}
+	var sequence, err = store.primary.Store(pending)
+	if err != nil {
+		var uncertain *amps.PublishStoreUncertainError
+		if errors.As(err, &uncertain) {
+			store.outcomeErr = err
+			return sequence, err
+		}
+		var accepted *amps.PublishStoreAcceptedError
+		if sequence != 0 && errors.As(err, &accepted) {
+			store.lastSequence = max(store.lastSequence, sequence)
+			return sequence, err
+		}
+		if sequence != 0 {
+			pending.SetSequenceID(sequence)
+		}
+		sequence, err = store.secondary.Store(pending)
+	}
+	if err != nil {
+		var uncertain *amps.PublishStoreUncertainError
+		if errors.As(err, &uncertain) {
+			store.outcomeErr = err
+		}
+		var accepted *amps.PublishStoreAcceptedError
+		if sequence != 0 && errors.As(err, &accepted) {
+			store.lastSequence = max(store.lastSequence, sequence)
+		}
+		return sequence, err
+	}
+	if sequence <= store.lastSequence {
+		return 0, amps.NewError(amps.CommandError, "hybrid publish store reused a sequence")
+	}
+	store.lastSequence = sequence
+	return sequence, nil
 }
 
 // DiscardUpTo discards in both stores.
@@ -202,21 +279,56 @@ func (store *HybridPublishStore) DiscardUpTo(sequence uint64) error {
 	if store == nil {
 		return nil
 	}
+	store.lock.Lock()
+	defer store.lock.Unlock()
+	store.lastSequence = max(store.lastSequence, sequence)
 	if err := store.primary.DiscardUpTo(sequence); err != nil {
 		return err
 	}
 	return store.secondary.DiscardUpTo(sequence)
 }
 
-// Replay replays from primary then secondary.
+// Replay merges both stores in publisher sequence order.
 func (store *HybridPublishStore) Replay(replayer func(*amps.Command) error) error {
 	if store == nil {
 		return nil
 	}
-	if err := store.primary.Replay(replayer); err != nil {
-		return err
+	var commands []*amps.Command
+	var snapshotErr = func() error {
+		store.lock.Lock()
+		defer store.lock.Unlock()
+		for _, backend := range []amps.PublishStore{store.primary, store.secondary} {
+			if err := backend.Replay(func(command *amps.Command) error {
+				commands = append(commands, command.Clone())
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}()
+	if snapshotErr != nil {
+		return snapshotErr
 	}
-	return store.secondary.Replay(replayer)
+	sort.SliceStable(commands, func(i, j int) bool {
+		var left, _ = commands[i].SequenceID()
+		var right, _ = commands[j].SequenceID()
+		return left < right
+	})
+	var previous uint64
+	for _, command := range commands {
+		var sequence, _ = command.SequenceID()
+		if sequence != 0 && sequence == previous {
+			continue
+		}
+		if replayer != nil {
+			if err := replayer(command); err != nil {
+				return err
+			}
+		}
+		previous = sequence
+	}
+	return nil
 }
 
 // LoggedBookmarkStore wraps a bookmark store with access logging.
@@ -537,6 +649,9 @@ func (store *HybridPublishStore) SetInitialSequence(sequence uint64) {
 	if store == nil {
 		return
 	}
+	store.lock.Lock()
+	defer store.lock.Unlock()
+	store.lastSequence = max(store.lastSequence, sequence)
 	if primary, ok := store.primary.(interface{ SetInitialSequence(uint64) }); ok {
 		primary.SetInitialSequence(sequence)
 	}

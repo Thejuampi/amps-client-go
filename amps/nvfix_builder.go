@@ -67,7 +67,7 @@ func (nmb *NvfixMessageBuilder) AppendBytes(tag []byte, value []byte, valOffset 
 	}
 	var end = valOffset + valLength
 
-	sizeNeeded := len(tag) + 1 + valLength + 2
+	sizeNeeded := len(tag) + valLength + 2
 	nmb.checkCapacity(sizeNeeded)
 	nmb.size += sizeNeeded
 

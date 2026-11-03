@@ -11,6 +11,42 @@ import (
 	"time"
 )
 
+func TestExternalBenchmarkOutputDefaultsStayPrivate(t *testing.T) {
+	var tests = map[string]struct {
+		got  string
+		want string
+	}{
+		"C tail capture": {
+			got:  defaultExternalCTailCurrentPath,
+			want: ".tmp/perf/external/perf_tail_c_current.json",
+		},
+		"merged baseline": {
+			got:  defaultExternalMergedBaselinePath,
+			want: ".tmp/perf/external/perf_side_by_side_baseline.json",
+		},
+		"merged current": {
+			got:  defaultExternalMergedCurrentPath,
+			want: ".tmp/perf/external/perf_side_by_side_current.json",
+		},
+		"merged comparison": {
+			got:  defaultExternalMergedComparisonPath,
+			want: ".tmp/perf/external/perf_side_by_side_comparison.json",
+		},
+		"merged report": {
+			got:  defaultExternalMergedReportPath,
+			want: ".tmp/perf/external/perf_side_by_side_report.md",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if filepath.ToSlash(test.got) != test.want {
+				t.Fatalf("default path = %q, want %q", test.got, test.want)
+			}
+		})
+	}
+}
+
 func TestRequiredGoBenchmarksForAllComparableProfile(t *testing.T) {
 	var required = requiredGoBenchmarksForProfile("all-comparable")
 	if len(required) == 0 {
@@ -291,6 +327,17 @@ func TestWriteOwnerOnlyFileUsesRestrictedPermissions(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("writeOwnerOnlyFile mode = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestWriteOwnerOnlyFileCreatesParentDirectory(t *testing.T) {
+	var path = filepath.Join(t.TempDir(), "private", "external", "report.json")
+	if err := writeOwnerOnlyFile(path, []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("writeOwnerOnlyFile() error: %v", err)
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("Stat(path): %v", err)
 	}
 }
 

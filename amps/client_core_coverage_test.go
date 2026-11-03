@@ -1045,7 +1045,6 @@ func TestClientOnErrorAndConnectionErrorCoverage(t *testing.T) {
 	conn := newTestConn()
 	client.connected.Store(true)
 	client.connection = conn
-	client.logging = true
 
 	disconnectCalled := 0
 	client.SetDisconnectHandler(func(*Client, error) { disconnectCalled++ })

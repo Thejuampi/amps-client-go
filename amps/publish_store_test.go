@@ -803,35 +803,37 @@ func TestFilePublishStoreLoadCheckpointMaxSequenceRejectsNewCommand(t *testing.T
 
 func TestMemoryPublishStoreSetInitialSequence(t *testing.T) {
 	store := NewMemoryPublishStore()
+	var initial = store.nextSequence
 
 	seq, err := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
-	if err != nil || seq != 1 {
-		t.Fatalf("expected first sequence 1, got %d err=%v", seq, err)
+	if err != nil || seq != initial {
+		t.Fatalf("expected manufactured first sequence, got %d err=%v", seq, err)
 	}
 
-	store.SetInitialSequence(100)
+	store.SetInitialSequence(initial + 100)
 
 	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
-	if nextErr != nil || nextSeq != 101 {
-		t.Fatalf("expected sequence 101 after SetInitialSequence(100), got %d err=%v", nextSeq, nextErr)
+	if nextErr != nil || nextSeq != initial+101 {
+		t.Fatalf("expected sequence 101 after SetInitialSequence(initial+100), got %d err=%v", nextSeq, nextErr)
 	}
 }
 
 func TestMemoryPublishStoreSetInitialSequenceNoOpIfSmaller(t *testing.T) {
 	store := NewMemoryPublishStore()
+	var initial = store.nextSequence
 
-	store.SetInitialSequence(50)
+	store.SetInitialSequence(initial + 50)
 
 	seq, err := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
-	if err != nil || seq != 51 {
+	if err != nil || seq != initial+51 {
 		t.Fatalf("expected sequence 51, got %d err=%v", seq, err)
 	}
 
-	store.SetInitialSequence(30)
+	store.SetInitialSequence(initial + 30)
 
 	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
-	if nextErr != nil || nextSeq != 52 {
-		t.Fatalf("expected sequence 52 (SetInitialSequence(30) should be no-op), got %d err=%v", nextSeq, nextErr)
+	if nextErr != nil || nextSeq != initial+52 {
+		t.Fatalf("expected sequence 52 (SetInitialSequence(initial+30) should be no-op), got %d err=%v", nextSeq, nextErr)
 	}
 }
 
@@ -845,16 +847,17 @@ func TestFilePublishStoreSetInitialSequence(t *testing.T) {
 	path := filepath.Join(tempDir, "store_initial_seq.json")
 
 	store := NewFilePublishStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
+	var initial = store.nextSequence
 	seq, err := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
-	if err != nil || seq != 1 {
-		t.Fatalf("expected first sequence 1, got %d err=%v", seq, err)
+	if err != nil || seq != initial {
+		t.Fatalf("expected manufactured first sequence, got %d err=%v", seq, err)
 	}
 
-	store.SetInitialSequence(200)
+	store.SetInitialSequence(initial + 200)
 
 	nextSeq, nextErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
-	if nextErr != nil || nextSeq != 201 {
-		t.Fatalf("expected sequence 201 after SetInitialSequence(200), got %d err=%v", nextSeq, nextErr)
+	if nextErr != nil || nextSeq != initial+201 {
+		t.Fatalf("expected sequence 201 after SetInitialSequence(initial+200), got %d err=%v", nextSeq, nextErr)
 	}
 }
 
@@ -886,16 +889,17 @@ func TestFilePublishStoreSetInitialSequencePersistsAcrossReload(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "store_initial_seq_"+tc.name+".json")
 			store := NewFilePublishStoreWithOptions(path, tc.options)
 
+			var initial = store.nextSequence
 			firstSeq, firstErr := store.Store(NewCommand("publish").SetTopic("t").SetData([]byte("a")))
-			if firstErr != nil || firstSeq != 1 {
-				t.Fatalf("expected first sequence 1, got %d err=%v", firstSeq, firstErr)
+			if firstErr != nil || firstSeq != initial {
+				t.Fatalf("expected manufactured first sequence, got %d err=%v", firstSeq, firstErr)
 			}
 
-			store.SetInitialSequence(200)
+			store.SetInitialSequence(initial + 200)
 
 			reloaded := NewFilePublishStoreWithOptions(path, tc.options)
 			nextSeq, nextErr := reloaded.Store(NewCommand("publish").SetTopic("t").SetData([]byte("b")))
-			if nextErr != nil || nextSeq != 201 {
+			if nextErr != nil || nextSeq != initial+201 {
 				t.Fatalf("expected persisted initial sequence to survive reload, got %d err=%v", nextSeq, nextErr)
 			}
 		})

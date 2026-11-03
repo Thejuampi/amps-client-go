@@ -270,6 +270,7 @@ func TestDefaultSubscriptionManagerResubscribeUsesMostRecentBookmarkAndStripsRep
 	client.SetRetryOnDisconnect(true)
 	client.SetBookmarkStore(NewMemoryBookmarkStore())
 	client.BookmarkStore().Log(bookmarkMessage("sub-1", "2|200|"))
+	client.BookmarkStore().DiscardMessage(bookmarkMessage("sub-1", "2|200|"))
 
 	if err := manager.Resubscribe(client); err != nil {
 		t.Fatalf("resubscribe should queue retry, got error: %v", err)
@@ -321,9 +322,13 @@ func TestDefaultSubscriptionManagerPauseResumeReplayUsesCombinedBookmarks(t *tes
 	client.SetRetryOnDisconnect(true)
 	client.SetBookmarkStore(NewMemoryBookmarkStore())
 	client.BookmarkStore().Log(bookmarkMessage("sub-a", "1|100|"))
+	client.BookmarkStore().DiscardMessage(bookmarkMessage("sub-a", "1|100|"))
 	client.BookmarkStore().Log(bookmarkMessage("sub-a", "2|200|"))
+	client.BookmarkStore().DiscardMessage(bookmarkMessage("sub-a", "2|200|"))
 	client.BookmarkStore().Log(bookmarkMessage("sub-b", "1|150|"))
+	client.BookmarkStore().DiscardMessage(bookmarkMessage("sub-b", "1|150|"))
 	client.BookmarkStore().Log(bookmarkMessage("sub-b", "3|300|"))
+	client.BookmarkStore().DiscardMessage(bookmarkMessage("sub-b", "3|300|"))
 
 	if err := manager.Resubscribe(client); err != nil {
 		t.Fatalf("resubscribe should queue paused/replay commands, got error: %v", err)
@@ -349,7 +354,7 @@ func TestDefaultSubscriptionManagerPauseResumeReplayUsesCombinedBookmarks(t *tes
 			t.Fatalf("expected paused replay command for %s", subID)
 		}
 		bookmark, ok := command.Bookmark()
-		if !ok || bookmark != "1|100|,2|200|,3|300|" {
+		if !ok || bookmark != "2|200|,3|300|" {
 			t.Fatalf("expected combined bookmark replay for %s, got %q ok=%v", subID, bookmark, ok)
 		}
 		options, _ := command.Options()

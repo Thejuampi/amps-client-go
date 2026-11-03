@@ -30,9 +30,14 @@ const (
 
 // Command stores exported state used by AMPS client APIs.
 type Command struct {
-	header  *_Header
-	data    []byte
-	timeout int
+	header         *_Header
+	data           []byte
+	timeout        int
+	generation     uint64
+	replay         bool
+	replayOriginal *Command
+	replayGroup    *trackedResumeGroup
+	replayOwner    *DefaultSubscriptionManager
 }
 
 func commandHeader(com *Command) *_Header {
@@ -997,7 +1002,7 @@ func (com *Command) SetTopN(topN uint) *Command {
 	if header == nil {
 		return nil
 	}
-	if topN == 0 {
+	if topN == uint(^uint32(0)) {
 		header.topN = nil
 	} else {
 		header.topN = &topN

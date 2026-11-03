@@ -3,6 +3,7 @@
     ".github/**/*.md",
     "AGENTS.md",
     "README.md",
+    "CHANGELOG.md",
     "docs/**/*.md",
     "tools/**/*.md",
     "!docs/AMPS_Server_Documentation*.md",

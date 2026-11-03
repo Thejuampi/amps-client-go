@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
@@ -49,18 +50,68 @@ func (b *JSONMessageBuilder) Bytes() []byte {
 	if len(b.fields) == 0 {
 		return []byte("{}")
 	}
-	var buf = make([]byte, 0, len(b.fields)*16)
+	var size = 2
+	for _, field := range b.fields {
+		size += len(field.key) + len(field.val) + 6
+	}
+	var buf = make([]byte, 0, size)
 	buf = append(buf, '{')
 	for i, f := range b.fields {
 		if i > 0 {
 			buf = append(buf, ',')
 		}
-		buf = strconv.AppendQuote(buf, f.key)
+		buf = appendJSONString(buf, f.key)
 		buf = append(buf, ':')
-		buf = strconv.AppendQuote(buf, f.val)
+		buf = appendJSONString(buf, f.val)
 	}
 	buf = append(buf, '}')
 	return buf
+}
+
+func appendJSONString(buf []byte, value string) []byte {
+	const hex = "0123456789abcdef"
+	buf = append(buf, '"')
+	var start int
+	for index := 0; index < len(value); {
+		var c = value[index]
+		if c >= 0x20 && c < utf8.RuneSelf && c != '"' && c != '\\' {
+			index++
+			continue
+		}
+		if c >= utf8.RuneSelf {
+			var _, width = utf8.DecodeRuneInString(value[index:])
+			if width > 1 {
+				index += width
+				continue
+			}
+			buf = append(buf, value[start:index]...)
+			buf = append(buf, `\ufffd`...)
+			index++
+			start = index
+			continue
+		}
+		buf = append(buf, value[start:index]...)
+		switch c {
+		case '"', '\\':
+			buf = append(buf, '\\', c)
+		case '\b':
+			buf = append(buf, '\\', 'b')
+		case '\f':
+			buf = append(buf, '\\', 'f')
+		case '\n':
+			buf = append(buf, '\\', 'n')
+		case '\r':
+			buf = append(buf, '\\', 'r')
+		case '\t':
+			buf = append(buf, '\\', 't')
+		default:
+			buf = append(buf, '\\', 'u', '0', '0', hex[c>>4], hex[c&15])
+		}
+		index++
+		start = index
+	}
+	buf = append(buf, value[start:]...)
+	return append(buf, '"')
 }
 
 // NewJSONBuilder returns a new JSONMessageBuilder.

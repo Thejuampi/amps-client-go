@@ -37,12 +37,12 @@ func TestMemoryBookmarkStoreDuplicateAndMostRecent(t *testing.T) {
 	if seq1 != seq2 {
 		t.Fatalf("duplicate bookmark should keep same sequence; got %d and %d", seq1, seq2)
 	}
-	if !store.IsDiscarded(message) {
-		t.Fatalf("second delivery should be considered duplicate/discarded")
+	if store.IsDiscarded(message) {
+		t.Fatalf("an active redelivery must remain processable")
 	}
 
-	if recent := store.GetMostRecent("sub-1"); recent != "10|1|" {
-		t.Fatalf("expected most recent bookmark to be 10|1|, got %q", recent)
+	if recent := store.GetMostRecent("sub-1"); recent != BookmarksEPOCH {
+		t.Fatalf("expected recovery to start before the active message, got %q", recent)
 	}
 
 	store.Discard("sub-1", seq1)
@@ -95,7 +95,7 @@ func TestBookmarkStoreAdditionalCoverage(t *testing.T) {
 		t.Fatalf("expected sequence IDs for all bookmark key paths")
 	}
 
-	if recent := store.GetMostRecent("query-1"); recent != "20|1|" {
+	if recent := store.GetMostRecent("query-1"); recent != BookmarksEPOCH {
 		t.Fatalf("unexpected most recent bookmark for query route: %q", recent)
 	}
 
@@ -124,14 +124,25 @@ func TestBookmarkStoreAdditionalCoverage(t *testing.T) {
 	}
 }
 
-func TestMemoryBookmarkStoreGetMostRecentReturnsPublisherList(t *testing.T) {
-	store := NewMemoryBookmarkStore()
-	store.Log(bookmarkMessage("sub-multi", "2|200|"))
-	store.Log(bookmarkMessage("sub-multi", "1|100|"))
-	store.Log(bookmarkMessage("sub-multi", "1|150|3|"))
-
-	if recent := store.GetMostRecent("sub-multi"); recent != "1|150|3|,2|200|" {
-		t.Fatalf("expected most recent bookmark list by publisher, got %q", recent)
+func TestMemoryBookmarkStoreTracksProcessedPrefixAcrossPublishers(t *testing.T) {
+	var store = NewMemoryBookmarkStore()
+	var first = bookmarkMessage("sub-multi", "2|200|")
+	var second = bookmarkMessage("sub-multi", "1|100|")
+	var third = bookmarkMessage("sub-multi", "1|150|3|")
+	store.Log(first)
+	store.Log(second)
+	store.Log(third)
+	store.DiscardMessage(third)
+	if got := store.GetMostRecent("sub-multi"); got != BookmarksEPOCH {
+		t.Fatalf("skipped first active message: %q", got)
+	}
+	store.DiscardMessage(first)
+	if got := store.GetMostRecent("sub-multi"); got != "2|200|" {
+		t.Fatalf("skipped second active message: %q", got)
+	}
+	store.DiscardMessage(second)
+	if got := store.GetMostRecent("sub-multi"); got != "1|150|3|" {
+		t.Fatalf("did not advance through discarded prefix: %q", got)
 	}
 }
 
@@ -149,7 +160,7 @@ func TestMemoryBookmarkStoreLogMarksMostRecentDirty(t *testing.T) {
 	if store.mostRecent["sub-lazy"] != "stale" {
 		t.Fatalf("expected Log to defer mostRecent recomputation, got %q", store.mostRecent["sub-lazy"])
 	}
-	if recent := store.GetMostRecent("sub-lazy"); recent != "10|1|" {
+	if recent := store.GetMostRecent("sub-lazy"); recent != BookmarksEPOCH {
 		t.Fatalf("expected GetMostRecent to recompute dirty cache, got %q", recent)
 	}
 	if store.dirty["sub-lazy"] {
@@ -384,7 +395,7 @@ func TestFileBookmarkStoreLoadCheckpointMaxSequenceRejectsNewBookmark(t *testing
 	}
 
 	store := NewFileBookmarkStoreWithOptions(path, FileStoreOptions{UseWAL: false, SyncOnWrite: false, CheckpointInterval: 100})
-	if recent := store.GetMostRecent("sub-max"); recent != "10|1|" {
+	if recent := store.GetMostRecent("sub-max"); recent != BookmarksEPOCH || store.GetOldestBookmarkSeq("sub-max") != math.MaxUint64 {
 		t.Fatalf("expected checkpoint data to remain readable, got %q", recent)
 	}
 	seqNo, err := store.LogWithError(bookmarkMessage("sub-max", "10|2|"))

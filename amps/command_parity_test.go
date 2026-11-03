@@ -30,7 +30,7 @@ func TestConvertVersionToNumber(t *testing.T) {
 	if value := ConvertVersionToNumber("5.3.5.1"); value != 5030501 {
 		t.Fatalf("expected 5030501, got %d", value)
 	}
-	if value := ConvertVersionToNumber("invalid"); value != 0 {
-		t.Fatalf("expected 0 for invalid version, got %d", value)
+	if value := ConvertVersionToNumber("invalid"); value != 99999999 {
+		t.Fatalf("expected current capabilities for a named version, got %d", value)
 	}
 }

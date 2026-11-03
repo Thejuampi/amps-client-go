@@ -58,7 +58,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	waitingStream.SetTimeout(1)
 	waitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("waiting")}
 	waitingStream.queue.enqueue(waitingMessage)
-	if !waitingStream.waitForNextWithTimeout() {
+	if !waitingStream.waitForNextWithTimeout(waitingStream.Timeout()) {
 		t.Fatalf("expected timeout wait helper to dequeue preloaded message")
 	}
 	if waitingStream.current != waitingMessage {
@@ -68,7 +68,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	saturatingWaitingStream.SetTimeout(maxMessageStreamTimeoutMillis + 1)
 	saturatingWaitingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("saturating-wait")}
 	saturatingWaitingStream.queue.enqueue(saturatingWaitingMessage)
-	if !saturatingWaitingStream.waitForNextWithTimeout() {
+	if !saturatingWaitingStream.waitForNextWithTimeout(saturatingWaitingStream.Timeout()) {
 		t.Fatalf("expected oversized timeout wait helper to dequeue preloaded message")
 	}
 	if saturatingWaitingStream.current != saturatingWaitingMessage {
@@ -120,7 +120,7 @@ func TestMessageStreamGeneralCoverage(t *testing.T) {
 	timedReadingStream.SetTimeout(1)
 	timedReadingMessage := &Message{header: &_Header{command: CommandPublish}, data: []byte("timed-reading")}
 	timedReadingStream.queue.enqueue(timedReadingMessage)
-	if !timedReadingStream.waitForNextWithTimeout() {
+	if !timedReadingStream.waitForNextWithTimeout(timedReadingStream.Timeout()) {
 		t.Fatalf("expected timeout wait helper to dequeue message with timeout configured")
 	}
 	if timedReadingStream.current != timedReadingMessage {
@@ -301,6 +301,51 @@ func TestMessageStreamHasNextAndMessageHandlerCoverage(t *testing.T) {
 	}
 }
 
+func TestMessageStreamFromExistingHandlerWithoutCommandDoesNotRegisterRoute(t *testing.T) {
+	var client = NewClient("stream-handler-without-command")
+	var stream = newMessageStream(client)
+	var handler = func(*Message) error { return nil }
+
+	if returned := stream.FromExistingHandler(handler); returned != stream {
+		t.Fatal("FromExistingHandler() did not preserve the stream")
+	}
+	if _, exists := client.routes.Load(""); exists {
+		t.Fatal("FromExistingHandler() registered an empty command route")
+	}
+}
+
+func TestMessageStreamConflationFallbackEnqueuesAfterReconfiguration(t *testing.T) {
+	var stream = newMessageStream(nil)
+	var message = &Message{header: &_Header{command: CommandPublish, sowKey: []byte("key")}, data: []byte("value")}
+
+	stream.enqueueConflatedMessage(message, "key")
+
+	var queued, ok = stream.queue.tryDequeue()
+	if !ok || queued == message || string(queued.Data()) != string(message.Data()) {
+		t.Fatalf("fallback queue result = (%p, %v), want an owned copy of (%p, true)", queued, ok, message)
+	}
+}
+
+func TestMessageStreamWaitForNextWithTimeoutUsesCapturedValue(t *testing.T) {
+	var stream = newMessageStream(nil)
+	stream.SetTimeout(0)
+	defer stream.queue.close()
+
+	var returned = make(chan bool, 1)
+	go func() {
+		returned <- stream.waitForNextWithTimeout(5)
+	}()
+
+	select {
+	case result := <-returned:
+		if !result || !stream.timedOut.Load() {
+			t.Fatalf("wait result = (%v, timedOut=%v), want (true, true)", result, stream.timedOut.Load())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitForNextWithTimeout() ignored its captured timeout argument")
+	}
+}
+
 func TestMessageStreamCloseRemovesQueryRouteForCommandBackedNonSubscription(t *testing.T) {
 	client := NewClient("stream-close-query-route")
 	stream := newMessageStream(client)
@@ -467,33 +512,6 @@ func TestMessageStreamConflateReplacesQueuedDuplicateSowKey(t *testing.T) {
 	}
 }
 
-func TestMessageStreamConflateDropCleanupBranches(t *testing.T) {
-	stream := newMessageStream(nil)
-	message := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k1")}, data: []byte("kept")}
-	stream.lock.Lock()
-	stream.removeConflatedMessagesLocked([]*Message{message})
-	stream.lock.Unlock()
-
-	stream.sowKeyMap = map[string]*Message{
-		"k1": message,
-		"k2": &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k2")}, data: []byte("mapped")},
-	}
-	stale := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("k2")}, data: []byte("stale")}
-	blank := &Message{header: &_Header{command: CommandPublish, sowKey: []byte("")}, data: []byte("blank")}
-	missing := &Message{header: &_Header{command: CommandPublish}, data: []byte("missing")}
-
-	stream.lock.Lock()
-	stream.removeConflatedMessagesLocked([]*Message{nil, missing, blank, stale, message})
-	stream.lock.Unlock()
-
-	if _, exists := stream.sowKeyMap["k1"]; exists {
-		t.Fatalf("expected matching dropped message to remove conflate entry")
-	}
-	if _, exists := stream.sowKeyMap["k2"]; !exists {
-		t.Fatalf("expected stale dropped message to preserve newer conflate entry")
-	}
-}
-
 func TestMessageStreamHasNextDrainsQueuedMessagesAfterComplete(t *testing.T) {
 	stream := newMessageStream(nil)
 	stream.queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("queued-after-complete")})
@@ -586,16 +604,16 @@ func TestMessageQueueCoverage(t *testing.T) {
 		t.Fatalf("unexpected waitDequeueTimeout message result")
 	}
 
-	// enqueueWithDepth bounded eviction path.
+	// A bounded enqueue rejects the incoming message without evicting entries.
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("a")})
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")})
 	dropped := queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("c")}, 1)
-	if len(dropped) != 2 {
-		t.Fatalf("expected bounded enqueue to drop two old messages, got %d", len(dropped))
+	if len(dropped) != 1 || string(dropped[0].Data()) != "c" {
+		t.Fatalf("expected the incoming message to be returned for retry, got %d", len(dropped))
 	}
 	message, err := queue.dequeue()
-	if err != nil || string(message.Data()) != "c" {
-		t.Fatalf("expected bounded enqueue to keep newest message, got message=%#v err=%v", message, err)
+	if err != nil || string(message.Data()) != "a" {
+		t.Fatalf("expected bounded enqueue to preserve oldest message, got message=%#v err=%v", message, err)
 	}
 
 	queue.clear()
@@ -681,25 +699,25 @@ func TestMessageStreamCompletionAndClosedQueueCoverage(t *testing.T) {
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")})
 	dropped := queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("c")}, 1)
 	queue.close()
-	if len(dropped) != 2 {
-		t.Fatalf("expected bounded enqueue to evict old messages before close, got %d", len(dropped))
+	if len(dropped) != 1 || string(dropped[0].Data()) != "c" {
+		t.Fatalf("expected the incoming message to remain retryable before close, got %d", len(dropped))
 	}
-	if queue.length() != 1 {
-		t.Fatalf("expected bounded enqueue to leave newest message before close")
+	if queue.length() != 2 {
+		t.Fatalf("expected bounded enqueue to preserve both queued messages")
 	}
 }
 
-func TestMessageQueueEnqueueWithDepthEvictsAtExactLimit(t *testing.T) {
+func TestMessageQueueEnqueueWithDepthRejectsAtExactLimit(t *testing.T) {
 	queue := newQueue(2)
 	queue.enqueue(&Message{header: &_Header{command: CommandPublish}, data: []byte("a")})
 
 	dropped := queue.enqueueWithDepth(&Message{header: &_Header{command: CommandPublish}, data: []byte("b")}, 1)
-	if len(dropped) != 1 || string(dropped[0].Data()) != "a" {
-		t.Fatalf("expected bounded enqueue to evict oldest message")
+	if len(dropped) != 1 || string(dropped[0].Data()) != "b" {
+		t.Fatalf("expected the incoming message to be rejected at the exact limit")
 	}
 	message, err := queue.dequeue()
-	if err != nil || string(message.Data()) != "b" {
-		t.Fatalf("expected bounded enqueue to keep newest message, got message=%#v err=%v", message, err)
+	if err != nil || string(message.Data()) != "a" {
+		t.Fatalf("expected bounded enqueue to preserve oldest message, got message=%#v err=%v", message, err)
 	}
 }
 

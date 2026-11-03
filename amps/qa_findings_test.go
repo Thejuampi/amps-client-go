@@ -137,7 +137,7 @@ func TestConnectionStateAuthenticatingEmitted(t *testing.T) {
 	}
 }
 
-func TestRingBookmarkStoreEviction(t *testing.T) {
+func TestRingBookmarkStoreRetainsPendingMessagesBeyondCapacity(t *testing.T) {
 	store := NewRingBookmarkStoreWithSize(3)
 
 	for i := 0; i < 5; i++ {
@@ -156,8 +156,8 @@ func TestRingBookmarkStoreEviction(t *testing.T) {
 	if records == nil {
 		t.Fatalf("expected records to exist for sub-ring")
 	}
-	if uint(len(records)) > store.ringSize {
-		t.Fatalf("expected at most %d records after eviction, got %d", store.ringSize, len(records))
+	if len(records) != 5 {
+		t.Fatalf("expected all five active records to survive capacity pressure, got %d", len(records))
 	}
 }
 

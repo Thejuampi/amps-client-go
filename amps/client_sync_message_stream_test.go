@@ -305,6 +305,8 @@ func TestClientWarningHelpersCoverage(t *testing.T) {
 		t.Fatalf("expected error handler and exception listener reports, got %d", len(reported))
 	}
 
+	client.setSyncAckProcessing(make(chan _Result, 1))
+	defer client.closeSyncAckProcessing()
 	var command = NewCommand("subscribe").SetSubID("warn-helper")
 	var done = client.startSyncAckWarning(command, "cid-1", "route-1")
 	if done == nil {

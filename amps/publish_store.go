@@ -31,6 +31,33 @@ type publishStoreWalRecord struct {
 	ErrorOnGap *bool           `json:"error_on_gap,omitempty"`
 }
 
+// PublishStoreAcceptedError reports a maintenance failure after a publish was
+// accepted by the store. Retrying as a new publish could create a second
+// sequence; callers may inspect the underlying error with Unwrap.
+type PublishStoreAcceptedError struct {
+	err error
+}
+
+func (err *PublishStoreAcceptedError) Error() string {
+	return "publish accepted; checkpoint maintenance failed: " + err.err.Error()
+}
+
+func (err *PublishStoreAcceptedError) Unwrap() error { return err.err }
+
+// PublishStoreUncertainError reports a WAL append whose rollback could not be
+// confirmed. Sequence identifies the attempted publication so it need not be
+// retried as a new sequence.
+type PublishStoreUncertainError struct {
+	Sequence uint64
+	Cause    error
+}
+
+func (err *PublishStoreUncertainError) Error() string {
+	return "publish outcome unknown; retry only with its original sequence: " + err.Cause.Error()
+}
+
+func (err *PublishStoreUncertainError) Unwrap() error { return err.Cause }
+
 // MemoryPublishStore stores replay or bookmark state for recovery-oriented workflows.
 type MemoryPublishStore struct {
 	lock              sync.RWMutex
@@ -88,9 +115,17 @@ func (store *MemoryPublishStore) rebuildDrainSignalLocked() {
 
 // NewMemoryPublishStore returns a new MemoryPublishStore.
 func NewMemoryPublishStore() *MemoryPublishStore {
+	return newMemoryPublishStore(initialPublishSequence())
+}
+
+func initialPublishSequence() uint64 {
+	return uint64(time.Now().UnixMilli())*1000000 + 1 // #nosec G115 -- current Unix time is non-negative.
+}
+
+func newMemoryPublishStore(initialSequence uint64) *MemoryPublishStore {
 	return &MemoryPublishStore{
 		entries:       make(map[uint64]*Command),
-		nextSequence:  1,
+		nextSequence:  initialSequence,
 		lastPersisted: 0,
 		drainedCh:     newPublishStoreSignal(true),
 	}
@@ -318,6 +353,17 @@ func (store *MemoryPublishStore) SetInitialSequence(sequence uint64) {
 	store.lock.Unlock()
 }
 
+// NextPublishSequence reports the next automatically assigned sequence and
+// whether the sequence space is still available.
+func (store *MemoryPublishStore) NextPublishSequence() (uint64, bool) {
+	if store == nil {
+		return 0, false
+	}
+	store.lock.RLock()
+	defer store.lock.RUnlock()
+	return store.nextSequence, !store.sequenceExhausted
+}
+
 // FilePublishStore stores replay or bookmark state for recovery-oriented workflows.
 type FilePublishStore struct {
 	*MemoryPublishStore
@@ -336,16 +382,19 @@ func NewFilePublishStore(path string) *FilePublishStore {
 // NewFilePublishStoreWithOptions returns a new FilePublishStore with explicit options.
 func NewFilePublishStoreWithOptions(path string, options FileStoreOptions) *FilePublishStore {
 	fileStore := &FilePublishStore{
-		MemoryPublishStore: NewMemoryPublishStore(),
+		MemoryPublishStore: newMemoryPublishStore(1),
 		path:               path,
 		walPath:            path + ".wal",
 		options:            normalizeFileStoreOptions(options),
 	}
 	fileStore.loadErr = fileStore.load()
+	if fileStore.loadErr == nil && len(fileStore.entries) == 0 && fileStore.lastPersisted == 0 && fileStore.nextSequence <= 1 && !fileStore.sequenceExhausted {
+		fileStore.nextSequence = initialPublishSequence()
+	}
 	return fileStore
 }
 
-// LoadError returns the most recent constructor-time load error, if any.
+// LoadError returns a retained recovery error or an uncertain WAL append error.
 func (store *FilePublishStore) LoadError() error {
 	if store == nil {
 		return nil
@@ -453,9 +502,7 @@ func (store *FilePublishStore) Flush(timeout time.Duration) error {
 	return store.MemoryPublishStore.Flush(timeout)
 }
 
-// appendWalNoLock writes a WAL record for the given store operation.
-// It never acquires store.lock; callers may invoke it with or without the
-// store mutex held.
+// appendWalNoLock writes a WAL record while the caller holds store.lock.
 func (store *FilePublishStore) appendWalNoLock(record publishStoreWalRecord) error {
 	if store == nil || store.walPath == "" || !store.options.UseWAL {
 		return nil
@@ -463,7 +510,18 @@ func (store *FilePublishStore) appendWalNoLock(record publishStoreWalRecord) err
 	if currentFileStoreTestHooks.publishWalBeforeAppend != nil {
 		currentFileStoreTestHooks.publishWalBeforeAppend()
 	}
-	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
+	var err error
+	if currentFileStoreTestHooks.publishWalAppendError != nil {
+		err = currentFileStoreTestHooks.publishWalAppendError()
+	}
+	if err == nil {
+		err = wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
+	}
+	var uncertain *wal.AppendOutcomeError
+	if errors.As(err, &uncertain) {
+		store.loadErr = err
+	}
+	return err
 }
 
 func (store *FilePublishStore) bumpMutationAndMaybeCheckpoint() error {
@@ -488,6 +546,17 @@ func (store *FilePublishStore) saveCheckpoint() error {
 	}
 
 	store.lock.Lock()
+	defer store.lock.Unlock()
+	return store.saveCheckpointLocked()
+}
+
+func (store *FilePublishStore) saveCheckpointLocked() error {
+	if store.loadErr != nil {
+		return store.loadErr
+	}
+	if store.path == "" {
+		return nil
+	}
 	sequences := make([]uint64, 0, len(store.entries))
 	for sequence := range store.entries {
 		sequences = append(sequences, sequence)
@@ -514,29 +583,24 @@ func (store *FilePublishStore) saveCheckpoint() error {
 
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		store.lock.Unlock()
 		return err
 	}
 	if store.options.MMap.Enabled {
 		if err = mmapWriteFile(store.path, data, 0600, store.options.MMap.InitialSize); err != nil {
-			store.lock.Unlock()
 			return err
 		}
 	} else {
 		if err = wal.WriteAtomic(store.path, data, 0600); err != nil {
-			store.lock.Unlock()
 			return err
 		}
 	}
 	if store.options.UseWAL {
 		if err = wal.Truncate(store.walPath); err != nil {
-			store.lock.Unlock()
 			return err
 		}
 	}
 
 	atomic.StoreUint64(&store.opsSinceCheckpoint, 0)
-	store.lock.Unlock()
 	return nil
 }
 
@@ -646,14 +710,14 @@ func (store *FilePublishStore) replayWal() error {
 	if store == nil || store.walPath == "" || !store.options.UseWAL {
 		return nil
 	}
-	return wal.ReplayNoCopy(store.walPath, func(line []byte) error {
+	return wal.ReplayAndRepair(store.walPath, func(line []byte) error {
 		record := publishStoreWalRecord{}
 		if err := json.Unmarshal(line, &record); err != nil {
 			return err
 		}
 		store.applyWalRecord(record)
 		return nil
-	})
+	}, store.options.SyncOnWrite)
 }
 
 func (store *FilePublishStore) load() error {
@@ -708,12 +772,53 @@ func (store *FilePublishStore) Store(command *Command) (uint64, error) {
 		Command:  snapshot,
 	}
 	if err := store.appendWalNoLock(record); err != nil {
+		var uncertain *wal.AppendOutcomeError
+		if errors.As(err, &uncertain) {
+			var outcome = &PublishStoreUncertainError{Sequence: sequence, Cause: err}
+			store.loadErr = outcome
+			store.lock.Unlock()
+			return sequence, outcome
+		}
 		store.lock.Unlock()
 		return 0, err
 	}
+	var previous, existed = store.entries[sequence]
+	var previousNext = store.nextSequence
+	var previousExhausted = store.sequenceExhausted
+	var previousDrain = store.drainedCh
 	store.applyWalRecordLocked(record)
+	if !store.options.UseWAL {
+		var interval = store.options.CheckpointInterval
+		if interval == 0 {
+			interval = defaultFileStoreOptions().CheckpointInterval
+		}
+		if atomic.AddUint64(&store.opsSinceCheckpoint, 1) >= interval {
+			if err := store.saveCheckpointLocked(); err != nil {
+				var committed *wal.CommitError
+				if errors.As(err, &committed) {
+					store.lock.Unlock()
+					return sequence, &PublishStoreAcceptedError{err: err}
+				}
+				if existed {
+					store.entries[sequence] = previous
+				} else {
+					delete(store.entries, sequence)
+				}
+				store.nextSequence = previousNext
+				store.sequenceExhausted = previousExhausted
+				store.drainedCh = previousDrain
+				store.lock.Unlock()
+				return 0, err
+			}
+		}
+		store.lock.Unlock()
+		return sequence, nil
+	}
 	store.lock.Unlock()
 	if err := store.bumpMutationAndMaybeCheckpoint(); err != nil {
+		if store.options.UseWAL && store.walPath != "" {
+			return sequence, &PublishStoreAcceptedError{err: err}
+		}
 		return sequence, err
 	}
 	return sequence, nil

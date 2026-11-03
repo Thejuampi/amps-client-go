@@ -2,6 +2,23 @@
 
 `fakeamps` is a deterministic, stateful AMPS-protocol TCP responder for integration and performance testing of custom AMPS client implementations against the 60East AMPS wire protocol.
 
+Behavioral conformance is partial. The [2026-10-24 audit](../../docs/behavior_parity_audit.md)
+compares the client with C++ 5.3.5.14 and records remaining broker gaps.
+Integration success against this broker alone does not establish parity with
+a production AMPS server.
+
+The header parser matches exact JSON keys, decodes escapes and Unicode, rejects
+malformed headers, and preserves the payload boundary for unknown structured
+fields. Unknown commands fail even when stats are requested. Queue acknowledgements
+support the C++ `sow_delete`/bookmark format, including repeated
+`AMPS-queue-ack` command ids and `cancel` redelivery; the legacy Go `ack` format
+remains accepted.
+
+Acknowledgements flush at their position in the outbound FIFO, before later
+queued SOW data. Data frames still coalesce. `make stress-check` includes this
+broker and repeats both client and broker integration suites with race and
+shuffle; see the [stress follow-up](../../docs/behavior_parity_fixes.md#seguimiento-del-stress-2026-10-26).
+
 - Isolated under `tools/` — **not** part of the exported `amps-client-go` client API.
 - Models real AMPS server behavior including stateful message journal, SOW cache, content filtering, topic wildcards, delta merge, queue topics, per-topic message types, views, actions, replication exercises, authentication, and administration.
 - Can now bootstrap from AMPS-style XML configuration files with recursive includes, `${ENV}` expansion, sample/verify/dump modes, and a `FakeAMPS` extension block for harness-specific runtime options.

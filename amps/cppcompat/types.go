@@ -2,7 +2,7 @@ package cppcompat
 
 import (
 	"bytes"
-	"hash/crc32"
+	"hash/crc64"
 	"net/url"
 	"strconv"
 	"strings"
@@ -141,10 +141,16 @@ type BookmarkRange struct {
 	End   string
 }
 
-// CRC computes CRC32 values.
+// CRC computes the portable C++ client's 64-bit checksum.
 type CRC struct{}
 
-// Compute computes CRC32 checksum for data.
-func (CRC) Compute(data []byte) uint32 {
-	return crc32.ChecksumIEEE(data)
+var cppCRCTable = crc64.MakeTable(0x95ac9329ac4bc9b5)
+
+// Compute uses an initial value of zero and no final complement.
+func (CRC) Compute(data []byte) uint64 {
+	var checksum uint64
+	for _, value := range data {
+		checksum = cppCRCTable[byte(checksum)^value] ^ (checksum >> 8)
+	}
+	return checksum
 }

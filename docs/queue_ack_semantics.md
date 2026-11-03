@@ -88,19 +88,19 @@ Recovery path:
 
 ```go
 client.SetAutoAck(true).
-	SetAckBatchSize(50).
-	SetAckTimeout(500 * time.Millisecond)
+ SetAckBatchSize(50).
+ SetAckTimeout(500 * time.Millisecond)
 
 _, err := client.SubscribeAsyncWithMaxBacklog(func(msg *amps.Message) error {
-	// process queue item; ack is deferred to auto-ack policy
-	return nil
+ // process queue item; ack is deferred to auto-ack policy
+ return nil
 }, "queue://orders", 8)
 if err != nil {
-	panic(err)
+ panic(err)
 }
 
 if err := client.FlushAcks(); err != nil {
-	panic(err)
+ panic(err)
 }
 ```
 

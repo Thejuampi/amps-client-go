@@ -70,16 +70,16 @@ Inspect:
 ha := amps.NewHAClient("ha-example")
 ha.Client().SetCompression(true)
 ha.SetServerChooser(
-	amps.NewDefaultServerChooser(
-		"tcp://amps-a:9000/amps/json?compression=zlib",
-		"tcp://amps-b:9000/amps/json?compression=zlib",
-	),
+ amps.NewDefaultServerChooser(
+  "tcp://amps-a:9000/amps/json?compression=zlib",
+  "tcp://amps-b:9000/amps/json?compression=zlib",
+ ),
 ).SetReconnectDelayStrategy(
-	amps.NewExponentialDelayStrategy(200*time.Millisecond, 5*time.Second, 2.0),
+ amps.NewExponentialDelayStrategy(200*time.Millisecond, 5*time.Second, 2.0),
 ).SetTimeout(30 * time.Second)
 
 if err := ha.ConnectAndLogon(); err != nil {
-	panic(err)
+ panic(err)
 }
 defer ha.Disconnect()
 ```

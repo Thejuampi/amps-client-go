@@ -1,7 +1,5 @@
 package amps
 
-import "unicode"
-
 // BOOKMARK_EPOCH exposes an exported helper operation for package consumers.
 func BOOKMARK_EPOCH() string { return BookmarksEPOCH }
 
@@ -32,15 +30,16 @@ func ConvertVersionToNumber(version string) uint64 {
 		return 0
 	}
 
+	if version[0] < '0' || version[0] > '9' {
+		return 99999999
+	}
 	segments := []uint64{0, 0, 0, 0}
 	segmentIdx := 0
 	value := uint64(0)
-	seenDigit := false
 
 	for i := 0; i < len(version) && segmentIdx < len(segments); i++ {
 		ch := version[i]
-		if unicode.IsDigit(rune(ch)) {
-			seenDigit = true
+		if ch >= '0' && ch <= '9' {
 			value = (value * 10) + uint64(ch-'0')
 			continue
 		}
@@ -52,20 +51,12 @@ func ConvertVersionToNumber(version string) uint64 {
 			continue
 		}
 
-		if !seenDigit {
-			continue
-		}
-
 		segments[segmentIdx] = value
 		break
 	}
 
 	if segmentIdx < len(segments) {
 		segments[segmentIdx] = value
-	}
-
-	if !seenDigit {
-		return 0
 	}
 
 	if segments[0] > 99 {

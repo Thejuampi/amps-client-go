@@ -30,10 +30,7 @@ func (cmb *CompositeMessageBuilder) AppendBytes(data []byte, offset int, length 
 	if offset < 0 {
 		return errors.New("invalid composite part offset")
 	}
-	if length == 0 {
-		return nil
-	}
-	if data == nil {
+	if data == nil && length != 0 {
 		return errors.New("composite part data is required")
 	}
 	if offset > len(data) || length > len(data)-offset {

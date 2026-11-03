@@ -92,7 +92,7 @@ func awaitFrameContaining(t *testing.T, conn net.Conn, substrings ...string) {
 	t.Fatalf("did not receive frame containing %v", substrings)
 }
 
-func TestPublishCommandIDDedupeSkipsSecondApply(t *testing.T) {
+func TestPublishCommandIDCanBeReusedForDistinctSequences(t *testing.T) {
 	var oldSow = sow
 	var oldJournal = journal
 	sow = newSOWCache()
@@ -139,8 +139,8 @@ func TestPublishCommandIDDedupeSkipsSecondApply(t *testing.T) {
 	}
 
 	var result = sow.query("orders", "", -1, "")
-	if result.totalCount != 1 {
-		t.Fatalf("expected exactly one applied publish for duplicate command id, got %d", result.totalCount)
+	if result.totalCount != 2 {
+		t.Fatalf("expected both distinct sequences to be applied with the same command id, got %d", result.totalCount)
 	}
 }
 
@@ -500,7 +500,7 @@ func TestPublishReconnectReusesIdentityWithoutSuppressingValidCommands(t *testin
 	}
 
 	runClient(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"10","k":"order-1","mt":"json"}`, []byte(`{"id":1}`))
-	runClient(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"10","k":"order-2","mt":"json"}`, []byte(`{"id":2}`))
+	runClient(`{"c":"publish","cid":"dup-1","t":"orders","a":"processed,persisted","s":"11","k":"order-2","mt":"json"}`, []byte(`{"id":2}`))
 
 	select {
 	case <-done:

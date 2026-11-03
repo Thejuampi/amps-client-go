@@ -245,25 +245,29 @@ func (msgRouter *MessageRouter) DeliverAck(ackMessage *Message, ackType int) int
 	if msgRouter == nil || ackMessage == nil {
 		return 0
 	}
-	messagesDelivered := 0
-	msgCmdID, _ := ackMessage.CommandID()
-	msgQueryID, _ := ackMessage.QueryID()
-	msgSubID, _ := ackMessage.SubID()
-	if msgCmdID == msgRouter.key {
-		messagesDelivered += msgRouter.deliverAckForKey(ackMessage, ackType, msgRouter.key)
-	}
-	if msgQueryID == msgRouter.key {
-		if messagesDelivered == 0 {
-			messagesDelivered += msgRouter.deliverAckForKey(ackMessage, ackType, msgRouter.key)
-		} else {
-			msgRouter.processAckForRemoval(ackType, msgRouter.key)
+	var messagesDelivered int
+	var commandID, _ = ackMessage.CommandID()
+	var queryID, _ = ackMessage.QueryID()
+	var subID, _ = ackMessage.SubID()
+	var ids = [3]string{commandID, queryID, subID}
+	for index, id := range ids {
+		if id == "" {
+			continue
 		}
-	}
-	if msgSubID == msgRouter.key {
+		var repeated bool
+		for _, previous := range ids[:index] {
+			if previous == id {
+				repeated = true
+				break
+			}
+		}
+		if repeated {
+			continue
+		}
 		if messagesDelivered == 0 {
-			messagesDelivered += msgRouter.deliverAckForKey(ackMessage, ackType, msgRouter.key)
+			messagesDelivered += msgRouter.deliverAckForKey(ackMessage, ackType, id)
 		} else {
-			msgRouter.processAckForRemoval(ackType, msgRouter.key)
+			msgRouter.processAckForRemoval(ackType, id)
 		}
 	}
 	return messagesDelivered
@@ -275,11 +279,15 @@ func (msgRouter *MessageRouter) DeliverData(dataMessage *Message) int {
 		return 0
 	}
 
-	msgCommandID, _ := dataMessage.CommandID()
-	msgQueryID, _ := dataMessage.QueryID()
-	msgSubID, _ := dataMessage.SubID()
-	if msgRouter.key == msgCommandID || msgRouter.key == msgQueryID || msgRouter.key == msgSubID {
-		return msgRouter.DeliverDataWithID(dataMessage, msgRouter.key)
+	var queryID, _ = dataMessage.QueryID()
+	var subID, _ = dataMessage.SubID()
+	var commandID, _ = dataMessage.CommandID()
+	for _, id := range [3]string{queryID, subID, commandID} {
+		if id != "" {
+			if delivered := msgRouter.DeliverDataWithID(dataMessage, id); delivered != 0 {
+				return delivered
+			}
+		}
 	}
 	return 0
 }

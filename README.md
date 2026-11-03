@@ -1,6 +1,6 @@
 # amps-client-go
 
-**A feature-complete, high-performance Go client for [AMPS](https://www.cranktheamps.com/) — built from scratch to match and outperform the official C/C++ client on critical hot paths.**
+**A high-performance Go client for [AMPS](https://www.cranktheamps.com/) — designed for broad behavioral parity, predictable latency, and native Go deployments without CGO.**
 
 <p align="left">
   <a href="https://github.com/Thejuampi/amps-client-go/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Thejuampi/amps-client-go/ci.yml?branch=main&label=CI&logo=githubactions&logoColor=white"></a>
@@ -16,7 +16,15 @@
   <a href="https://github.com/Thejuampi/amps-client-go/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Thejuampi/amps-client-go?style=social"></a>
 </p>
 
-Version: `0.8.20`
+Version: `1.1.0`
+
+See the [changelog and upgrade notes](CHANGELOG.md) for the breaking changes in 1.0.0.
+
+Behavior review (2026-10-24): the [audit against C++ 5.3.5.14](docs/behavior_parity_audit.md)
+identified 23 finding groups, now [fixed with 32 ordinary regression tests](docs/behavior_parity_fixes.md).
+The [748-declaration inventory](docs/behavior_parity_inventory.md) distinguishes
+reviewed contracts from compatibility limits. The [gap register](docs/gap_register.md)
+has zero open registered entries; this is not certification of complete server parity.
 
 ---
 
@@ -24,9 +32,9 @@ Version: `0.8.20`
 
 AMPS is one of the fastest message brokers on the planet. Building a client worthy of that speed — in Go, without CGO — was the goal. This project delivers:
 
-- 🏎️ **Faster than C on the hot path** — Go client outperforms the official C library on header parsing and SOW batch processing at p95/p99  
-- 🔬 **261 parity-mapped symbols** — full `Client` and `HAClient` API surface, tested against C++ 5.3.5.1 behavior  
-- 🛡️ **Production-grade quality gates** — 90%+ coverage, zero open parity gaps, and blocking perf regression budgets on `main` pre-production and release workflows  
+- 🏎️ **Predictable hot-path performance** — focused regression gates track latency and allocations across parsing, routing, streaming, and publish paths
+- 🔬 **261 parity-mapped symbols** — API mapping plus a function-by-function behavior review against C++ 5.3.5.14
+- 🛡️ **Blocking quality gates** — 90%+ coverage, tracked open parity gaps, and perf regression budgets on `main` pre-production and release workflows
 - ⚡ **Zero-allocation critical paths** — header parse, uint decode, timeout poll, and string conversion all run at 0 allocs/op  
 - 🔄 **HA failover built in** — reconnect strategies, bookmark replay, publish stores, and server chooser with no manual plumbing  
 
@@ -34,27 +42,7 @@ If you're building on AMPS and you need a Go-native client that doesn't compromi
 
 ---
 
-## Performance: Go vs Official C Client
-
-All benchmarks run on the same machine, same workload, same measurement methodology (nearest-rank percentiles, 20 samples). Lower is better.
-
-### Hot-Path Parity Results (Go vs Official C)
-
-These are the strict parity workloads we currently gate for C-vs-Go comparisons. Lower is better.
-
-| Benchmark | Go p95 (ns/op) | C p95 (ns/op) | Delta | Winner |
-|:---|---:|---:|---:|:---|
-| **Header Parse** (strict parity) | **21.67** | 23.74 | **-8.7%** | Go |
-| **SOW Batch Parse** (strict parity) | **110.90** | 137.39 | **-19.3%** | Go |
-| **Header Serialize** (strict parity) | **67.19** | 73.05 | **-8.0%** | Go |
-| **Publish Integration** (processed ack) | **259300** | 364372.75 | **-28.8%** | Go |
-| **Subscribe Integration** (processed ack) | **144100** | 283117.70 | **-49.1%** | Go |
-
-This is 5/5 wins on the in-scope hot-path parity suite (p95).
-
-Connect-and-logon timings are tracked separately and treated as out of scope for this steady-state hot-path gate.
-
-### Full-Suite Tail Latency (Go Internal Benchmarks)
+## Performance: Internal Regression Benchmarks
 
 Every hot path in the client is micro-benchmarked and tracked across commits. Here are the current numbers at p95 (20 samples each):
 
@@ -75,24 +63,26 @@ Every hot path in the client is micro-benchmarked and tracked across commits. He
 ### How We Measure
 
 - **Methodology**: `go test -bench=. -benchtime=1s -count=20` with nearest-rank percentile extraction  
-- **C baselines**: compiled from the official AMPS C client library, run with the same fake server and payload profiles  
 - **Regression gates**: the blocking perf gate runs in `main` pre-production and release workflows against committed baselines; pull requests still run the broader scan, test, and coverage matrix  
-- **Artifacts**: all raw data committed in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json), and [`tools/perf_side_by_side_baseline.json`](tools/perf_side_by_side_baseline.json)
+- **Artifacts**: internal Go baseline data is committed in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), and [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json)
+- **Publication safety**: external-client comparison results remain untracked unless publication is expressly authorized; `make publication-scan` enforces this policy
 
 ---
 
 ## Feature Completeness
 
-This isn't a minimal SDK. It's a full-surface client with behavior parity across the entire C++ `Client` and `HAClient` public API.
+The client implements a broad C++-inspired surface. The current behavior audit
+resolved the 23 reproduced queue, streaming, bookmark, publish-store and HA finding groups.
+Symbol mapping and line coverage alone do not establish behavioral equivalence.
 
 | Dimension | Status |
 |:---|:---|
-| Parity symbols mapped | **261** (zero gaps) |
-| Behavior gaps open | **0** |
+| Parity symbols mapped | **261** (no missing mapped symbols) |
+| Behavior gaps open | **0** registered entries; [23 finding groups corrected](docs/behavior_parity_fixes.md) |
 | Coverage gate (aggregate) | **≥ 90%** |
 | Coverage gate (pure-functional) | **100%** |
-| C compatibility layer (`amps/capi`) | ✅ Full |
-| C++ utility compat (`amps/cppcompat`) | ✅ Full |
+| C compatibility layer (`amps/capi`) | Partial; some TLS/zlib entrypoints are emulations |
+| C++ utility compat (`amps/cppcompat`) | Partial; see the individual behavior review |
 
 ### Supported Workflows
 
@@ -202,6 +192,7 @@ func main() {
 ```bash
 make build
 make static-scan
+make publication-scan
 make leak-check
 make fuzz-smoke
 make test-race
@@ -217,7 +208,7 @@ make preprod-check
 make release
 ```
 
-`make static-scan` now combines `go vet`, `staticcheck`, `ineffassign`, `errcheck`, the repo-specific `patterncheck` analyzer, and an expanded bug-focused `golangci-lint` lane.
+`make static-scan` now combines `go vet`, `staticcheck`, `ineffassign`, `errcheck`, the repo-specific `patterncheck` analyzer, the public benchmark-disclosure check, and an expanded bug-focused `golangci-lint` lane.
 
 <details>
 <summary>Equivalent direct commands</summary>
@@ -245,17 +236,29 @@ go test -count=1 ./amps/... -coverprofile=coverage.out
 go run ./tools/coveragegate -profile coverage.out
 make compat-check
 make perf-compare-toolchains
-go run ./tools/withtoolchain -toolchain go1.25.10+auto -- run ./tools/perfgate -baseline tools/perf_baseline.json
-go run ./tools/withtoolchain -toolchain go1.25.11+auto -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+go run ./tools/withtoolchain -toolchain go1.26.10 -- run ./tools/perfgate -baseline tools/perf_baseline.json
+go run ./tools/withtoolchain -toolchain go1.26.10 -- run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 ```
 
 Static analysis is enforced in CI with `make static-scan`, which includes vet, staticcheck correctness checks, ineffassign, errcheck on non-test packages, `patterncheck`, and an expanded `golangci-lint` lane for bug detectors such as aliasing hazards, unicode traps, resource leaks, loop-variable mistakes, compiler-directive misuse, shadowed variables, unused writes, nil/error contract mistakes, suspicious assignments, and duration arithmetic errors.
 
 Leak detection, fuzz smoke, and repeated shuffled race stress runs are exposed separately through `make leak-check`, `make fuzz-smoke`, and `make stress-check`, and combined in `make preprod-check`.
 
-`make vuln-scan` runs `govulncheck` as an advisory scan. Standard-library findings depend on the Go patch version in use, so the workflow records those results without making them a required merge blocker.
+`make vuln-scan` runs `govulncheck` with the pinned patched Go toolchain and is part of the blocking `make scan` merge gate.
 
-The module minimum stays at Go 1.25 for downstream compatibility, with Go 1.25.10 as the current release/performance toolchain. Go 1.26.3 is a performance candidate only after `make perf-compare-toolchains` proves a faster AMPS client on the same commit and host. That target writes raw Go 1.25.10 and Go 1.26.3 benchmark outputs plus a benchstat report under `.tmp/perf/`; neutral, noisy, or slower results are not a reason to recapture `tools/perf_baseline.json` or publish a performance release.
+The module keeps its Go 1.25 language floor and prefers **Go 1.26.10** for security.
+Make pins that compiler for release builds, tests, scanners, performance, and
+nested Go commands. `make compat-check` uses exact Go 1.25.13 separately, without
+automatic upgrades. Applications consuming this module must also use a patched
+Go compiler; the dependency's toolchain preference does not select theirs.
+
+`make perf-compare-toolchains` compares the historical floor and the Go 1.27.3
+candidate. For the security upgrade comparison, set
+`PERF_COMPARE_NEW_TOOLCHAIN=go1.26.10 PERF_COMPARE_NEW_LABEL=go1.26.10`.
+Raw outputs and benchstat results go under `.tmp/perf/`. The comparison is
+diagnostic; the release must still pass `make perf-check` with the committed
+baseline and unchanged limits. A performance-only promotion additionally needs
+a measured client speedup without unexplained allocation regressions.
 
 GitHub Actions now enforce an Ubuntu analysis job, a cross-platform test matrix, and a scheduled nightly pre-production workflow, with optional live AMPS smoke coverage whenever `AMPS_TEST_*` secrets are configured.
 

@@ -28,13 +28,22 @@ func TestRepoRootFromFindsAncestorGoMod(t *testing.T) {
 
 	var got string
 	got, err = repoRootFrom(nested)
-	if err != nil || got != root {
+	if err != nil || got != filepath.Clean(root) {
 		t.Fatalf("repoRootFrom() = (%q, %v)", got, err)
 	}
 }
 
 func TestRepoRootFromErrorsWithoutGoMod(t *testing.T) {
-	var isolatedRoot, mkErr = os.MkdirTemp(t.TempDir(), "fakeampsgate-noroot-*")
+	// The stress gate places TMP inside the repository. This fixture must
+	// stay outside it because root discovery deliberately walks ancestors.
+	var cacheDir, cacheErr = os.UserCacheDir()
+	if cacheErr != nil {
+		t.Fatal(cacheErr)
+	}
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var isolatedRoot, mkErr = os.MkdirTemp(cacheDir, "fakeampsgate-noroot-*")
 	if mkErr != nil {
 		t.Fatalf("mkdir temp: %v", mkErr)
 	}

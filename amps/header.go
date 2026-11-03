@@ -152,41 +152,39 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			header.correlationID = value
 		}
 	case 2:
-		switch key[0] {
-		case 'b':
-			switch key[1] {
-			case 'm':
-				header.bookmark = value
-			case 's':
-				if batchSize, ok := parseUint32Value(value); ok {
-					header.batchSizeValue = batchSize
-					header.batchSize = &header.batchSizeValue
-				}
+		switch string(key) {
+		case "bm":
+			header.bookmark = value
+		case "bs":
+			if size, ok := parseUint32Value(value); ok {
+				header.batchSizeValue = size
+				header.batchSize = &header.batchSizeValue
 			}
-		case 'l':
+		case "lp":
 			if extras := ensureHeaderTextExtras(header); extras != nil {
 				extras.leasePeriod = value
 			}
-		case 'm':
+		case "mt":
 			header.messageType = value
-		case 't':
+		case "ts":
 			header.timestamp = value
+		case "pw":
+			header.password = value
 		}
 	case 3:
-		switch key[0] {
-		case 'c':
+		if bytesEqualString(key, "cid") {
 			header.commandID = value
 		}
 	case 4:
-		switch key[0] {
-		case 'g':
-			if groupSequenceNumber, ok := parseUint32Value(value); ok {
-				header.groupSequenceNumberValue = groupSequenceNumber
+		switch string(key) {
+		case "gseq":
+			if sequence, ok := parseUint32Value(value); ok {
+				header.groupSequenceNumberValue = sequence
 				header.groupSequenceNumber = &header.groupSequenceNumberValue
 			}
-		case 'o':
+		case "opts":
 			header.options = value
-		case 's':
+		case "sids":
 			header.subIDs = value
 		}
 	case 5:
@@ -213,17 +211,17 @@ func (header *_Header) parseField(key []byte, value []byte) {
 			}
 		}
 	case 7:
-		switch key[0] {
-		case 'm':
+		switch string(key) {
+		case "matches":
 			if matches, ok := parseUint32Value(value); ok {
 				header.matchesValue = matches
 				header.matches = &header.matchesValue
 			}
-		case 'o':
+		case "orderby":
 			header.orderBy = value
-		case 'u':
+		case "user_id":
 			header.userID = value
-		case 'v':
+		case "version":
 			header.version = value
 		}
 	default:

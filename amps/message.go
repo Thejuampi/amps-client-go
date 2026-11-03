@@ -1,6 +1,8 @@
 package amps
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -192,7 +194,7 @@ func parseHeaderTrusted(header *_Header, array []byte) (int, bool) {
 			if array[index] == '"' {
 				break
 			}
-			if array[index] == '\\' {
+			if array[index] == '\\' || array[index] < 0x20 {
 				return 0, false
 			}
 			index++
@@ -219,7 +221,7 @@ func parseHeaderTrusted(header *_Header, array []byte) (int, bool) {
 				if array[index] == '"' {
 					break
 				}
-				if array[index] == '\\' {
+				if array[index] == '\\' || array[index] < 0x20 {
 					return 0, false
 				}
 				index++
@@ -280,12 +282,18 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 	var cmdStart int
 	var cmdEnd int
 	if i+1 < n && array[i+1] == '"' {
+		if array[i] == '\\' || array[i] < 0x20 {
+			return 0, false
+		}
 		cmdStart = i
 		cmdEnd = i + 1
 		i = cmdEnd
 	} else {
 		cmdStart = i
 		for i < n && array[i] != '"' {
+			if array[i] == '\\' || array[i] < 0x20 {
+				return 0, false
+			}
 			i++
 		}
 		if i >= n {
@@ -303,6 +311,9 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 	var topicStart = i + 7
 	i = topicStart
 	for i < n && array[i] != '"' {
+		if array[i] == '\\' || array[i] < 0x20 {
+			return 0, false
+		}
 		i++
 	}
 	if i >= n || i+11 >= n {
@@ -316,6 +327,9 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 	var subIDStart = i + 12
 	i = subIDStart
 	for i < n && array[i] != '"' {
+		if array[i] == '\\' || array[i] < 0x20 {
+			return 0, false
+		}
 		i++
 	}
 	if i >= n || i+1 >= n || array[i+1] != '}' {
@@ -357,6 +371,9 @@ func parseHeaderTrustedTopicOnly(header *_Header, array []byte, index int) (int,
 		valueStart++
 		valueEnd = valueStart
 		for valueEnd < n && array[valueEnd] != '"' {
+			if array[valueEnd] == '\\' || array[valueEnd] < 0x20 {
+				return 0, false
+			}
 			valueEnd++
 		}
 		if valueEnd >= n || valueEnd+1 >= n || array[valueEnd+1] != '}' {
@@ -448,6 +465,21 @@ func parseHeaderChecked(header *_Header, array []byte) ([]byte, error) {
 	state := inHeader
 	var keyStart, keyEnd, valueStart, valueEnd int
 	escaped := false
+	var parseField = func(keyStart, keyEnd, valueStart, valueEnd int, quoted bool) error {
+		var key, err = decodeHeaderString(array[keyStart-1 : keyEnd+1])
+		if err != nil {
+			return err
+		}
+		var value = array[valueStart:valueEnd]
+		if quoted {
+			value, err = decodeHeaderString(array[valueStart-1 : valueEnd+1])
+			if err != nil {
+				return err
+			}
+		}
+		header.parseField(key, value)
+		return nil
+	}
 	for index := 0; index < len(array); index++ {
 		character := array[index]
 
@@ -501,12 +533,16 @@ func parseHeaderChecked(header *_Header, array []byte) ([]byte, error) {
 				}
 				state = inHeader
 				valueEnd = index
-				header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
+				if err := parseField(keyStart, keyEnd, valueStart, valueEnd, false); err != nil {
+					return array, err
+				}
 			case '}':
 				if valueStart == index {
 					return array, errors.New("malformed AMPS header")
 				}
-				header.parseField(array[keyStart:keyEnd], array[valueStart:index])
+				if err := parseField(keyStart, keyEnd, valueStart, index, false); err != nil {
+					return array, err
+				}
 				return array[index+1:], nil
 			}
 
@@ -522,12 +558,31 @@ func parseHeaderChecked(header *_Header, array []byte) ([]byte, error) {
 			if character == '"' {
 				state = inHeader
 				valueEnd = index
-				header.parseField(array[keyStart:keyEnd], array[valueStart:valueEnd])
+				if err := parseField(keyStart, keyEnd, valueStart, valueEnd, true); err != nil {
+					return array, err
+				}
 			}
 		}
 	}
 
 	return array, errors.New("unexpected end of AMPS header")
+}
+
+func decodeHeaderString(quoted []byte) ([]byte, error) {
+	var value = quoted[1 : len(quoted)-1]
+	if bytes.IndexByte(value, '\\') < 0 {
+		for _, character := range value {
+			if character < 0x20 {
+				return nil, errors.New("invalid control character in AMPS header string")
+			}
+		}
+		return value, nil
+	}
+	var decoded string
+	if err := json.Unmarshal(quoted, &decoded); err != nil {
+		return nil, err
+	}
+	return []byte(decoded), nil
 }
 
 func isJSONWhitespace(character byte) bool {
@@ -1170,6 +1225,9 @@ func (m *Message) LeasePeriodUint() (uint, bool) {
 func (msg *Message) Ack(options ...string) error {
 	if msg == nil || msg.client == nil {
 		return NewError(CommandError, "message is not bound to a client")
+	}
+	if msg.client.AutoAck() {
+		return nil
 	}
 	topic, hasTopic := msg.Topic()
 	bookmark, hasBookmark := msg.Bookmark()

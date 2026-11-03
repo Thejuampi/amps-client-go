@@ -4,13 +4,44 @@ This repository is a new Go implementation of an AMPS client.
 
 Parity target:
 
-- C++ client behavior target: `5.3.5.1`
+- C++ client behavior review: `5.3.5.14`
 
 ## Import Path
 
 Use:
 
 - `import "github.com/Thejuampi/amps-client-go/amps"`
+
+## Upgrading from 0.8.x to 1.0.0
+
+The module path stays the same. Update checksum consumers and review the
+corrected behavior before deploying:
+
+- `cppcompat.CRC.Compute` returns `uint64` and uses the portable C++ checksum
+  algorithm. Update typed variables, interfaces, and stored checksum fields;
+  truncating the result does not preserve the former CRC32 algorithm.
+- The optional third argument of `Client.Ack` contains acknowledgement options,
+  such as `cancel`, rather than a subscription id.
+- `Command.SetTopN(0)` requests zero results. Use `uint(^uint32(0))` to clear
+  an explicitly configured limit.
+- Queue streams auto-ack the previously delivered message when the consumer
+  advances. Bounded streams apply backpressure, so consumers must keep advancing
+  or close the stream to release a blocked receive loop.
+- `RingSize` is a history-retention target; active, unacknowledged publishes
+  remain retained even when their count exceeds it.
+- Fresh publish stores use a time-based initial sequence. Recovered stores
+  preserve their persisted sequence history.
+
+Existing WAL/checkpoint formats remain readable, including legacy
+`discard_upto` records. The corrections cannot reconstruct entries already
+removed by earlier discard or retention defects.
+
+Build release binaries with Go 1.26.10 or another supported, patched compiler.
+Go 1.25 remains the source-language compatibility floor; a dependency's
+toolchain preference does not upgrade the consuming application's compiler.
+
+See the [changelog](../CHANGELOG.md), [behavior corrections](behavior_parity_fixes.md),
+and [supported scope](supported_scope.md) for details and compatibility limits.
 
 ## Adoption Orientation
 

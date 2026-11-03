@@ -346,7 +346,7 @@ func TestIntegrationQueueAutoAckBatching(t *testing.T) {
 
 	outboundAcks := make(chan string, 8)
 	client.SetTransportFilter(func(direction TransportFilterDirection, payload []byte) []byte {
-		if direction == TransportFilterOutbound && bytes.Contains(payload, []byte(`"c":"ack"`)) {
+		if direction == TransportFilterOutbound && bytes.Contains(payload, []byte(`"c":"sow_delete"`)) {
 			select {
 			case outboundAcks <- string(payload):
 			default:
@@ -408,6 +408,9 @@ func TestIntegrationQueueAutoAckBatching(t *testing.T) {
 		select {
 		case payload := <-outboundAcks:
 			if strings.Contains(payload, expectedBatch) {
+				if !strings.Contains(payload, `"cid":"AMPS-queue-ack"`) {
+					t.Fatalf("queue ack has incorrect command id: %s", payload)
+				}
 				foundBatchedAck = true
 			}
 		case <-deadline:
@@ -417,90 +420,79 @@ func TestIntegrationQueueAutoAckBatching(t *testing.T) {
 }
 
 func TestIntegrationBookmarkResumeAcrossReconnect(t *testing.T) {
-	client, uri := integrationConnectAndLogon(t, "integration-bookmark-resume")
-	defer func() { _ = client.Close() }()
-
-	store := NewMemoryBookmarkStore()
-	client.SetBookmarkStore(store)
-
-	duplicateCount := 0
-	client.SetDuplicateMessageHandler(func(message *Message) error {
-		duplicateCount++
-		return nil
-	})
-
-	topic := integrationUniqueTopic("amps.integration.bookmark")
-	received := make(chan string, 16)
-	handler := func(message *Message) error {
-		commandType, _ := message.Command()
-		if commandType != CommandPublish {
-			return nil
+	for _, processed := range []bool{false, true} {
+		var name = "pending"
+		if processed {
+			name = "processed"
 		}
-		if messageTopic, hasTopic := message.Topic(); hasTopic && messageTopic == topic {
-			select {
-			case received <- string(message.Data()):
-			default:
+		t.Run(name, func(t *testing.T) {
+			var client, uri = integrationConnectAndLogon(t, "integration-bookmark-resume-"+name)
+			defer func() { _ = client.Close() }()
+
+			var store = NewMemoryBookmarkStore()
+			client.SetBookmarkStore(store)
+			var topic = integrationUniqueTopic("amps.integration.bookmark")
+			var received = make(chan *Message, 16)
+			var handler = func(message *Message) error {
+				var commandType, _ = message.Command()
+				var messageTopic, _ = message.Topic()
+				if commandType == CommandPublish && messageTopic == topic {
+					received <- message.Copy()
+				}
+				return nil
 			}
-		}
-		return nil
-	}
+			var receive = func(want string) *Message {
+				t.Helper()
+				select {
+				case message := <-received:
+					if string(message.Data()) != want {
+						t.Fatalf("unexpected bookmark delivery: got %s want %s", message.Data(), want)
+					}
+					return message
+				case <-time.After(6 * time.Second):
+					t.Fatalf("timed out waiting for bookmark delivery %s", want)
+					return nil
+				}
+			}
 
-	subID, err := client.BookmarkSubscribeAsync(handler, topic, BOOKMARK_EPOCH())
-	integrationRequireFeatureOrSkip(t, "bookmark subscribe (epoch)", err)
-	defer func() { _ = client.Unsubscribe(subID) }()
-
-	firstPayload := fmt.Sprintf(`{"phase":"first","ts":%d}`, time.Now().UnixNano())
-	if err := client.Publish(topic, firstPayload); err != nil {
-		t.Fatalf("first publish failed: %v", err)
-	}
-
-	select {
-	case payload := <-received:
-		if payload != firstPayload {
-			t.Fatalf("unexpected first payload: got %s want %s", payload, firstPayload)
-		}
-	case <-time.After(6 * time.Second):
-		t.Fatalf("timed out waiting for first bookmark delivery")
-	}
-
-	resumeBookmark := store.GetMostRecent(subID)
-	if resumeBookmark == "" {
-		t.Skip("integration test skipped: endpoint did not provide bookmark metadata for resume")
-	}
-
-	if err := client.Unsubscribe(subID); err != nil {
-		t.Fatalf("unsubscribe before reconnect failed: %v", err)
-	}
-	if err := client.Disconnect(); err != nil && !strings.Contains(err.Error(), "DisconnectedError") {
-		t.Fatalf("disconnect before reconnect failed: %v", err)
-	}
-
-	if err := client.Connect(uri); err != nil {
-		t.Fatalf("reconnect failed: %v", err)
-	}
-	integrationLogon(t, client)
-
-	duplicateCount = 0
-	subIDAfterReconnect, err := client.BookmarkSubscribeAsync(handler, topic, resumeBookmark)
-	integrationRequireFeatureOrSkip(t, "bookmark subscribe (resume)", err)
-	defer func() { _ = client.Unsubscribe(subIDAfterReconnect) }()
-
-	secondPayload := fmt.Sprintf(`{"phase":"second","ts":%d}`, time.Now().UnixNano())
-	if err := client.Publish(topic, secondPayload); err != nil {
-		t.Fatalf("second publish failed: %v", err)
-	}
-
-	select {
-	case payload := <-received:
-		if payload != secondPayload {
-			t.Fatalf("unexpected payload after reconnect: got %s want %s", payload, secondPayload)
-		}
-	case <-time.After(6 * time.Second):
-		t.Fatalf("timed out waiting for resumed bookmark delivery")
-	}
-
-	if duplicateCount > 0 {
-		t.Logf("duplicate handler invoked %d time(s) during resume", duplicateCount)
+			var subID, err = client.BookmarkSubscribeAsync(handler, topic, BOOKMARK_EPOCH())
+			integrationRequireFeatureOrSkip(t, "bookmark subscribe (epoch)", err)
+			defer func() { _ = client.Unsubscribe(subID) }()
+			var firstPayload = fmt.Sprintf(`{"phase":"first","ts":%d}`, time.Now().UnixNano())
+			if err := client.Publish(topic, firstPayload); err != nil {
+				t.Fatalf("first publish failed: %v", err)
+			}
+			var first = receive(firstPayload)
+			if bookmark, ok := first.Bookmark(); !ok || bookmark == "" {
+				t.Skip("integration test skipped: endpoint did not provide bookmark metadata for resume")
+			}
+			if processed {
+				store.DiscardMessage(first)
+			}
+			var resumeBookmark = store.GetMostRecent(subID)
+			if err := client.Unsubscribe(subID); err != nil {
+				t.Fatalf("unsubscribe before reconnect failed: %v", err)
+			}
+			if err := client.Disconnect(); err != nil && !strings.Contains(err.Error(), "DisconnectedError") {
+				t.Fatalf("disconnect before reconnect failed: %v", err)
+			}
+			if err := client.Connect(uri); err != nil {
+				t.Fatalf("reconnect failed: %v", err)
+			}
+			integrationLogon(t, client)
+			var resumedSubID string
+			resumedSubID, err = client.BookmarkSubscribeAsync(handler, topic, resumeBookmark)
+			integrationRequireFeatureOrSkip(t, "bookmark subscribe (resume)", err)
+			defer func() { _ = client.Unsubscribe(resumedSubID) }()
+			var secondPayload = fmt.Sprintf(`{"phase":"second","ts":%d}`, time.Now().UnixNano())
+			if err := client.Publish(topic, secondPayload); err != nil {
+				t.Fatalf("second publish failed: %v", err)
+			}
+			if !processed {
+				receive(firstPayload)
+			}
+			receive(secondPayload)
+		})
 	}
 }
 

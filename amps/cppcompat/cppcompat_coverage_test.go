@@ -2,7 +2,6 @@ package cppcompat
 
 import (
 	"errors"
-	"hash/crc32"
 	"testing"
 	"time"
 
@@ -288,7 +287,7 @@ func TestTypesCoverage(t *testing.T) {
 
 	var crc CRC
 	data := []byte("crc-data")
-	if got := crc.Compute(data); got != crc32.ChecksumIEEE(data) {
+	if got := crc.Compute(data); got != uint64(16122027672105177183) {
 		t.Fatalf("unexpected CRC: %d", got)
 	}
 

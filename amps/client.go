@@ -22,7 +22,7 @@ import (
 
 // ClientVersion and related constants define protocol and client behavior values.
 const (
-	ClientVersion = "0.8.20"
+	ClientVersion = "1.1.0"
 
 	BookmarksEPOCH  = "0"
 	BookmarksRECENT = "recent"
@@ -45,6 +45,16 @@ var clientVersionBytes = []byte(ClientVersion)
 var heartbeatBeatOptions = []byte("beat")
 
 var errClientNotConnected = errors.New("client is not connected while trying to send data")
+
+// maxConsecutiveEmptyReads bounds transports that return (0, nil) instead of
+// blocking or reporting an error. net.Conn implementations are discouraged from
+// doing so, but a peer can provoke it (for example a WebSocket peer emitting
+// zero-length frames), and the receive loop treats a short read as "keep
+// reading". Without a bound that becomes an unbreakable spin on the receive
+// goroutine, which also never observes a stop request.
+const maxConsecutiveEmptyReads = 100
+
+var errNoReadProgress = errors.New("transport returned no data without reporting an error")
 
 var clientNetDialContext = func(ctx context.Context, network string, address string) (net.Conn, error) {
 	var dialer net.Dialer
@@ -96,26 +106,37 @@ type Client struct {
 	receiveRoutineLock   sync.Mutex
 
 	// Preferred lock order when multiple locks are required:
-	// client.lock -> client parity state lock -> store-specific locks.
-	lock              sync.Mutex
-	acksLock          sync.Mutex
-	ackProcessingLock sync.Mutex
-	syncAckProcessing chan _Result
-	routes            *sync.Map
-	messageStreams    *sync.Map
-	unsubscribeRoutes *sync.Map
-	parityState       atomic.Pointer[clientParityState]
+	// publishLock -> client.lock -> client parity state lock -> store-specific locks.
+	publishLock           sync.Mutex
+	lock                  sync.Mutex
+	acksLock              sync.Mutex
+	ackProcessingLock     sync.Mutex
+	syncAckProcessing     chan _Result
+	syncAckReceived       bool
+	routes                *sync.Map
+	retainedPublishRoutes sync.Map
+	messageStreams        *sync.Map
+	unsubscribeRoutes     *sync.Map
+	parityState           atomic.Pointer[clientParityState]
 
-	connected  atomic.Bool
-	connection net.Conn
-	logging    bool
-	url        *url.URL
-	tlsConfig  *tls.Config
+	generation     atomic.Uint64
+	connected      atomic.Bool
+	awaitingReplay bool // protected by client.lock
+	connection     net.Conn
+	url            *url.URL
+	tlsConfig      *tls.Config
 
-	sendBuffer *bytes.Buffer
-	command    *Command
-	sendHb     bool
-	hbCommand  *Command
+	sendBuffer      *bytes.Buffer
+	command         *Command
+	batchLimit      atomic.Uint64
+	batchTimeout    atomic.Int64
+	batchBuffer     []byte
+	batchConnection net.Conn
+	batchGeneration uint64
+	batchEpoch      uint64
+	batchTimer      *time.Timer
+	sendHb          bool
+	hbCommand       *Command
 
 	replicationGroup string
 
@@ -137,6 +158,14 @@ type socketOptions struct {
 	receiveBuffer    int
 	receiveBufferSet bool
 	compression      string
+	connectTimeout   time.Duration
+	keepAlive        bool
+	keepAliveSet     bool
+	linger           int
+	lingerSet        bool
+	ipPreference     string
+	httpPreflight    bool
+	httpPreflightSet bool
 }
 
 type socketConfigurator interface {
@@ -176,6 +205,39 @@ func parseSocketOptions(values url.Values) (socketOptions, error) {
 			}
 			options.receiveBuffer = parsed
 			options.receiveBufferSet = true
+		case "tcp_connecttimeout":
+			var parsed, err = parseSocketInt(value)
+			if err != nil || int64(parsed) > (1<<63-1)/int64(time.Millisecond) {
+				return socketOptions{}, fmt.Errorf("invalid connect timeout %q", value)
+			}
+			options.connectTimeout = time.Duration(parsed) * time.Millisecond
+		case "tcp_keepalive":
+			var parsed, err = parseSocketBool(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.keepAlive, options.keepAliveSet = parsed, true
+		case "tcp_linger":
+			var parsed, err = parseSocketInt(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.linger, options.lingerSet = parsed, true
+		case "http_preflight":
+			var parsed, err = parseSocketBool(value)
+			if err != nil {
+				return socketOptions{}, err
+			}
+			options.httpPreflight, options.httpPreflightSet = parsed, true
+		case "pretty":
+			if _, err := parseSocketBool(value); err != nil {
+				return socketOptions{}, err
+			}
+		case "ip_protocol_prefer":
+			if value != "ipv4" && value != "ipv6" {
+				return socketOptions{}, fmt.Errorf("invalid IP protocol preference %q", value)
+			}
+			options.ipPreference = value
 		case "compression":
 			switch strings.TrimSpace(value) {
 			case "zlib":
@@ -250,6 +312,24 @@ func applySocketOptions(connection net.Conn, options socketOptions) error {
 		underlying = wrapped.NetConn()
 	}
 
+	if options.keepAliveSet {
+		if socket, ok := underlying.(interface{ SetKeepAlive(bool) error }); ok {
+			if err := socket.SetKeepAlive(options.keepAlive); err != nil {
+				return err
+			}
+		}
+	}
+	if options.lingerSet {
+		if socket, ok := underlying.(interface{ SetLinger(int) error }); ok {
+			var linger = options.linger
+			if linger == 0 {
+				linger = -1
+			}
+			if err := socket.SetLinger(linger); err != nil {
+				return err
+			}
+		}
+	}
 	configurable, ok := underlying.(socketConfigurator)
 	if !ok {
 		return nil
@@ -332,6 +412,10 @@ func (client *Client) startSyncAckWarning(command *Command, commandID string, ro
 	if client == nil || command == nil || syncAckWarningInitialDelay <= 0 {
 		return nil
 	}
+	var processing = client.getSyncAckProcessing()
+	if processing == nil {
+		return nil
+	}
 
 	var commandName = commandIntToString(command.header.command)
 	if commandName == "" {
@@ -360,6 +444,17 @@ func (client *Client) startSyncAckWarning(command *Command, commandID string, ro
 			case <-timer.C:
 			}
 
+			select {
+			case <-done:
+				return
+			default:
+			}
+			client.ackProcessingLock.Lock()
+			var received = client.syncAckProcessing != processing || client.syncAckReceived
+			client.ackProcessingLock.Unlock()
+			if received {
+				return
+			}
 			waited += delay
 			client.reportWarning(fmt.Errorf("warning: still waiting %s for processed ack for %s command (command_id=%q route_id=%q)", waited, commandName, commandID, routeID))
 
@@ -410,6 +505,7 @@ trimEnd:
 func (client *Client) setSyncAckProcessing(channel chan _Result) {
 	client.ackProcessingLock.Lock()
 	client.syncAckProcessing = channel
+	client.syncAckReceived = false
 	client.ackProcessingLock.Unlock()
 }
 
@@ -436,6 +532,7 @@ func (client *Client) signalSyncAckProcessing(result _Result) bool {
 	}
 	select {
 	case client.syncAckProcessing <- result:
+		client.syncAckReceived = true
 		return true
 	default:
 		return false
@@ -559,6 +656,14 @@ func (client *Client) send(command *Command) (err error) {
 	if conn == nil {
 		return errClientNotConnected
 	}
+	if limit, timeout := client.batchLimit.Load(), time.Duration(client.batchTimeout.Load()); limit > 0 && timeout > 0 && (command.header.command == CommandPublish || command.header.command == CommandDeltaPublish) {
+		return client.batchPublishFrame(conn, filtered, limit, timeout)
+	}
+	if len(client.batchBuffer) > 0 {
+		if err = client.flushPublishBatch(); err != nil {
+			return err
+		}
+	}
 	_, err = conn.Write(filtered)
 
 	if err != nil {
@@ -573,6 +678,21 @@ func (client *Client) readRoutine() {
 	var connection = client.connection
 	client.connectionStateLock.Unlock()
 	client.readRoutineForConnection(connection)
+}
+
+// readIntoBuffer reads from connection and converts a run of no-progress reads
+// into a terminal error so the receive loop cannot spin forever.
+func (client *Client) readIntoBuffer(connection net.Conn, buffer []byte, consecutiveEmptyReads *int) (int, error) {
+	var count, err = connection.Read(buffer)
+	if err == nil && count == 0 {
+		*consecutiveEmptyReads++
+		if *consecutiveEmptyReads >= maxConsecutiveEmptyReads {
+			return 0, errNoReadProgress
+		}
+		return 0, nil
+	}
+	*consecutiveEmptyReads = 0
+	return count, err
 }
 
 func (client *Client) readRoutineForConnection(connection net.Conn) {
@@ -599,6 +719,7 @@ func (client *Client) readRoutineForConnection(connection net.Conn) {
 	client.readPosition = 0
 	client.receivePosition = 0
 	var batchReceiveTime int64
+	var consecutiveEmptyReads int
 
 	for {
 		if client.stopped.Load() {
@@ -619,7 +740,7 @@ func (client *Client) readRoutineForConnection(connection net.Conn) {
 				}
 			}
 
-			count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
+			count, err := client.readIntoBuffer(connection, client.receiveBuffer[client.receivePosition:], &consecutiveEmptyReads)
 			client.receivePosition += count
 			if count > 0 {
 				batchReceiveTime = time.Now().UnixNano()
@@ -673,7 +794,7 @@ func (client *Client) readRoutineForConnection(connection net.Conn) {
 					client.receiveBuffer = newBuffer
 				}
 
-				count, err := connection.Read(client.receiveBuffer[client.receivePosition:])
+				count, err := client.readIntoBuffer(connection, client.receiveBuffer[client.receivePosition:], &consecutiveEmptyReads)
 				client.receivePosition += count
 				if count > 0 {
 					batchReceiveTime = time.Now().UnixNano()
@@ -811,6 +932,25 @@ func (client *Client) onMessage(message *Message) (err error) {
 	}
 
 	handled := false
+	var dataMessage = command == CommandPublish || command == CommandSOW || command == CommandOOF
+	var normalDelivery bool
+	var deliver = func(handler func(*Message) error) error {
+		if dataMessage && client.detectAndTrackDuplicate(message) {
+			return client.callDuplicateHandler(message)
+		}
+		normalDelivery = true
+		for {
+			var handlerErr = handler(message)
+			if handlerErr == nil || !errors.Is(handlerErr, errMessageStreamFull) {
+				return handlerErr
+			}
+			if !client.connected.Load() {
+				return NewError(DisconnectedError, "disconnected while waiting for stream capacity")
+			}
+			client.checkAndSendHeartbeat(false)
+			time.Sleep(time.Millisecond)
+		}
+	}
 	var routeID string
 	switch {
 	case len(queryIDBytes) > 0:
@@ -822,6 +962,7 @@ func (client *Client) onMessage(message *Message) (err error) {
 	}
 
 	if len(subIDsBytes) > 0 {
+		var originalSubID = message.header.subID
 		start := 0
 		for start < len(subIDsBytes) {
 			end := start
@@ -833,7 +974,8 @@ func (client *Client) onMessage(message *Message) (err error) {
 			if len(candidateRoute) > 0 {
 				if messageHandler, exists := client.routes.Load(unsafeStringFromBytes(candidateRoute)); exists {
 					handled = true
-					if handlerErr := messageHandler.(func(*Message) error)(message); handlerErr != nil && err == nil {
+					message.header.subID = candidateRoute
+					if handlerErr := deliver(messageHandler.(func(*Message) error)); handlerErr != nil && err == nil {
 						err = handlerErr
 					}
 				}
@@ -844,24 +986,20 @@ func (client *Client) onMessage(message *Message) (err error) {
 			}
 			start = end + 1
 		}
+		message.header.subID = originalSubID
 	} else if routeID != "" {
 		if messageHandler, exists := client.routes.Load(routeID); exists {
 			handled = true
-			err = messageHandler.(func(*Message) error)(message)
+			err = deliver(messageHandler.(func(*Message) error))
 		}
 	}
 
-	if globalErr, globalHandled := client.callGlobalCommandTypeHandler(command, message); globalHandled {
-		handled = true
-		if err == nil {
-			err = globalErr
-		}
-	}
-
-	if (command == CommandPublish || command == CommandSOW || command == CommandOOF) && client.detectAndTrackDuplicate(message) {
-		handled = true
-		if duplicateErr := client.callDuplicateHandler(message); err == nil {
-			err = duplicateErr
+	if !handled || normalDelivery {
+		if globalErr, globalHandled := client.callGlobalCommandTypeHandler(command, message); globalHandled {
+			handled = true
+			if err == nil {
+				err = globalErr
+			}
 		}
 	}
 
@@ -879,7 +1017,12 @@ func (client *Client) onMessage(message *Message) (err error) {
 	}
 
 	if err == nil {
-		client.maybeAutoAck(message)
+		err = client.maybeAutoAck(message)
+	} else {
+		if _, cancelErr := client.queueAutoAck(message, "cancel"); cancelErr != nil {
+			client.reportException(cancelErr)
+			err = errors.Join(err, cancelErr)
+		}
 	}
 
 	return
@@ -887,6 +1030,7 @@ func (client *Client) onMessage(message *Message) (err error) {
 
 func (client *Client) deleteRoute(routeID string) (routeErr error) {
 	client.deleteUnsubscribeRoutesForRoute(routeID)
+	client.retainedPublishRoutes.Delete(routeID)
 
 	if messageStream, messageStreamExists := client.messageStreams.Load(routeID); messageStreamExists {
 		var stream = messageStream.(*MessageStream)
@@ -925,7 +1069,9 @@ func (client *Client) clearRoutes() error {
 	client.routes.Range(func(key interface{}, _ interface{}) bool {
 		routeID, ok := key.(string)
 		if ok {
-			client.routes.Delete(routeID)
+			if _, retained := client.retainedPublishRoutes.Load(routeID); !retained {
+				client.routes.Delete(routeID)
+			}
 		}
 		return true
 	})
@@ -1308,14 +1454,11 @@ func (client *Client) addCommandRouteDirect(routeID string, messageHandler func(
 			pendingRequestedAcks &^= ack
 
 			var err = callRouteMessageHandler(messageHandler, message)
-			if err != nil {
-				return err
-			}
-
 			if pendingRequestedAcks == AckTypeNone {
 				client.routes.Delete(routeID)
+				client.retainedPublishRoutes.Delete(routeID)
 			}
-			return nil
+			return err
 		}
 
 		return callRouteMessageHandler(messageHandler, message)
@@ -1363,7 +1506,6 @@ func (client *Client) onConnectionErrorWithCallbackModeForConnection(err error, 
 
 	client.connected.Store(false)
 	client.stopped.Store(true)
-	client.logging = false
 	client.connectionStateLock.Unlock()
 
 	client.heartbeatLock.Lock()
@@ -1384,8 +1526,6 @@ func (client *Client) onConnectionErrorWithCallbackModeForConnection(err error, 
 			_ = state.ackTimer.Stop()
 			state.ackTimer = nil
 		}
-		state.pendingAcks = make(map[string]*pendingAckBatch)
-		state.pendingAckCount = 0
 		state.lock.Unlock()
 	}
 
@@ -1657,7 +1797,14 @@ func (client *Client) SetTLSConfig(config *tls.Config) *Client {
 }
 
 // LogonCorrelationID executes the exported logoncorrelationid operation.
-func (client *Client) LogonCorrelationID() string { return client.logonCorrelationID }
+func (client *Client) LogonCorrelationID() string {
+	if client == nil {
+		return ""
+	}
+	client.configLock.RLock()
+	defer client.configLock.RUnlock()
+	return client.logonCorrelationID
+}
 
 // LogonAckBookmark returns the bookmark extracted from the last successful logon ack.
 func (client *Client) LogonAckBookmark() (string, bool) {
@@ -1683,7 +1830,9 @@ func (client *Client) SetLogonCorrelationID(logonCorrelationID string) *Client {
 	if client == nil {
 		return nil
 	}
+	client.configLock.Lock()
 	client.logonCorrelationID = logonCorrelationID
+	client.configLock.Unlock()
 	return client
 }
 
@@ -1725,7 +1874,14 @@ func (client *Client) SetHeartbeatWithGrace(interval time.Duration, timeout time
 }
 
 // ServerVersion executes the exported serverversion operation.
-func (client *Client) ServerVersion() string { return client.serverVersion }
+func (client *Client) ServerVersion() string {
+	if client == nil {
+		return ""
+	}
+	client.configLock.RLock()
+	defer client.configLock.RUnlock()
+	return client.serverVersion
+}
 
 // Connect opens a transport connection to the provided AMPS URI.
 func (client *Client) Connect(uri string) error {
@@ -1739,8 +1895,6 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	client.logging = false
 
 	if client.ErrorHandler() == nil {
 		client.SetErrorHandler(defaultErrorHandler(client))
@@ -1761,9 +1915,14 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	if validateErr := validateParsedURIHost(parsedURI); validateErr != nil {
 		return NewError(InvalidURIError, validateErr)
 	}
-	socketOptions, err := parseSocketOptions(parsedURI.Query())
+	transportOptions, err := parseSocketOptions(parsedURI.Query())
 	if err != nil {
 		return NewError(InvalidURIError, err)
+	}
+	if transportOptions.connectTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, transportOptions.connectTimeout)
+		defer cancel()
 	}
 	state := ensureClientState(client)
 	var defaultCompressionEnabled bool
@@ -1774,7 +1933,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		defaultCompressionEnabled = state.compressionEnabled
 		state.lock.Unlock()
 	}
-	var connectionCompression = socketOptions.compression
+	var connectionCompression = transportOptions.compression
 	if connectionCompression == "" && defaultCompressionEnabled {
 		connectionCompression = "zlib"
 	}
@@ -1828,7 +1987,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	var connection net.Conn
 	switch parsedURI.Scheme {
 	case "ws", "wss":
-		wsConn, err := client.dialWebSocket(ctx, parsedURI)
+		wsConn, err := client.dialWebSocket(ctx, parsedURI, transportOptions)
 		if err != nil {
 			return classifyDialError(err)
 		}
@@ -1849,7 +2008,9 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		var baseTLSConfig = client.tlsConfig
 		client.configLock.RUnlock()
 		var connectionTLSConfig = clientTLSConfigForHost(baseTLSConfig, parsedURI.Hostname())
-		var dialedConnection, err = clientTLSDialContext(ctx, dialNetwork, parsedURI.Host, connectionTLSConfig)
+		var dialedConnection, err = dialTCPPreference(ctx, dialNetwork, parsedURI.Host, transportOptions.ipPreference, func(ctx context.Context, network, address string) (net.Conn, error) {
+			return clientTLSDialContext(ctx, network, address, connectionTLSConfig)
+		})
 		if err != nil {
 			if dialedConnection != nil {
 				_ = dialedConnection.Close()
@@ -1859,7 +2020,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		connection = dialedConnection
 
 	default:
-		var dialedConnection, err = clientNetDialContext(ctx, dialNetwork, parsedURI.Host)
+		var dialedConnection, err = dialTCPPreference(ctx, dialNetwork, parsedURI.Host, transportOptions.ipPreference, clientNetDialContext)
 		if err != nil {
 			if dialedConnection != nil {
 				_ = dialedConnection.Close()
@@ -1869,7 +2030,7 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		connection = dialedConnection
 	}
 
-	if err := applySocketOptions(connection, socketOptions); err != nil {
+	if err := applySocketOptions(connection, transportOptions); err != nil {
 		_ = connection.Close()
 		return NewError(ConnectionError, err)
 	}
@@ -1878,8 +2039,8 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 		state.lock.Lock()
 		headers := append([]string(nil), state.httpPreflightHeaders...)
 		state.lock.Unlock()
-		if len(headers) > 0 {
-			if preflightErr := performHTTPPreflight(connection, parsedURI.Hostname(), headers); preflightErr != nil {
+		if (transportOptions.httpPreflight || (len(headers) > 0 && !transportOptions.httpPreflightSet)) && (parsedURI.Scheme == "tcp" || parsedURI.Scheme == "tcps") {
+			if preflightErr := performHTTPPreflightContext(ctx, connection, parsedURI.Hostname(), headers); preflightErr != nil {
 				_ = connection.Close()
 				return preflightErr
 			}
@@ -1892,6 +2053,9 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 	client.resetDisconnectSignal()
 	client.connectionStateLock.Lock()
 	client.connection = connection
+	client.generation.Add(1)
+	client.awaitingReplay = true
+	client.resetPublishBatch()
 	client.connected.Store(true)
 	client.stopped.Store(false)
 	client.connectionStateLock.Unlock()
@@ -1905,6 +2069,33 @@ func (client *Client) connectWithContext(ctx context.Context, uri string) error 
 }
 
 const maxHTTPPreflightResponseHeaderBytes = 64 * 1024
+
+func performHTTPPreflightContext(ctx context.Context, connection net.Conn, hostname string, headers []string) error {
+	if err := ctx.Err(); err != nil {
+		return classifyDialError(err)
+	}
+	if ctx.Done() == nil {
+		return performHTTPPreflight(connection, hostname, headers)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := connection.SetDeadline(deadline); err != nil {
+			return NewError(ConnectionError, err)
+		}
+	}
+	var stop = context.AfterFunc(ctx, func() { _ = connection.SetDeadline(time.Now()) })
+	var err = performHTTPPreflight(connection, hostname, headers)
+	var stopped = stop()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return classifyDialError(ctxErr)
+	}
+	if !stopped {
+		return NewError(DisconnectedError, "HTTP preflight cancelled")
+	}
+	if resetErr := connection.SetDeadline(time.Time{}); resetErr != nil && err == nil {
+		return NewError(ConnectionError, resetErr)
+	}
+	return err
+}
 
 func performHTTPPreflight(connection net.Conn, hostname string, headers []string) error {
 	if connection == nil {
@@ -1961,6 +2152,10 @@ func performHTTPPreflight(connection net.Conn, hostname string, headers []string
 
 // Logon authenticates the connected session and initializes server metadata.
 func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
+	return client.logonWithContext(context.Background(), optionalParams...)
+}
+
+func (client *Client) logonWithContext(ctx context.Context, optionalParams ...LogonParams) (err error) {
 	client.lock.Lock()
 	var lockHeld = true
 	unlockClient := func() {
@@ -1974,12 +2169,37 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 	if !client.connected.Load() || client.url == nil {
 		return NewError(DisconnectedError, "Client is not connected while trying to log on")
 	}
+	if ctx.Done() != nil {
+		client.connectionStateLock.Lock()
+		var connection = client.connection
+		var generation = client.generation.Load()
+		client.connectionStateLock.Unlock()
+		var finished = make(chan struct{})
+		var stop = context.AfterFunc(ctx, func() {
+			defer close(finished)
+			client.connectionStateLock.Lock()
+			var current = client.connection == connection && client.generation.Load() == generation
+			client.connectionStateLock.Unlock()
+			if current && connection != nil {
+				_ = connection.Close()
+			}
+		})
+		defer func() {
+			if !stop() {
+				<-finished
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = classifyDialError(ctxErr)
+			}
+		}()
+	}
+	client.awaitingReplay = true
 
 	hasParams := len(optionalParams) > 0
 	hasAuthenticator := hasParams && (optionalParams[0].Authenticator) != nil
 
 	if hasParams && len(optionalParams[0].CorrelationID) > 0 {
-		client.logonCorrelationID = optionalParams[0].CorrelationID
+		client.SetLogonCorrelationID(optionalParams[0].CorrelationID)
 	}
 
 	logonCommand := &Command{header: newHeader()}
@@ -2016,10 +2236,15 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		logonCommand.header.password = []byte(password)
 	}
 
-	if len(client.logonCorrelationID) > 0 {
-		logonCommand.header.correlationID = []byte(client.logonCorrelationID)
+	if correlationID := client.LogonCorrelationID(); len(correlationID) > 0 {
+		logonCommand.header.correlationID = []byte(correlationID)
 	}
 
+	if client.url != nil {
+		if pretty, _ := parseSocketBool(client.url.Query().Get("pretty")); pretty {
+			logonCommand.SetOptions("pretty")
+		}
+	}
 	client.notifyConnectionState(ConnectionStateAuthenticating)
 
 	doneLoggingIn := make(chan error, 1)
@@ -2037,9 +2262,13 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		logonTimeout = time.Millisecond * time.Duration(optionalParams[0].Timeout) // #nosec G115 -- timeout is user-provided bounded milliseconds
 	}
 
-	client.logging = true
 	logonRetries := 3
 	client.routes.Store(commandID, func(message *Message) (logonAckErr error) {
+		defer func() {
+			if logonAckErr != nil {
+				signalLogonResult(logonAckErr)
+			}
+		}()
 		if message.header.command == CommandAck {
 			var loggingError error
 			if ackType, hasAckType := message.AckType(); hasAckType && ackType == AckTypeProcessed {
@@ -2048,17 +2277,28 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 
 				switch status, _ := message.Status(); status {
 				case "success":
-					client.serverVersion = string(message.header.version)
+					var serverVersion = string(message.header.version)
+					var nameHash string
 					if len(message.header.clientName) > 0 {
-						client.nameHash = string(message.header.clientName)
+						nameHash = string(message.header.clientName)
 					} else {
-						client.nameHash = fmt.Sprintf("%x", unsafeStringHash(client.ClientName()))
+						nameHash = fmt.Sprintf("%x", unsafeStringHash(client.ClientName()))
 					}
-					if parsedHash, parseErr := strconv.ParseUint(client.nameHash, 10, 64); parseErr == nil {
-						client.nameHashValue = parsedHash
+					var nameHashValue uint64
+					if parsedHash, parseErr := strconv.ParseUint(nameHash, 10, 64); parseErr == nil {
+						nameHashValue = parsedHash
 					} else {
-						client.nameHashValue = unsafeStringHash(client.nameHash)
+						nameHashValue = unsafeStringHash(nameHash)
 					}
+					if publisher, _, valid := parseBookmarkToken(string(message.header.bookmark)); valid {
+						nameHashValue = publisher
+						nameHash = strconv.FormatUint(publisher, 10)
+					}
+					client.configLock.Lock()
+					client.serverVersion = serverVersion
+					client.nameHash = nameHash
+					client.nameHashValue = nameHashValue
+					client.configLock.Unlock()
 					logonAckSequence = 0
 					if ackSeq, hasSeq := message.SequenceID(); hasSeq && ackSeq > 0 {
 						logonAckSequence = ackSeq
@@ -2123,6 +2363,7 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 
 	err = client.send(logonCommand)
 	if err != nil {
+		client.routes.Delete(commandID)
 		if errors.Is(err, errClientNotConnected) {
 			return NewError(DisconnectedError, err)
 		}
@@ -2136,6 +2377,8 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		case logonFailed = <-doneLoggingIn:
 		case <-client.currentDisconnectSignal():
 			logonFailed = NewError(DisconnectedError, "client disconnected while waiting for logon ack")
+		case <-ctx.Done():
+			logonFailed = classifyDialError(ctx.Err())
 		case <-time.After(logonTimeout):
 			logonFailed = NewError(TimedOutError, "logon timed out waiting for processed ack")
 		}
@@ -2144,24 +2387,22 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		case logonFailed = <-doneLoggingIn:
 		case <-client.currentDisconnectSignal():
 			logonFailed = NewError(DisconnectedError, "client disconnected while waiting for logon ack")
+		case <-ctx.Done():
+			logonFailed = classifyDialError(ctx.Err())
 		}
 	}
-	client.logging = false
-
 	client.routes.Delete(commandID)
 
 	if logonFailed == nil {
+		if err = ctx.Err(); err != nil {
+			return classifyDialError(err)
+		}
 		client.logonAckSequence.Store(logonAckSequence)
 		client.configLock.Lock()
 		client.logonAckBookmark = logonAckBookmark
 		client.configLock.Unlock()
-		unlockClient()
-		client.notifyConnectionState(ConnectionStateLoggedOn)
-		if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
-			if err = bookmarkStoreSetServerVersion(bookmarkStore, client.serverVersion); err != nil {
-				client.reportException(err)
-			}
-		}
+		client.lock.Lock()
+		lockHeld = true
 		if ackSeq := logonAckSequence; ackSeq > 0 {
 			if publishStore := client.PublishStore(); publishStore != nil {
 				if initializer, ok := publishStore.(publishStoreInitialSequenceSetter); ok {
@@ -2169,6 +2410,13 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 				}
 			}
 		}
+		unlockClient()
+		if bookmarkStore := client.BookmarkStore(); bookmarkStore != nil {
+			if err = bookmarkStoreSetServerVersion(bookmarkStore, client.ServerVersion()); err != nil {
+				client.reportException(err)
+			}
+		}
+		client.notifyConnectionState(ConnectionStateLoggedOn)
 		client.heartbeatLock.Lock()
 		hasHeartbeatTimeout := client.heartbeatTimeout.Load() != 0
 		client.heartbeatLock.Unlock()
@@ -2188,7 +2436,7 @@ func (client *Client) Logon(optionalParams ...LogonParams) (err error) {
 		if hasAuthenticator {
 			optionalParams[0].Authenticator.Completed(username, password, logonAckReason)
 		}
-		client.postLogonRecovery()
+		err = client.postLogonRecovery()
 
 		return
 	}
@@ -2237,11 +2485,23 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 		return 0, NewError(InvalidTopicError, "A topic must be specified")
 	}
 	if !client.connected.Load() {
-		return 0, NewError(DisconnectedError, "Client is not connected while trying to publish")
+		var state = client.parityState.Load()
+		if state == nil || !state.hasPublishStore.Load() {
+			return 0, NewError(DisconnectedError, "Client is not connected while trying to publish")
+		}
 	}
 
-	client.lock.Lock()
-	defer client.lock.Unlock()
+	var maintenanceErr error
+	var publishLockHeld = client.lockForPublish()
+	defer func() {
+		client.lock.Unlock()
+		if publishLockHeld {
+			client.publishLock.Unlock()
+		}
+		if maintenanceErr != nil {
+			client.reportException(maintenanceErr)
+		}
+	}()
 
 	var topicBuffer = client.command.header.topic[:0]
 	var commandIDBuffer = client.command.header.commandID[:0]
@@ -2258,15 +2518,26 @@ func (client *Client) publishBytesWithCommand(commandType int, topic string, dat
 	client.registerPendingPublishCommandBytes(client.command.header.commandID, client.command)
 
 	sequence := uint64(0)
-	if storeErr := client.storePublishCommand(client.command); storeErr != nil {
-		return 0, storeErr
+	var retained, storeErr = client.storePublishCommand(client.command)
+	if storeErr != nil {
+		if !retained {
+			client.releasePendingPublishCommand(string(client.command.header.commandID))
+			return 0, storeErr
+		}
+		maintenanceErr = storeErr
 	}
 	if storedSequence, hasSequence := client.command.SequenceID(); hasSequence {
 		sequence = storedSequence
 	}
+	if retained && client.awaitingReplay {
+		return sequence, nil
+	}
 
 	err := client.send(client.command)
 	if err != nil {
+		if retained && !IsErrorKind(err, ProtocolError) && !IsErrorKind(err, CommandError) {
+			return sequence, nil
+		}
 		client.handleSendFailure(client.command, err)
 		return sequence, NewError(ConnectionError, err)
 	}
@@ -2449,14 +2720,39 @@ func (client *Client) ExecuteAsync(command *Command, messageHandler func(message
 	return client.executeAsync(command, messageHandler, true, nil)
 }
 
+func commandNeedsPublishSequence(commandType int) bool {
+	return commandType == CommandPublish || commandType == CommandDeltaPublish || commandType == CommandSOWDelete
+}
+
+// lockForPublish holds client.lock on return and gates stored publications.
+func (client *Client) lockForPublish() bool {
+	client.lock.Lock()
+	var state = client.parityState.Load()
+	if state == nil || !state.hasPublishStore.Load() {
+		return false
+	}
+	client.lock.Unlock()
+	client.publishLock.Lock()
+	client.lock.Lock()
+	return true
+}
+
 func (client *Client) executeAsync(
 	command *Command,
 	messageHandler func(message *Message) error,
 	copyRoutedMessages bool,
 	onRouteReady func(commandID string, routeID string),
-) (string, error) {
+) (resultID string, resultError error) {
 	if command == nil || command.header.command == CommandUnknown {
 		return "", NewError(CommandError, "Invalid Command provided")
+	}
+	var isSequencedPublish = commandNeedsPublishSequence(command.header.command)
+	var publishLockHeld bool
+	var unlockPublish = func() {
+		if publishLockHeld {
+			client.publishLock.Unlock()
+			publishLockHeld = false
+		}
 	}
 	var serializeSyncAck = commandRequiresSynchronousAck(command, messageHandler)
 	if serializeSyncAck {
@@ -2472,18 +2768,48 @@ func (client *Client) executeAsync(
 	retryCommandOnDisconnect := client.shouldRetryCommand(command.header.command)
 	subscriptionManager := client.SubscriptionManager()
 
-	client.lock.Lock()
+	if isSequencedPublish {
+		publishLockHeld = client.lockForPublish()
+	} else {
+		client.lock.Lock()
+	}
 	lockHeld := true
+	var maintenanceErr error
 	unlockClient := func() {
 		if lockHeld {
 			client.lock.Unlock()
 			lockHeld = false
 		}
 	}
-	defer unlockClient()
+	defer func() {
+		unlockClient()
+		unlockPublish()
+		if maintenanceErr != nil {
+			client.reportException(maintenanceErr)
+		}
+	}()
 
+	command.generation = client.generation.Load()
+	if command.replay {
+		if command.replayOriginal != nil || command.replayGroup != nil {
+			if command.replayOwner == nil || !command.replayOwner.replayIsCurrent(command) {
+				return "", errReplaySuperseded
+			}
+		}
+		if manager, ok := subscriptionManager.(interface{ hasGeneration(string, uint64) bool }); ok && manager.hasGeneration(trackedSubscriptionID(command), command.generation) {
+			return trackedSubscriptionID(command), nil
+		}
+	}
 	commandID := client.makeCommandID()
 	command.SetCommandID(commandID)
+	var trackedSubscribeID string
+	defer func() {
+		if resultError != nil && trackedSubscribeID != "" {
+			if manager, ok := subscriptionManager.(interface{ forgetGeneration(string, string) }); ok {
+				manager.forgetGeneration(trackedSubscribeID, commandID)
+			}
+		}
+	}()
 
 	stopUnsubscribeReplayTracking := func() {
 		if !retryCommandOnDisconnect || subscriptionManager == nil || command.header.command != CommandUnsubscribe {
@@ -2494,6 +2820,31 @@ func (client *Client) executeAsync(
 	}
 
 	if !client.connected.Load() {
+		if isSequencedPublish {
+			if client.PublishStore() != nil {
+				var userAcks, hasUserAcks = command.AckType()
+				if hasUserAcks {
+					if err := client.addCommandRouteDirect(commandID, routeMessageHandler, userAcks); err != nil {
+						return commandID, err
+					}
+				}
+				client.registerPendingPublishCommand(commandID, command)
+				if retained, err := client.storePublishCommand(command); err != nil {
+					if !retained {
+						client.releasePendingPublishCommand(commandID)
+						if hasUserAcks {
+							client.routes.Delete(commandID)
+						}
+						return commandID, err
+					}
+					maintenanceErr = err
+				}
+				if hasUserAcks && userAcks != AckTypeNone && messageHandler != nil {
+					client.retainedPublishRoutes.Store(commandID, struct{}{})
+				}
+				return commandID, nil
+			}
+		}
 		unlockClient()
 		if retryCommandOnDisconnect {
 			stopUnsubscribeReplayTracking()
@@ -2623,6 +2974,7 @@ func (client *Client) executeAsync(
 		}
 		if retryCommandOnDisconnect && subscriptionManager != nil {
 			subscriptionManager.Subscribe(messageHandler, cloneCommand(command), userAcks)
+			trackedSubscribeID = trackedSubscriptionID(command)
 		}
 
 	case CommandUnsubscribe:
@@ -2691,7 +3043,12 @@ func (client *Client) executeAsync(
 		if hasUserAcks {
 			routeID = commandID
 
-			err := client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false, false, nil)
+			var err error
+			if isSequencedPublish {
+				err = client.addCommandRouteDirect(commandID, routeMessageHandler, userAcks)
+			} else {
+				err = client.addRoute(commandID, routeMessageHandler, AckTypeNone, userAcks, false, false, false, nil)
+			}
 			if err != nil {
 				return commandID, err
 			}
@@ -2704,9 +3061,25 @@ func (client *Client) executeAsync(
 		command.header.ackType = &systemAcks
 	}
 
+	var retained bool
 	if isPublish {
-		if storeErr := client.storePublishCommand(command); storeErr != nil {
-			return commandID, storeErr
+		var storeErr error
+		retained, storeErr = client.storePublishCommand(command)
+		if storeErr != nil {
+			if !retained {
+				client.releasePendingPublishCommand(commandID)
+				if routeID != "" {
+					client.routes.Delete(routeID)
+				}
+				return commandID, storeErr
+			}
+			maintenanceErr = storeErr
+		}
+		if retained && isSequencedPublish && hasUserAcks && userAcks != AckTypeNone && messageHandler != nil {
+			client.retainedPublishRoutes.Store(commandID, struct{}{})
+		}
+		if retained && client.awaitingReplay {
+			return routeID, nil
 		}
 	}
 
@@ -2733,6 +3106,7 @@ func (client *Client) executeAsync(
 			var warningDone = client.startSyncAckWarning(command, commandID, routeID)
 			defer closeSignal(warningDone)
 			unlockClient()
+			unlockPublish()
 
 			var result _Result
 			var ok bool
@@ -2776,11 +3150,13 @@ func (client *Client) executeAsync(
 		sendErr := client.send(command)
 		if sendErr != nil {
 			queueRetryAfterSendFailure()
+			if retained && !IsErrorKind(sendErr, ProtocolError) && !IsErrorKind(sendErr, CommandError) {
+				return commandID, nil
+			}
 
 			if err := client.deleteRouteError(routeID); err != nil {
 				return routeID, err
 			}
-
 			client.handleSendFailure(command, sendErr)
 			return commandID, NewError(DisconnectedError, sendErr)
 		}
@@ -2992,8 +3368,24 @@ func (client *Client) Unsubscribe(subID ...string) error {
 
 // Disconnect stops receive processing and closes the active connection.
 func (client *Client) Disconnect() (err error) {
-	client.closeSyncAckProcessing()
+	return client.disconnectConnection(nil, 0, false)
+}
+
+func (client *Client) disconnectConnection(expected net.Conn, generation uint64, requireMatch bool) (err error) {
+	if !requireMatch {
+		client.closeSyncAckProcessing()
+	}
 	client.lock.Lock()
+	if requireMatch {
+		client.connectionStateLock.Lock()
+		var matches = client.connection == expected && client.generation.Load() == generation
+		client.connectionStateLock.Unlock()
+		if !matches {
+			client.lock.Unlock()
+			return nil
+		}
+		client.closeSyncAckProcessing()
+	}
 	client.markManualDisconnect(true)
 	if state := ensureClientState(client); state != nil {
 		state.lock.Lock()
@@ -3001,8 +3393,6 @@ func (client *Client) Disconnect() (err error) {
 			_ = state.ackTimer.Stop()
 			state.ackTimer = nil
 		}
-		state.pendingAcks = make(map[string]*pendingAckBatch)
-		state.pendingAckCount = 0
 		state.lock.Unlock()
 	}
 
@@ -3014,23 +3404,24 @@ func (client *Client) Disconnect() (err error) {
 		heartbeatStop.header.options = []byte("stop")
 		_ = client.send(heartbeatStop)
 	}
+	client.resetPublishBatch()
 
 	client.connectionStateLock.Lock()
 	client.connected.Store(false)
-	client.logging = false
 	client.stopped.Store(true)
 	var connection = client.connection
 	client.connection = nil
 	client.connectionStateLock.Unlock()
 
+	// Only the runtime heartbeat state is cleared. The configured interval and
+	// timeout are client configuration and must survive a disconnect so a later
+	// Connect/Logon (notably HAClient failover) re-establishes the heartbeat.
 	client.heartbeatLock.Lock()
 	if client.heartbeatTimeoutID != nil {
 		_ = client.heartbeatTimeoutID.Stop()
 		client.heartbeatTimeoutID = nil
 	}
 	client.heartbeatTimestamp.Store(0)
-	client.heartbeatInterval.Store(0)
-	client.heartbeatTimeout.Store(0)
 	client.heartbeatLock.Unlock()
 	client.lock.Unlock()
 
@@ -3050,12 +3441,6 @@ func (client *Client) Disconnect() (err error) {
 		client.notifyConnectionState(ConnectionStateDisconnected)
 		return
 	}
-
-	client.heartbeatLock.Lock()
-	client.heartbeatTimestamp.Store(0)
-	client.heartbeatInterval.Store(0)
-	client.heartbeatTimeout.Store(0)
-	client.heartbeatLock.Unlock()
 
 	client.closeSyncAckProcessing()
 
@@ -3097,6 +3482,7 @@ func NewClient(clientName ...string) *Client {
 		unsubscribeRoutes: new(sync.Map),
 		disconnectCh:      newClientSignal(true),
 	}
+	client.generation.Store(1)
 	client.clientNameBytes = make([]byte, len(clientNameInternal), len(clientNameInternal)+16)
 	copy(client.clientNameBytes, clientNameInternal)
 	client.errorHandler = defaultErrorHandler(client)
@@ -3112,4 +3498,25 @@ func NewClient(clientName ...string) *Client {
 	}
 
 	return client
+}
+
+func dialTCPPreference(ctx context.Context, network, address, preference string, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	if preference == "" || network != "tcp" {
+		return dial(ctx, network, address)
+	}
+	var primary, fallback = "tcp4", "tcp6"
+	if preference == "ipv6" {
+		primary, fallback = fallback, primary
+	}
+	var connection, err = dial(ctx, primary, address)
+	if err == nil {
+		return connection, nil
+	}
+	if connection != nil {
+		_ = connection.Close()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return dial(ctx, fallback, address)
 }

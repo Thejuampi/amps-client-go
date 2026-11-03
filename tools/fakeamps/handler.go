@@ -86,6 +86,22 @@ func getTopicMessageType(topic string) string {
 	return "json"
 }
 
+func publishTrackerForConnection(name, user, anonymous string) (*brokerPublishTracker, publisherIdentity) {
+	var identity = publisherIdentity{name: name, user: user}
+	if identity.name == "" && identity.user == "" {
+		identity.anonymous = anonymous
+	}
+	var tracker = fallbackBrokerPublishTracker
+	if current := getJournal(); current != nil && current.publishers != nil {
+		tracker = current.publishers
+	}
+	return tracker, identity
+}
+
+func sendSOWRecord(writer *connWriter, buf *bytes.Buffer, topic, queryID, sowKey, bookmark, messageType string, payload []byte) {
+	writer.sendDirect(buildSOWRecord(buf, topic, queryID, sowKey, bookmark, messageType, payload))
+}
+
 // ---------------------------------------------------------------------------
 // handleConnection — per-connection reader goroutine.
 //
@@ -158,8 +174,6 @@ func handleConnection(conn net.Conn) {
 	var heartbeatTickerStop chan struct{}
 	var pendingChallengeUser string
 	var pendingChallengeNonce string
-	var connCommandDedupe = newCommandDedupeTracker(4096)
-	var connPublishSequenceDedupe = newPublishSequenceTracker()
 
 	defer func() {
 		if heartbeatTickerStop != nil {
@@ -275,7 +289,7 @@ func handleConnection(conn net.Conn) {
 		wantReceived := containsToken(ackTypes, "received")
 
 		isQueueTopic := *flagQueue && strings.HasPrefix(topic, "queue://")
-		isBookmarkSub := containsToken(options, "bookmark")
+		isBookmarkSub := bookmark != "" || containsToken(options, "bookmark")
 		isDelta := strings.Contains(command, "delta")
 
 		// Parse expiration.
@@ -407,6 +421,7 @@ func handleConnection(conn net.Conn) {
 					isQueue:    isQueueTopic,
 					isBookmark: isBookmarkSub,
 					isDelta:    isDelta,
+					oofEnabled: containsToken(options, "oof"),
 					maxBacklog: queueMaxBacklog,
 					pullMode:   queuePullMode,
 				}
@@ -436,8 +451,11 @@ func handleConnection(conn net.Conn) {
 			// Bookmark replay.
 			var currentJournal = getJournal()
 			if isBookmarkSub && currentJournal != nil {
-				afterSeq := parseBookmarkSeq(bookmark)
-				entries := currentJournal.replayFrom(topic, afterSeq)
+				var entries []journalEntry
+				// NOW starts at the live edge rather than replaying from epoch.
+				if bookmark != "0|1|" {
+					entries = currentJournal.replayFrom(topic, parseBookmarkSeq(bookmark))
+				}
 				mt := getTopicMessageType(topic)
 				var completedBookmark = bookmark
 				for _, e := range entries {
@@ -491,7 +509,7 @@ func handleConnection(conn net.Conn) {
 						key := "agg-" + strconv.Itoa(i)
 						seq := globalBookmarkSeq.Add(1)
 						bm := makeBookmark(seq)
-						writer.send(buildSOWRecord(buf, topic, queryID, key, bm, mt, payload))
+						sendSOWRecord(writer, buf, topic, queryID, key, bm, mt, payload)
 					}
 					writer.send(buildGroupEnd(buf, queryID))
 				}
@@ -504,7 +522,7 @@ func handleConnection(conn net.Conn) {
 						if aggQ != nil {
 							recPayload = projectFieldsFromQuery(r.payload, aggQ)
 						}
-						writer.send(buildSOWRecord(buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload))
+						sendSOWRecord(writer, buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload)
 					}
 					writer.send(buildGroupEnd(buf, queryID))
 				}
@@ -551,6 +569,7 @@ func handleConnection(conn net.Conn) {
 					isQueue:    isQueueTopic,
 					isBookmark: isBookmarkSub,
 					isDelta:    isDelta,
+					oofEnabled: containsToken(options, "oof"),
 					maxBacklog: queueMaxBacklog,
 					pullMode:   queuePullMode,
 				}
@@ -606,7 +625,7 @@ func handleConnection(conn net.Conn) {
 						key := "agg-" + strconv.Itoa(i)
 						seq := globalBookmarkSeq.Add(1)
 						bm := makeBookmark(seq)
-						writer.send(buildSOWRecord(buf, topic, queryID, key, bm, mt, payload))
+						sendSOWRecord(writer, buf, topic, queryID, key, bm, mt, payload)
 					}
 					writer.send(buildGroupEnd(buf, queryID))
 				}
@@ -619,7 +638,7 @@ func handleConnection(conn net.Conn) {
 						if aggQ != nil {
 							recPayload = projectFieldsFromQuery(r.payload, aggQ)
 						}
-						writer.send(buildSOWRecord(buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload))
+						sendSOWRecord(writer, buf, topic, queryID, r.sowKey, r.bookmark, mt, recPayload)
 					}
 					writer.send(buildGroupEnd(buf, queryID))
 				}
@@ -682,20 +701,24 @@ func handleConnection(conn net.Conn) {
 			stats.publishIn.Add(1)
 			var isReplicatedCommand = header.repl != ""
 			var needsPostApplyProcessedAck = isReplicatedCommand && (header.replSync == "1" || strings.EqualFold(header.replSync, "true"))
-			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
-			var isDuplicateCommand = connCommandDedupe.seenBefore(dedupeClientID, commandID)
-			var isDuplicateSequence = connPublishSequenceDedupe.seenBefore(dedupeClientID, seqID)
+			var tracker, identity = publishTrackerForConnection(connClientName, connUserID, clientID)
+			var currentJournal = getJournal()
+			var sequenceState, publisherSequence, isDuplicateSequence, duplicatePersisted = tracker.begin(identity, seqID)
 
 			if wantProcessed && !needsPostApplyProcessedAck {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
 			}
 
-			if isDuplicateCommand || isDuplicateSequence {
+			if isDuplicateSequence {
 				if wantProcessed && needsPostApplyProcessedAck {
 					writer.send(buildAck(buf, "processed", commandID, "success"))
 				}
 				if wantPersisted {
-					writer.send(buildPersistedAck(buf, commandID, seqID))
+					if duplicatePersisted {
+						writer.send(buildPersistedAck(buf, commandID, seqID))
+					} else {
+						writer.send(buildPersistedAckStatus(buf, commandID, seqID, "failure", "sync replication failed"))
+					}
 				}
 				continue
 			}
@@ -706,13 +729,24 @@ func handleConnection(conn net.Conn) {
 			if effectiveSowKey == "" && len(payload) > 0 {
 				effectiveSowKey = extractSowKey(payload)
 			}
+			var syncReplicationErr error
+			if wantSync && len(replicaPeers) > 0 && !isReplicatedCommand {
+				syncReplicationErr = replicatePublishSync(topic, payload, mt, effectiveSowKey)
+			}
 
 			// Journal.
 			var bm string
 			var seq uint64
-			var currentJournal = getJournal()
 			if currentJournal != nil {
-				bm, seq = currentJournal.append(topic, effectiveSowKey, payload)
+				var journalErr error
+				bm, seq, journalErr = currentJournal.appendPublish(topic, effectiveSowKey, payload, identity, publisherSequence, syncReplicationErr == nil)
+				if journalErr != nil {
+					sequenceState.abort()
+					if wantPersisted {
+						writer.send(buildPersistedAckStatus(buf, commandID, seqID, "failure", "journal write failed"))
+					}
+					continue
+				}
 			} else {
 				seq = globalBookmarkSeq.Add(1)
 				bm = makeBookmark(seq)
@@ -735,10 +769,7 @@ func handleConnection(conn net.Conn) {
 				}
 			}
 
-			var syncReplicationErr error
-			if wantSync && len(replicaPeers) > 0 && !isReplicatedCommand {
-				syncReplicationErr = replicatePublishSync(topic, payload, mt, effectiveSowKey)
-			}
+			sequenceState.finish(publisherSequence, syncReplicationErr == nil)
 
 			if wantProcessed && needsPostApplyProcessedAck {
 				writer.send(buildAck(buf, "processed", commandID, "success"))
@@ -801,9 +832,46 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 
+			if isQueueTopic && bookmark != "" {
+				// C++ uses a fixed cid for every queue ack. Bookmarks, rather
+				// than the command id, identify the messages being removed.
+				var topicMatches int
+				if cache := getSOW(); cache != nil {
+					topicMatches = cache.count(topic)
+				}
+				var released = acknowledgeQueueBookmarks(topic, bookmark, containsToken(options, "cancel"))
+				if wantProcessed {
+					writer.send(buildSOWDeleteAck(buf, "processed", commandID, released, topicMatches))
+				}
+				if wantStats {
+					writer.send(buildSOWDeleteAck(buf, "stats", commandID, released, topicMatches))
+				}
+				if wantPersisted {
+					writer.send(buildPersistedAck(buf, commandID, seqID))
+				}
+				continue
+			}
+
 			filter = applyEntitlementFilter(connUserID, filter)
-			var dedupeClientID = firstNonEmpty(connClientName, connUserID, remoteAddr)
-			var isDuplicateCommand = connCommandDedupe.seenBefore(dedupeClientID, commandID)
+			var tracker, identity = publishTrackerForConnection(connClientName, connUserID, clientID)
+			var sequenceState, publisherSequence, isDuplicateSequence, duplicatePersisted = tracker.begin(identity, seqID)
+			if !isDuplicateSequence {
+				if current := getJournal(); current != nil {
+					if journalErr := current.appendDelete(identity, publisherSequence); journalErr != nil {
+						sequenceState.abort()
+						if wantProcessed {
+							writer.send(buildAck(buf, "processed", commandID, "failure", kv{k: "reason", v: "journal write failed"}))
+						}
+						if wantStats {
+							writer.send(buildAck(buf, "stats", commandID, "failure", kv{k: "reason", v: "journal write failed"}))
+						}
+						if wantPersisted {
+							writer.send(buildPersistedAckStatus(buf, commandID, seqID, "failure", "journal write failed"))
+						}
+						continue
+					}
+				}
+			}
 			var currentSOW = getSOW()
 			var topicMatches = 0
 			if currentSOW != nil {
@@ -813,7 +881,7 @@ func handleConnection(conn net.Conn) {
 			deleted := 0
 			var deletedKeys []string
 
-			if isDuplicateCommand {
+			if isDuplicateSequence {
 				deleted = 0
 			} else if header.sowKeys != "" {
 				if currentSOW != nil {
@@ -836,6 +904,7 @@ func handleConnection(conn net.Conn) {
 					deletedKeys = []string{inferredKey}
 				}
 			}
+			sequenceState.finish(publisherSequence, true)
 
 			if wantProcessed {
 				writer.send(buildSOWDeleteAck(buf, "processed", commandID, deleted, topicMatches))
@@ -844,7 +913,11 @@ func handleConnection(conn net.Conn) {
 				writer.send(buildSOWDeleteAck(buf, "stats", commandID, deleted, topicMatches))
 			}
 			if wantPersisted {
-				writer.send(buildPersistedAck(buf, commandID, seqID))
+				if isDuplicateSequence && !duplicatePersisted {
+					writer.send(buildPersistedAckStatus(buf, commandID, seqID, "failure", "sync replication failed"))
+				} else {
+					writer.send(buildPersistedAck(buf, commandID, seqID))
+				}
 			}
 
 			if deleted > 0 && topic != "" {
@@ -1043,12 +1116,8 @@ func handleConnection(conn net.Conn) {
 		// UNKNOWN
 		// ---------------------------------------------------------------
 		default:
-			if wantStats {
-				writer.send(buildStatsAck(buf, commandID, &stats))
-			} else {
-				writer.send(buildAck(buf, "processed", commandID, "failure",
-					kv{k: "reason", v: "unknown command"}))
-			}
+			writer.send(buildAck(buf, "processed", commandID, "failure",
+				kv{k: "reason", v: "unknown command"}))
 		}
 	}
 }
@@ -1128,7 +1197,7 @@ func fanoutPublishWithConflation(publisher net.Conn, topic string, payload []byt
 }
 
 // ---------------------------------------------------------------------------
-// Fan-out: OOF delivery to delta subscribers.
+// Fan-out: OOF delivery to subscribers that requested it.
 // ---------------------------------------------------------------------------
 
 func fanoutOOF(publisher net.Conn, topic, sowKey, bookmark string, stats *connStats) {
@@ -1143,7 +1212,7 @@ func fanoutOOFWithReason(publisher net.Conn, topic, sowKey, bookmark, reason str
 		ss := value.(*subscriberSet)
 		ss.mu.RLock()
 		for sub := range ss.subs {
-			if !sub.isDelta {
+			if !sub.isDelta && !sub.oofEnabled {
 				continue
 			}
 			if !topicMatches(topic, sub.topic) {

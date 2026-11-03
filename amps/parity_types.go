@@ -164,7 +164,7 @@ type retryCommand struct {
 
 type pendingAckBatch struct {
 	topic     string
-	subID     string
+	options   string
 	bookmarks []string
 }
 
@@ -196,6 +196,7 @@ type clientParityState struct {
 	pendingAcks            map[string]*pendingAckBatch
 	pendingAckCount        uint
 	ackTimer               *time.Timer
+	ackFlushLock           sync.Mutex
 	bookmarkStore          BookmarkStore
 	publishStore           PublishStore
 	hasPublishStore        atomic.Bool
@@ -217,6 +218,7 @@ type clientParityState struct {
 	deferredExecutions     []deferredExecutionCall
 	pendingRetry           []retryCommand
 	pendingPublishByCmdID  map[string]*Command
+	pendingPublishOrder    []string
 	noResubscribeRoutes    map[string]struct{}
 	internalDisconnect     func(error)
 	manualDisconnect       bool
@@ -365,13 +367,13 @@ func (client *Client) buildConnectionInfo() ConnectionInfo {
 			}
 		}
 	}
-	if client.serverVersion != "" {
-		info["server_version"] = client.serverVersion
-		if versionNum := ConvertVersionToNumber(client.serverVersion); versionNum > 0 {
+	if serverVersion := client.ServerVersion(); serverVersion != "" {
+		info["server_version"] = serverVersion
+		if versionNum := ConvertVersionToNumber(serverVersion); versionNum > 0 {
 			info["server_version_number"] = strconv.FormatUint(versionNum, 10)
 		}
 	}
-	info["client_name"] = client.clientName
+	info["client_name"] = client.ClientName()
 	if client.replicationGroup != "" {
 		info["replication_group"] = client.replicationGroup
 	}

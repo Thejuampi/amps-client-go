@@ -1,0 +1,25 @@
+{
+  "base_commit": "22c28b481fc150cd984a21bac8bc97f67c9d855d",
+  "uncommitted_repo_sources": [],
+  "sdk_distribution": "AMPS C++ 5.3.5.14 Windows (external; SDK source and binary hashes below)",
+  "files": {
+    "repo": {
+      "tools/fakeamps/protocol.go": "fc486a0e9fd309eb2f8f14b74a7fc3e90c5b67ce9e47823fc764dce798779bd1",
+      "tools/fakeamps/handler.go": "dd3e65ebe2e75107a9279780542b8028150e95007826c52024cf2de74026b721",
+      "tools/fakeamps/journal.go": "37b69c611dda9281cd5fa86c7825aa3e7d33204c581ae96e0e47453fc05582d4",
+      "tools/fakeamps/cpp_protocol_regression_test.go": "3f22370fdbeab50b275eb412230555b64f71f168bebee837c4ae00d3cc0669aa",
+      "tools/fakeamps/subscription.go": "1720784e3cc6ccc1deb91f8426e100a02e6d86a35d047c07b7d5c074ce7883f5",
+      "tools/fakeamps/cpp_queue_lease_regression_test.go": "840e7c6f9820578645ba6034c4dbf40444f1715a00e6bedb81fecdb6360c1766",
+      "tools/fakeamps/subscription_test.go": "5e4746999efdd21de0f558f290a99a2a49a877ac1559c28795e21e4d42af8749"
+    },
+    "sdk": {
+      "include/ampsplusplus.hpp": "6b832375e3252633cb397b97c8fb48ded7fd9b5081d264a6339b85df6d14c476",
+      "include/BookmarkStore.hpp": "b8a400986d1148d4f6fa2ca35ff40c026a033d7c33e42bad819de6d779ca7c47",
+      "include/MessageRouter.hpp": "4937000f302cff51476adb84bc83e2b87ff7fe6b953dabf96a03639cff412152",
+      "include/ampsver.h": "bf031ed23b00da7028d7edf8f1bf534de965318ed5148cedc448c5690cf4122a",
+      "src/amps_protocol.c": "bd97fa26e9a2c70ef9110dd7cc68bc93725b80b4ee6b8354aa663f877605c3ce",
+      "src/amps_protocol_generated.h": "408da1bc7fd448dbe6b7b0320008e2fe3dac0c0bca9577670ef6502df24d37c4",
+      "lib/x64/release/amps.lib": "270ec38a8f1bfd9cad58a19bf9a113deae0aecf74d6d55deb5680c070ac65836"
+    }
+  }
+}

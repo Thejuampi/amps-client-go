@@ -18,7 +18,7 @@ func closeHTTPResponseBody(response *http.Response) {
 	_ = response.Body.Close()
 }
 
-func (client *Client) dialWebSocket(ctx context.Context, parsedURI *url.URL) (net.Conn, error) {
+func (client *Client) dialWebSocket(ctx context.Context, parsedURI *url.URL, options ...socketOptions) (net.Conn, error) {
 	var targetURL = "ws://" + parsedURI.Host + parsedURI.Path
 	if parsedURI.Scheme == "wss" {
 		targetURL = "wss://" + parsedURI.Host + parsedURI.Path
@@ -27,7 +27,8 @@ func (client *Client) dialWebSocket(ctx context.Context, parsedURI *url.URL) (ne
 		targetURL += "?" + parsedURI.RawQuery
 	}
 
-	var dialer = websocket.DefaultDialer
+	var dialerCopy = *websocket.DefaultDialer
+	var dialer = &dialerCopy
 	if parsedURI.Scheme == "wss" {
 		client.configLock.RLock()
 		var baseTLSConfig = client.tlsConfig
@@ -38,6 +39,11 @@ func (client *Client) dialWebSocket(ctx context.Context, parsedURI *url.URL) (ne
 		}
 	}
 
+	if len(options) > 0 && options[0].ipPreference != "" {
+		dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialTCPPreference(ctx, network, address, options[0].ipPreference, clientNetDialContext)
+		}
+	}
 	state := ensureClientState(client)
 	var requestHeader http.Header
 	if state != nil {

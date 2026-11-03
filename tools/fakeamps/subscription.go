@@ -20,8 +20,9 @@ type subscription struct {
 	filter     string // content filter expression (e.g. "/id > 10")
 	writer     *connWriter
 	isQueue    bool
-	isBookmark bool // options contained "bookmark"
+	isBookmark bool // subscription requested bookmark replay
 	isDelta    bool // delta_subscribe or sow_and_delta_subscribe
+	oofEnabled bool
 	paused     atomic.Bool
 	maxBacklog int
 	pullMode   bool
@@ -431,19 +432,28 @@ func selectQueueRedeliveryTarget(lease *queueLease) *subscription {
 
 	var base = topicCursor % len(eligible)
 	var offset int
+	var fallback *subscription
+	var fallbackIndex int
 	for offset = 0; offset < len(eligible); offset++ {
 		var index = (base + offset) % len(eligible)
-		if eligible[index].subID == lease.subID {
-			continue
-		}
 		if eligible[index].pullMode {
 			continue
 		}
 		if !queueSubCanAccept(eligible[index]) {
 			continue
 		}
+		if eligible[index].subID == lease.subID && (lease.ownerConn == nil || eligible[index].conn == lease.ownerConn) {
+			fallback = eligible[index]
+			fallbackIndex = index
+			continue
+		}
 		queueRedeliveryCursor[lease.topic] = (index + 1) % len(eligible)
 		return eligible[index]
+	}
+
+	if fallback != nil {
+		queueRedeliveryCursor[lease.topic] = (fallbackIndex + 1) % len(eligible)
+		return fallback
 	}
 
 	queueRedeliveryCursor[lease.topic] = (base + 1) % len(eligible)
@@ -544,6 +554,42 @@ func handleQueueAckByBookmarkBatch(bookmarks string) []*queueLease {
 	}
 
 	return released
+}
+
+func acknowledgeQueueBookmarks(topic string, bookmarks string, cancel bool) int {
+	var values = splitQueueAckValues(bookmarks)
+	if len(values) == 0 {
+		return 0
+	}
+	var wanted = make(map[string]struct{}, len(values))
+	for _, bookmark := range values {
+		wanted[bookmark] = struct{}{}
+	}
+	var released []*queueLease
+	queueLeasesMu.Lock()
+	for key, lease := range queueLeases {
+		if lease == nil || lease.topic != topic {
+			continue
+		}
+		if _, matched := wanted[lease.bookmark]; matched {
+			released = append(released, lease)
+			delete(queueLeases, key)
+		}
+	}
+	queueLeasesMu.Unlock()
+	if len(released) > 0 {
+		if cancel {
+			for _, lease := range released {
+				requeueMessage(lease)
+			}
+		} else if cache := getSOW(); cache != nil {
+			for _, lease := range released {
+				cache.delete(topic, lease.sowKey)
+			}
+		}
+		dispatchPendingQueueTopic(topic)
+	}
+	return len(released)
 }
 
 func splitQueueAckValues(raw string) []string {
@@ -718,7 +764,7 @@ func forEachMatchingSubscriber(publishTopic string, payload []byte, fn func(*sub
 	})
 }
 
-// forEachOOFCandidate calls fn for every delta subscriber whose topic matches
+// forEachOOFCandidate calls fn for every OOF-enabled subscriber whose topic matches
 // but whose content filter does NOT match (or the record was deleted).
 // This is used for OOF-on-filter-mismatch.
 func forEachOOFCandidate(publishTopic string, payload []byte, fn func(*subscription)) {
@@ -726,7 +772,7 @@ func forEachOOFCandidate(publishTopic string, payload []byte, fn func(*subscript
 		ss := value.(*subscriberSet)
 		ss.mu.RLock()
 		for sub := range ss.subs {
-			if !sub.isDelta {
+			if !sub.isDelta && !sub.oofEnabled {
 				continue
 			}
 			if sub.paused.Load() {

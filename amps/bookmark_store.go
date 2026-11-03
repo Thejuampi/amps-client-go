@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -38,19 +37,94 @@ type MemoryBookmarkStore struct {
 	records       map[string]map[string]*bookmarkRecord
 	mostRecent    map[string]string
 	discardedUpTo map[string]uint64
-	dirty         map[string]bool
-	serverVersion string
+	// discardedRanges records, per subscription and publisher, the exact set of
+	// publisher sequences already discarded, as sorted non-overlapping inclusive
+	// ranges. Individual records are dropped when the store prunes or evicts;
+	// without this a redelivered message for a dropped bookmark would no longer
+	// be recognised as a duplicate. Ranges rather than a high-water mark because
+	// a high-water mark cannot distinguish "already discarded" from "never seen"
+	// for a sequence below it, and would silently drop live messages.
+	discardedRanges map[string]map[uint64][]seqRange
+	dirty           map[string]bool
+	serverVersion   string
+}
+
+// seqRange is an inclusive range of publisher sequences known to be discarded.
+type seqRange struct {
+	low  uint64
+	high uint64
 }
 
 // NewMemoryBookmarkStore returns a new MemoryBookmarkStore.
 func NewMemoryBookmarkStore() *MemoryBookmarkStore {
 	return &MemoryBookmarkStore{
-		nextSeqNo:     1,
-		records:       make(map[string]map[string]*bookmarkRecord),
-		mostRecent:    make(map[string]string),
-		discardedUpTo: make(map[string]uint64),
-		dirty:         make(map[string]bool),
+		nextSeqNo:       1,
+		records:         make(map[string]map[string]*bookmarkRecord),
+		mostRecent:      make(map[string]string),
+		discardedUpTo:   make(map[string]uint64),
+		discardedRanges: make(map[string]map[uint64][]seqRange),
+		dirty:           make(map[string]bool),
 	}
+}
+
+// retainDiscardedSequenceLocked folds a bookmark that is about to be dropped
+// from the record map into the exact per-publisher discarded range set.
+func (store *MemoryBookmarkStore) retainDiscardedSequenceLocked(subID string, bookmark string) {
+	var publisher, sequence, ok = parseBookmarkToken(bookmark)
+	if !ok {
+		return
+	}
+	var byPublisher = store.discardedRanges[subID]
+	if byPublisher == nil {
+		byPublisher = make(map[uint64][]seqRange)
+		store.discardedRanges[subID] = byPublisher
+	}
+	byPublisher[publisher] = insertDiscardedSequence(byPublisher[publisher], sequence)
+}
+
+// insertDiscardedSequence adds one sequence to a sorted, non-overlapping range
+// list, merging with any neighbour it makes contiguous.
+func insertDiscardedSequence(ranges []seqRange, sequence uint64) []seqRange {
+	var index = 0
+	for index < len(ranges) && ranges[index].high < sequence {
+		index++
+	}
+	if index < len(ranges) && ranges[index].low <= sequence {
+		return ranges
+	}
+
+	ranges = append(ranges, seqRange{})
+	copy(ranges[index+1:], ranges[index:])
+	ranges[index] = seqRange{low: sequence, high: sequence}
+
+	if index > 0 && ranges[index-1].high+1 >= ranges[index].low {
+		ranges[index-1].high = max(ranges[index-1].high, ranges[index].high)
+		ranges = append(ranges[:index], ranges[index+1:]...)
+		index--
+	}
+	if index+1 < len(ranges) && ranges[index].high+1 >= ranges[index+1].low {
+		ranges[index].high = max(ranges[index].high, ranges[index+1].high)
+		ranges = append(ranges[:index+1], ranges[index+2:]...)
+	}
+	return ranges
+}
+
+// isDiscardedSequenceLocked reports whether a bookmark with no surviving record
+// was already discarded, using the exact per-publisher range set.
+func (store *MemoryBookmarkStore) isDiscardedSequenceLocked(subID string, bookmark string) bool {
+	var publisher, sequence, ok = parseBookmarkToken(bookmark)
+	if !ok {
+		return false
+	}
+	for _, current := range store.discardedRanges[subID][publisher] {
+		if sequence < current.low {
+			return false
+		}
+		if sequence <= current.high {
+			return true
+		}
+	}
+	return false
 }
 
 func bookmarkStoreKey(message *Message) (string, string, bool) {
@@ -94,39 +168,24 @@ func (store *MemoryBookmarkStore) computeMostRecentLocked(subID string) string {
 	if records == nil {
 		return ""
 	}
-
-	var publishers = make(map[uint64]uint64)
-	var publisherBookmarks = make(map[uint64]string)
-	var foundPublisher bool
-	for bookmark := range records {
-		publisher, sequence, ok := parseBookmarkToken(bookmark)
-		if !ok {
-			continue
-		}
-		foundPublisher = true
-		if current, exists := publishers[publisher]; !exists || current < sequence {
-			publishers[publisher] = sequence
-			publisherBookmarks[publisher] = bookmark
+	// A recovery bookmark may only advance through the contiguous processed
+	// prefix, even when later messages were discarded out of order.
+	var firstActive = ^uint64(0)
+	var hasActive bool
+	for _, record := range records {
+		if record != nil && !record.Discarded && record.SeqNo > store.discardedUpTo[subID] {
+			firstActive = min(firstActive, record.SeqNo)
+			hasActive = true
 		}
 	}
-
-	if !foundPublisher {
-		return store.mostRecent[subID]
+	var recent = BookmarksEPOCH
+	var sequence uint64
+	for bookmark, record := range records {
+		if record != nil && (!hasActive || record.SeqNo < firstActive) && record.SeqNo > sequence {
+			recent, sequence = bookmark, record.SeqNo
+		}
 	}
-
-	var publisherIDs = make([]uint64, 0, len(publishers))
-	for publisherID := range publishers {
-		publisherIDs = append(publisherIDs, publisherID)
-	}
-	sort.Slice(publisherIDs, func(left int, right int) bool {
-		return publisherIDs[left] < publisherIDs[right]
-	})
-
-	var parts = make([]string, 0, len(publisherIDs))
-	for _, publisherID := range publisherIDs {
-		parts = append(parts, publisherBookmarks[publisherID])
-	}
-	return strings.Join(parts, ",")
+	return recent
 }
 
 // Log executes the exported log operation.
@@ -153,6 +212,7 @@ func (store *MemoryBookmarkStore) Log(message *Message) uint64 {
 		record.Count++
 	}
 	store.dirty[subID] = true
+	message.bookmarkSeqNo = record.SeqNo
 	return record.SeqNo
 }
 
@@ -165,8 +225,12 @@ func (store *MemoryBookmarkStore) Discard(subID string, bookmarkSeqNo uint64) {
 	store.lock.Lock()
 	defer store.lock.Unlock()
 
-	if bookmarkSeqNo > store.discardedUpTo[subID] {
-		store.discardedUpTo[subID] = bookmarkSeqNo
+	for _, record := range store.records[subID] {
+		if record != nil && record.SeqNo == bookmarkSeqNo {
+			record.Discarded = true
+			store.dirty[subID] = true
+			break
+		}
 	}
 	store.pruneDiscardedRecordsLocked(subID)
 }
@@ -189,9 +253,7 @@ func (store *MemoryBookmarkStore) DiscardMessage(message *Message) {
 	record := records[bookmark]
 	if record != nil {
 		record.Discarded = true
-		if record.SeqNo > store.discardedUpTo[subID] {
-			store.discardedUpTo[subID] = record.SeqNo
-		}
+		store.dirty[subID] = true
 		store.pruneDiscardedRecordsLocked(subID)
 	}
 }
@@ -232,6 +294,7 @@ func (store *MemoryBookmarkStore) pruneDiscardedRecordsLocked(subID string) {
 		publisher, _, ok := parseBookmarkToken(bookmark)
 		if ok {
 			if latestByPublisher[publisher].bookmark != bookmark {
+				store.retainDiscardedSequenceLocked(subID, bookmark)
 				delete(records, bookmark)
 			}
 			continue
@@ -279,23 +342,19 @@ func (store *MemoryBookmarkStore) IsDiscarded(message *Message) bool {
 	store.lock.RLock()
 	defer store.lock.RUnlock()
 
-	records := store.records[subID]
-	if records == nil {
-		return false
+	// The surviving record is authoritative when there is one; the range set is
+	// consulted only for bookmarks whose record was dropped by pruning or ring
+	// eviction, so a live record can never be overridden.
+	record := store.records[subID][bookmark]
+	if record != nil {
+		if record.Discarded {
+			return true
+		}
+		if record.SeqNo <= store.discardedUpTo[subID] {
+			return true
+		}
 	}
-
-	record := records[bookmark]
-	if record == nil {
-		return false
-	}
-
-	if record.Discarded {
-		return true
-	}
-	if record.SeqNo <= store.discardedUpTo[subID] {
-		return true
-	}
-	return record.Count > 1
+	return store.isDiscardedSequenceLocked(subID, bookmark)
 }
 
 // Purge executes the exported purge operation.
@@ -311,6 +370,7 @@ func (store *MemoryBookmarkStore) Purge(subID ...string) {
 		store.records = make(map[string]map[string]*bookmarkRecord)
 		store.mostRecent = make(map[string]string)
 		store.discardedUpTo = make(map[string]uint64)
+		store.discardedRanges = make(map[string]map[uint64][]seqRange)
 		store.dirty = make(map[string]bool)
 		store.nextSeqNo = 1
 		return
@@ -320,6 +380,7 @@ func (store *MemoryBookmarkStore) Purge(subID ...string) {
 		delete(store.records, value)
 		delete(store.mostRecent, value)
 		delete(store.discardedUpTo, value)
+		delete(store.discardedRanges, value)
 		delete(store.dirty, value)
 	}
 }
@@ -369,9 +430,7 @@ func (store *MemoryBookmarkStore) Persisted(subID string, bookmark string) strin
 		record.Discarded = true
 	}
 
-	if record.SeqNo > store.discardedUpTo[subID] {
-		store.discardedUpTo[subID] = record.SeqNo
-	}
+	store.dirty[subID] = true
 	store.pruneDiscardedRecordsLocked(subID)
 	return bookmark
 }
@@ -476,7 +535,7 @@ func NewFileBookmarkStoreWithOptions(path string, options FileStoreOptions) *Fil
 	return store
 }
 
-// LoadError returns the most recent constructor-time load error, if any.
+// LoadError returns a retained recovery error or an uncertain WAL append error.
 func (store *FileBookmarkStore) LoadError() error {
 	if store == nil {
 		return nil
@@ -607,6 +666,11 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	}
 
 	store.lock.Lock()
+	if store.loadErr != nil {
+		var err = store.loadErr
+		store.lock.Unlock()
+		return err
+	}
 	subIDs := make([]string, 0, len(store.records))
 	for subID := range store.records {
 		subIDs = append(subIDs, subID)
@@ -675,9 +739,7 @@ func (store *FileBookmarkStore) saveCheckpoint() error {
 	return nil
 }
 
-// appendWalNoLock writes a WAL record for the given bookmark store operation.
-// It never acquires store.lock; callers may invoke it with or without the
-// store mutex held.
+// appendWalNoLock writes a WAL record while the caller holds store.lock.
 func (store *FileBookmarkStore) appendWalNoLock(record bookmarkWalRecord) error {
 	if store == nil || !store.options.UseWAL || store.walPath == "" {
 		return nil
@@ -685,7 +747,18 @@ func (store *FileBookmarkStore) appendWalNoLock(record bookmarkWalRecord) error 
 	if currentFileStoreTestHooks.bookmarkWalBeforeAppend != nil {
 		currentFileStoreTestHooks.bookmarkWalBeforeAppend()
 	}
-	return wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
+	var err error
+	if currentFileStoreTestHooks.bookmarkWalAppendError != nil {
+		err = currentFileStoreTestHooks.bookmarkWalAppendError()
+	}
+	if err == nil {
+		err = wal.AppendJSON(store.walPath, record, store.options.SyncOnWrite)
+	}
+	var uncertain *wal.AppendOutcomeError
+	if errors.As(err, &uncertain) {
+		store.loadErr = err
+	}
+	return err
 }
 
 func (store *FileBookmarkStore) bumpMutationAndMaybeCheckpoint() error {
@@ -709,9 +782,6 @@ func (store *FileBookmarkStore) applyUpsertLocked(subID string, bookmark string,
 	copied := record
 	records[bookmark] = &copied
 	store.dirty[subID] = true
-	if copied.SeqNo > store.discardedUpTo[subID] && copied.Discarded {
-		store.discardedUpTo[subID] = copied.SeqNo
-	}
 	if copied.SeqNo >= store.nextSeqNo {
 		store.nextSeqNo, store.sequenceExhausted = advanceStoreSequence(copied.SeqNo)
 	}
@@ -766,14 +836,14 @@ func (store *FileBookmarkStore) replayWal() error {
 	if store == nil || !store.options.UseWAL || store.walPath == "" {
 		return nil
 	}
-	return wal.ReplayNoCopy(store.walPath, func(line []byte) error {
+	return wal.ReplayAndRepair(store.walPath, func(line []byte) error {
 		record := bookmarkWalRecord{}
 		if err := json.Unmarshal(line, &record); err != nil {
 			return err
 		}
 		store.applyWalRecord(record)
 		return nil
-	})
+	}, store.options.SyncOnWrite)
 }
 
 func (store *FileBookmarkStore) load() error {
@@ -797,12 +867,15 @@ func (store *FileBookmarkStore) appendUpsertFor(subID string, bookmark string) e
 		return nil
 	}
 	store.lock.Lock()
+	defer store.lock.Unlock()
+	if store.loadErr != nil {
+		return store.loadErr
+	}
 	var recordCopy *bookmarkRecord
 	if records := store.records[subID]; records != nil && records[bookmark] != nil {
 		value := *records[bookmark]
 		recordCopy = &value
 	}
-	store.lock.Unlock()
 	if recordCopy == nil {
 		return nil
 	}
@@ -859,6 +932,7 @@ func (store *FileBookmarkStore) LogWithError(message *Message) (uint64, error) {
 		return 0, err
 	}
 	store.applyWalRecordLocked(walRecord)
+	message.bookmarkSeqNo = record.SeqNo
 	store.lock.Unlock()
 	if err := store.bumpMutationAndMaybeCheckpoint(); err != nil {
 		return record.SeqNo, err
@@ -882,10 +956,18 @@ func (store *FileBookmarkStore) DiscardWithError(subID string, bookmarkSeqNo uin
 		store.lock.Unlock()
 		return err
 	}
-	walRecord := bookmarkWalRecord{
-		Type:          "discard_upto",
-		SubID:         subID,
-		DiscardedUpTo: bookmarkSeqNo,
+	var walRecord bookmarkWalRecord
+	for bookmark, record := range store.records[subID] {
+		if record != nil && record.SeqNo == bookmarkSeqNo {
+			var discarded = *record
+			discarded.Discarded = true
+			walRecord = bookmarkWalRecord{Type: "upsert", SubID: subID, Bookmark: bookmark, Record: &discarded}
+			break
+		}
+	}
+	if walRecord.Record == nil {
+		store.lock.Unlock()
+		return nil
 	}
 	if err := store.appendWalNoLock(walRecord); err != nil {
 		store.lock.Unlock()
@@ -1052,8 +1134,8 @@ func NewMMapBookmarkStore(path string) *MMapBookmarkStore {
 }
 
 // RingBookmarkStore stores replay or bookmark state with a bounded ring size.
-// When the ring capacity is exceeded for a subscription, the oldest records
-// are evicted to keep memory bounded.
+// RingSize is a history-retention target; active entries stay in memory
+// until discarded so the recovery point cannot skip unprocessed messages.
 type RingBookmarkStore struct {
 	*MemoryBookmarkStore
 	ringSize uint
@@ -1122,20 +1204,9 @@ func (store *RingBookmarkStore) evictOldest(message *Message) {
 			first = false
 		}
 	}
-	if oldestKey == "" {
-		first = true
-		for key, rec := range records {
-			if rec == nil {
-				continue
-			}
-			if first || rec.SeqNo < oldestSeq {
-				oldestKey = key
-				oldestSeq = rec.SeqNo
-				first = false
-			}
-		}
-	}
 	if oldestKey != "" {
+		store.retainDiscardedSequenceLocked(subID, oldestKey)
 		delete(records, oldestKey)
+		store.dirty[subID] = true
 	}
 }

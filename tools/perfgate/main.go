@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/Thejuampi/amps-client-go/internal/hiddenprocess"
 )
 
 type benchmarkBaseline struct {
@@ -159,6 +161,7 @@ func runGoBenchmarks(packagePath string) benchmarkRunner {
 
 		var pattern = benchmarkPattern(names)
 		command := exec.Command("go", "test", packagePath, "-run", "^$", "-bench", pattern, "-benchmem", "-count="+strconv.Itoa(samples), "-benchtime="+benchtime) // #nosec G204 -- arguments are passed without shell expansion
+		hiddenprocess.HideConsole(command)
 		outputBytes, err := command.CombinedOutput()
 		output := string(outputBytes)
 		return benchmarkRun{

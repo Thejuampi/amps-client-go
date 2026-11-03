@@ -15,6 +15,85 @@ type testConn struct {
 	writes [][]byte
 }
 
+type queuedWriteProbe struct {
+	queue   <-chan []byte
+	pending []int
+	writes  [][]byte
+}
+
+func (probe *queuedWriteProbe) Write(data []byte) (int, error) {
+	probe.pending = append(probe.pending, len(probe.queue))
+	probe.writes = append(probe.writes, append([]byte(nil), data...))
+	return len(data), nil
+}
+
+func TestConnWriterFlushesAcknowledgementBeforeQueuedData(t *testing.T) {
+	var writer = &connWriter{ch: make(chan []byte, 3), done: make(chan struct{}), stats: new(connStats)}
+	var buffer bytes.Buffer
+	var ack = append([]byte(nil), buildAck(&buffer, "processed", "2", "success")...)
+	writer.sendDirect(ack)
+	writer.sendDirect([]byte("data-1"))
+	writer.sendDirect([]byte("data-2"))
+	close(writer.ch)
+	var probe = &queuedWriteProbe{queue: writer.ch}
+	writer.run(probe)
+	if len(probe.writes) != 2 || !bytes.Equal(probe.writes[0], ack) || string(probe.writes[1]) != "data-1data-2" || probe.pending[0] != 2 {
+		t.Fatalf("ack was buffered behind queued data: writes=%q pending=%v", probe.writes, probe.pending)
+	}
+}
+
+func TestConnWriterStillCoalescesQueuedData(t *testing.T) {
+	var writer = &connWriter{ch: make(chan []byte, 3), done: make(chan struct{}), stats: new(connStats)}
+	for _, data := range []string{"data-1", "data-2", "data-3"} {
+		writer.sendDirect([]byte(data))
+	}
+	close(writer.ch)
+	var probe = &queuedWriteProbe{queue: writer.ch}
+	writer.run(probe)
+	if len(probe.writes) != 1 || string(probe.writes[0]) != "data-1data-2data-3" {
+		t.Fatalf("data batching changed: %q", probe.writes)
+	}
+}
+
+func TestConnWriterAcknowledgementDoesNotOvertakeEarlierData(t *testing.T) {
+	var writer = &connWriter{ch: make(chan []byte, 3), done: make(chan struct{}), stats: new(connStats)}
+	var buffer bytes.Buffer
+	var ack = append([]byte(nil), buildAck(&buffer, "processed", "2", "success")...)
+	writer.sendDirect([]byte("data-before"))
+	writer.sendDirect(ack)
+	writer.sendDirect([]byte("data-after"))
+	close(writer.ch)
+	var probe = &queuedWriteProbe{queue: writer.ch}
+	writer.run(probe)
+	if len(probe.writes) != 2 || !bytes.Equal(probe.writes[0], append([]byte("data-before"), ack...)) || string(probe.writes[1]) != "data-after" {
+		t.Fatalf("ack reordered the data stream: %q", probe.writes)
+	}
+}
+
+func BenchmarkAcknowledgementFrameCheck(b *testing.B) {
+	var frame = append(make([]byte, 4), []byte(`{"c":"sow","query_id":"2"}payload`)...)
+	b.ReportAllocs()
+	for b.Loop() {
+		if isAcknowledgementFrame(frame) {
+			b.Fatal("data frame classified as an ack")
+		}
+	}
+}
+
+func TestAcknowledgementFrameCheck(t *testing.T) {
+	for _, frame := range [][]byte{nil, {0}, {0, 0, 0}, {0, 0, 0, 0}, append(make([]byte, 4), []byte(`{"c":"acknowledgement"}`)...)} {
+		if isAcknowledgementFrame(frame) {
+			t.Fatalf("non-ack frame classified as acknowledgement: %q", frame)
+		}
+	}
+	var buffer bytes.Buffer
+	for _, ackType := range []string{"received", "parsed", "processed", "completed", "persisted", "stats"} {
+		if !isAcknowledgementFrame(buildAck(&buffer, ackType, "2", "success")) {
+			t.Fatalf("%s ack was not classified as an acknowledgement", ackType)
+		}
+	}
+}
+
 func (c *testConn) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

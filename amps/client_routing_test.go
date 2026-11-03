@@ -45,11 +45,12 @@ func TestOnMessageHandlerOrder(t *testing.T) {
 	if err := client.onMessage(message); err != nil {
 		t.Fatalf("unexpected message error: %v", err)
 	}
+	store.DiscardMessage(message)
 	if err := client.onMessage(message); err != nil {
 		t.Fatalf("unexpected duplicate message error: %v", err)
 	}
 
-	expected := []string{"route", "global", "route", "global", "duplicate"}
+	expected := []string{"route", "global", "duplicate"}
 	if !reflect.DeepEqual(events, expected) {
 		t.Fatalf("unexpected handler order: got %+v want %+v", events, expected)
 	}

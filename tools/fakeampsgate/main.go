@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -9,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/internal/hiddenprocess"
 )
 
 type fakeAMPSProcess struct {
@@ -17,14 +21,20 @@ type fakeAMPSProcess struct {
 }
 
 func main() {
-	var err = run()
+	var options, err = parseTestOptions(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		return
+	}
+	if err == nil {
+		err = run(options)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(options integrationTestOptions) error {
 	var workingDir, err = os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
@@ -46,56 +56,22 @@ func run() error {
 	}()
 
 	var binaryPath = filepath.Join(tempDir, "fakeamps"+executableExtension())
-	err = runCommand(root, nil, "go", "build", "-o", binaryPath, "./tools/fakeamps")
+	var build = integrationCommand{step: "build fakeamps", dir: root, name: "go", args: []string{"build", "-o", binaryPath, "./tools/fakeamps"}}
+	err = runLoggedCommand(os.Stdout, build, runCommand)
 	if err != nil {
 		return fmt.Errorf("build fakeamps binary: %w", err)
 	}
 
-	var primaryAddr string
-	primaryAddr, err = reserveLoopbackAddress()
-	if err != nil {
-		return err
+	var ops = fakeAMPSProcessOps{reserve: reserveLoopbackAddress, start: startFakeAMPSProcess, stop: stopFakeAMPSProcess}
+	var baseEnv = os.Environ()
+	var start = func(int) (integrationWorker, error) {
+		return startIntegrationWorker(root, binaryPath, baseEnv, ops)
 	}
-
-	var secondaryAddr string
-	secondaryAddr, err = reserveLoopbackAddress()
-	if err != nil {
-		return err
+	var execute = func(command integrationCommand) error {
+		return runLoggedCommand(os.Stdout, command, runCommand)
 	}
-
-	var primary *fakeAMPSProcess
-	primary, err = startFakeAMPSProcess(root, binaryPath, primaryAddr)
-	if err != nil {
-		return err
-	}
-	defer stopFakeAMPSProcess(primary)
-
-	var secondary *fakeAMPSProcess
-	secondary, err = startFakeAMPSProcess(root, binaryPath, secondaryAddr)
-	if err != nil {
-		return err
-	}
-	defer stopFakeAMPSProcess(secondary)
-
-	var primaryURI = fakeAMPSURI(primary.addr)
-	var secondaryURI = fakeAMPSURI(secondary.addr)
-	var integrationEnv = append(
-		os.Environ(),
-		"AMPS_TEST_URI="+primaryURI,
-		"AMPS_TEST_FAILOVER_URIS="+strings.Join([]string{primaryURI, secondaryURI}, ","),
-	)
-
-	err = runCommand(root, integrationEnv, "go", "test", "-count=1", "./amps", "-run", "Integration")
-	if err != nil {
-		return fmt.Errorf("amps integration tests: %w", err)
-	}
-
-	err = runCommand(root, nil, "go", "test", "-count=1", "./tools/fakeamps", "-run", "Integration")
-	if err != nil {
-		return fmt.Errorf("fakeamps integration tests: %w", err)
-	}
-
-	return nil
+	var workerCount = effectiveWorkerCount(options.count, options.workers, runtime.NumCPU(), runtime.GOMAXPROCS(0))
+	return runIntegrationTests(root, options, workerCount, start, execute, os.Stdout)
 }
 
 func repoRootFrom(start string) (string, error) {
@@ -142,6 +118,7 @@ func reserveLoopbackAddress() (string, error) {
 
 func startFakeAMPSProcess(root string, binaryPath string, addr string) (*fakeAMPSProcess, error) {
 	var cmd = exec.Command(binaryPath, "-addr", addr, "-echo=true") // #nosec G204 -- binary path and arguments are constructed locally without shell expansion
+	hiddenprocess.HideConsole(cmd)
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -186,9 +163,8 @@ func waitForTCPReady(addr string, timeout time.Duration) error {
 }
 
 func runCommand(dir string, env []string, name string, args ...string) error {
-	_, _ = fmt.Fprintf(os.Stdout, "+ %s %s\n", name, strings.Join(args, " "))
-
 	var cmd = exec.Command(name, args...) // #nosec G204 -- arguments are passed directly without shell expansion
+	hiddenprocess.HideConsole(cmd)
 	cmd.Dir = dir
 	if env != nil {
 		cmd.Env = env

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"unsafe"
+
+	"github.com/Thejuampi/amps-client-go/amps/internal/wal"
 )
 
 var mmapSyncDirectory = syncDirectoryPath
@@ -152,5 +154,8 @@ func mmapWriteFile(path string, data []byte, perm os.FileMode, initialSize int64
 	if err = os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	return mmapSyncDirectory(directory)
+	if err := mmapSyncDirectory(directory); err != nil {
+		return &wal.CommitError{Err: err}
+	}
+	return nil
 }

@@ -22,7 +22,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.10"
+          go-version: "1.26.10"
           check-latest: true
 
       - name: Generate gosec report
@@ -43,7 +43,8 @@ jobs:
           sarif_file: gosec-report.sarif
 
       - name: Blocking scans
-        run: make scan
+        # The blocking gosec report above already performed that scan.
+        run: make static-scan vuln-scan secret-scan
 
       - name: Leak check
         run: make leak-check
@@ -69,24 +70,26 @@ jobs:
   test-matrix:
     name: Test Matrix (${{ matrix.os }}, Go ${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      GOTOOLCHAIN: local
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            go-version: "1.25.10"
+            go-version: "1.25.13"
             race: true
           - os: ubuntu-latest
-            go-version: "1.26.3"
+            go-version: "1.26.10"
             race: false
           - os: ubuntu-latest
             go-version: "stable"
             race: false
           - os: windows-latest
-            go-version: "1.25.10"
+            go-version: "1.25.13"
             race: false
           - os: windows-latest
-            go-version: "1.26.3"
+            go-version: "1.26.10"
             race: false
     steps:
       - name: Checkout
@@ -103,16 +106,30 @@ jobs:
 
       - name: Race tests
         if: matrix.race
-        run: make test-race
+        run: go test -race ./... -skip Integration
 
       - name: Build
         run: go build ./...
 
-  preprod-smoke:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  validate:
+    if: always()
     needs:
       - analysis
       - test-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all blocking CI jobs
+        env:
+          ANALYSIS_RESULT: ${{ needs.analysis.result }}
+          TEST_MATRIX_RESULT: ${{ needs.test-matrix.result }}
+        run: |
+          test "$ANALYSIS_RESULT" = "success"
+          test "$TEST_MATRIX_RESULT" = "success"
+
+  preprod-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - validate
     runs-on: ubuntu-latest
     env:
       AMPS_TEST_URI: ${{ secrets.AMPS_TEST_URI }}
@@ -127,7 +144,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25.10"
+          go-version: "1.26.10"
           check-latest: true
 
       - name: Stress check

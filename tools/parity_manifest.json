@@ -1,4 +1,12 @@
 {
+  "behavior_review": {
+    "reference_version": "5.3.5.14",
+    "verified_on": "2026-11-01",
+    "inventory": "docs/behavior_parity_inventory.md",
+    "report": "docs/behavior_parity_second_audit.md",
+    "resolution": "docs/behavior_parity_second_fixes.md",
+    "symbol_presence_is_not_behavioral_equivalence": true
+  },
   "source_headers": [
     "include/amps/ampsplusplus.hpp",
     "include/amps/HAClient.hpp",
@@ -293,5 +301,13 @@
     {"cpp_symbol": "amps_get_thread_create_count", "go_target": "amps/capi:func:GetThreadCreateCount"},
     {"cpp_symbol": "amps_get_thread_join_count", "go_target": "amps/capi:func:GetThreadJoinCount"},
     {"cpp_symbol": "amps_get_thread_detach_count", "go_target": "amps/capi:func:GetThreadDetachCount"}
-  ]
+  ],
+  "cpp_fakeamps_review": {
+    "reference_version": "5.3.5.14",
+    "verified_on": "2026-11-02",
+    "report": "docs/cpp_fakeamps_interop.md",
+    "native_runner": "tools/cppfakeamps/run.py",
+    "formal_runner": "tools/formalcheck/cpp_check.py",
+    "real_server_tested": false
+  }
 }
