@@ -111,20 +111,22 @@ Pre-production validation adds heavier checks that are useful before a cut or de
 
 `make release` now flows through the pre-production gate before the existing unit, race, build, fake broker, and parity steps.
 
-`stress-check` defaults to `STRESS_COUNT=20`, `STRESS_SHUFFLE=on`, and
-`STRESS_PKG=./...`, including fakeamps and its gate. It first repeats unit tests
-within each test process, then starts two ephemeral fakeamps endpoints and
-repeats the client and broker integration suites with the race detector and
-shuffle. Integration runs receive the endpoints automatically and do not need
-`AMPS_TEST_URI` supplied by the caller. Each integration iteration starts new
-test processes with `-count=1`; any failure stops the gate immediately. These
-are repetitions, not retries of failed tests. Internal deadlines and Go's
-default per-process test timeout are unchanged.
+`stress-check` defaults to `STRESS_COUNT=20`, `STRESS_SHUFFLE=on`,
+`STRESS_WORKERS=2`, and `STRESS_PKG=./...`, including fakeamps and its gate.
+It first repeats unit tests within each test process, then repeats the client
+and broker integration suites with the race detector and shuffle. Each worker
+has its own pair of ephemeral fakeamps endpoints, which the client tests
+receive automatically without `AMPS_TEST_URI` supplied by the caller. Each
+iteration starts new test processes with `-count=1`. A failure stops new
+iterations; already-running iterations finish before their brokers are
+cleaned up. These are repetitions, not retries of failed tests. Internal
+deadlines and Go's default per-process test timeout are unchanged.
 
 For a reproducible ordering, set `STRESS_SHUFFLE` to the reported numeric seed.
 `STRESS_PKG` customizes the unit package selection; both integration suites
-always run. The existing CI, nightly and release repetition counts remain 2,
-5 and 3 respectively.
+always run. Set `STRESS_WORKERS=1` for sequential integration iterations. The
+existing CI, nightly and release repetition counts remain 2, 5 and 3
+respectively.
 
 Toolchain compatibility, security, and performance are separate gates. The module
 keeps its Go 1.25 language floor and prefers Go 1.26.10. Make exports the exact
@@ -152,13 +154,13 @@ do not justify a performance release or baseline refresh.
 
 ## CI and Release Automation
 
-- `ci.yml` runs Ubuntu analysis, a cross-platform Go test/build matrix, and a main-branch pre-prod smoke job.
+- `ci.yml` runs Ubuntu analysis, a cross-platform Go test/build matrix, a blocking paired performance job for PRs and pushes, and a main-branch pre-prod smoke job.
 - `nightly-analysis.yml` runs the heavier `make preprod-check` lane on a schedule and optionally exercises a live AMPS broker.
 - `release.yml` runs `make release-hosted` with the expanded pre-production gate and an optional live-broker smoke before publishing.
 
 The repository also runs a separate GitHub CodeQL workflow with `security-and-quality` queries for deeper code scanning on pull requests, pushes to `main`, and a weekly schedule.
 
-The CI workflow publishes a required `validate` status only after both the blocking analysis job and every cross-platform test-matrix entry succeed. Branch protection should require this aggregate status.
+The CI workflow publishes a required `validate` status only after the blocking analysis and performance jobs and every cross-platform test-matrix entry succeed. Branch protection should require this aggregate status.
 
 `make vuln-scan` runs `govulncheck` with the pinned patched Go toolchain and is part of the blocking `make scan` merge gate. Keep that toolchain current so standard-library findings reflect the release runtime rather than a stale compiler patch.
 
@@ -193,14 +195,18 @@ Tracked files:
 
 Performance gate policy:
 
-- Regression is measured against `tools/perf_baseline.json`
-- `tools/perfgate` collects repeated samples and compares the median result for each benchmark
-- if a benchmark initially fails, `tools/perfgate` reruns only that failing subset with a longer benchtime before declaring the gate red
-- Allowed regression threshold is `10%` for both `ns/op` and `allocs/op`, unless a benchmark is assigned to a baseline group with an explicit override
+- `tools/perf_baseline.json` and the reference in `tools/perf_reference.json` are fixed inputs.
+- The candidate and reference run in six alternating pairs on the same runner with the same exact Go 1.26.10 toolchain.
+- Each candidate `ns/op` is normalized using its paired reference result and the committed baseline. For each benchmark, all pairs within the existing limit pass, all outside fail, and a mixture blocks as inconclusive. No result is rescued by a retry or median.
+- The existing `10%` default and `25%` group override, 0.1 ns comparison slack, and allocation budgets remain unchanged. Any allocation-budget violation fails the gate.
+- Raw samples, provenance and `report.json` are retained under `.tmp/perf/gate/<runid>/` and uploaded by CI, nightly and release workflows even when the gate fails.
 
 Required output:
 
-- `perf gate: PASS`
+- A successful `PASS` result; `FAIL` or `INCONCLUSIVE` blocks verification.
+
+The method, reference provenance, historical host variance, and troubleshooting
+are documented in [Performance Gate](performance_gate.md).
 
 ## Integration Environment Contract
 

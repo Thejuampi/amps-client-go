@@ -9,12 +9,18 @@ import (
 
 // Lookup table for O(1) JSON whitespace detection.
 var jsonWhitespaceLookup [256]bool
+var jsonStringStopLookup [256]bool
 
 func init() {
 	jsonWhitespaceLookup[' '] = true
 	jsonWhitespaceLookup['\n'] = true
 	jsonWhitespaceLookup['\r'] = true
 	jsonWhitespaceLookup['\t'] = true
+	for index := 0; index < 0x20; index++ {
+		jsonStringStopLookup[index] = true
+	}
+	jsonStringStopLookup['"'] = true
+	jsonStringStopLookup['\\'] = true
 }
 
 // Message stores exported state used by AMPS client APIs.
@@ -128,7 +134,7 @@ func parseHeaderInto(target *_Header, array []byte) ([]byte, error) {
 				}
 			}
 			if array[1] == 'c' && array[2] == '"' && array[3] == ':' && array[4] == '"' {
-				if end, ok := parseHeaderTrustedCTSubID(target, array, 0); ok {
+				if end, ok := parseHeaderTrustedCTSubIDAfterPrefix(target, array, 5); ok {
 					return array[end:], nil
 				}
 			}
@@ -140,7 +146,7 @@ func parseHeaderInto(target *_Header, array []byte) ([]byte, error) {
 					}
 				}
 				if len(array) > 6 && array[2] == 'c' && array[3] == '"' && array[4] == ':' && array[5] == '"' {
-					if end, ok := parseHeaderTrustedCTSubID(target, array, 1); ok {
+					if end, ok := parseHeaderTrustedCTSubIDAfterPrefix(target, array, 6); ok {
 						return array[end:], nil
 					}
 				}
@@ -277,12 +283,21 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 	if array[index] != '"' || array[index+1] != 'c' || array[index+2] != '"' || array[index+3] != ':' || array[index+4] != '"' {
 		return 0, false
 	}
+	return parseHeaderTrustedCTSubIDAfterPrefix(header, array, index+5)
+}
 
-	var i = index + 5
+func parseHeaderTrustedCTSubIDAfterPrefix(header *_Header, array []byte, i int) (int, bool) {
+	var n = len(array)
 	var cmdStart int
 	var cmdEnd int
-	if i+1 < n && array[i+1] == '"' {
-		if array[i] == '\\' || array[i] < 0x20 {
+	var shortPublish bool
+	if i+1 < n && array[i] == 'p' && array[i+1] == '"' {
+		cmdStart = i
+		cmdEnd = i + 1
+		i = cmdEnd
+		shortPublish = true
+	} else if i+1 < n && array[i+1] == '"' {
+		if jsonStringStopLookup[array[i]] {
 			return 0, false
 		}
 		cmdStart = i
@@ -290,13 +305,10 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 		i = cmdEnd
 	} else {
 		cmdStart = i
-		for i < n && array[i] != '"' {
-			if array[i] == '\\' || array[i] < 0x20 {
-				return 0, false
-			}
+		for i < n && !jsonStringStopLookup[array[i]] {
 			i++
 		}
-		if i >= n {
+		if i >= n || array[i] != '"' {
 			return 0, false
 		}
 		cmdEnd = i
@@ -310,13 +322,10 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 
 	var topicStart = i + 7
 	i = topicStart
-	for i < n && array[i] != '"' {
-		if array[i] == '\\' || array[i] < 0x20 {
-			return 0, false
-		}
+	for i < n && !jsonStringStopLookup[array[i]] {
 		i++
 	}
-	if i >= n || i+11 >= n {
+	if i >= n || array[i] != '"' || i+11 >= n {
 		return 0, false
 	}
 	var topicEnd = i
@@ -326,18 +335,15 @@ func parseHeaderTrustedCTSubID(header *_Header, array []byte, index int) (int, b
 
 	var subIDStart = i + 12
 	i = subIDStart
-	for i < n && array[i] != '"' {
-		if array[i] == '\\' || array[i] < 0x20 {
-			return 0, false
-		}
+	for i < n && !jsonStringStopLookup[array[i]] {
 		i++
 	}
-	if i >= n || i+1 >= n || array[i+1] != '}' {
+	if i >= n || array[i] != '"' || i+1 >= n || array[i+1] != '}' {
 		return 0, false
 	}
 	var subIDEnd = i
 
-	if cmdEnd == cmdStart+1 && array[cmdStart] == 'p' {
+	if shortPublish {
 		header.command = CommandPublish
 	} else if cmdEnd == cmdStart+7 &&
 		array[cmdStart] == 'p' &&

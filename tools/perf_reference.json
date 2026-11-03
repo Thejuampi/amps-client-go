@@ -1,0 +1,6 @@
+{
+  "commit": "831ab636ae5e76cd06880edafb55d3e39d3bd7dd",
+  "toolchain": "go1.26.10",
+  "baseline_sha256": "64db5a6cdee1ad878ba73c6a2b305fc14d10c1874b93cdd3f541d0318b515539",
+  "benchmark_sha256": "aaa21566db17cfa5d09a3acf3413dc7076dd3035c714470f987ed2cee397912e"
+}

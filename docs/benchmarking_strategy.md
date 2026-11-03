@@ -62,19 +62,22 @@ Sub-benchmark dimensions order:
 
 1. Environment controls
 
-- Fixed host class and low background load.
+- Run the pinned reference and candidate on the same runner under low background load.
 - Fixed fake server flags and payload profiles.
 - Fixed capture settings (`samples`, benchtime, timeout).
 
 1. Go baseline
 
-- Keep `tools/perf_baseline.json` for stable micro gates.
-- The module minimum is Go 1.25, and Go 1.25.13 remains the release/performance default unless same-host A/B proof shows Go 1.26.3 is faster.
-- Use `make perf-compare-toolchains` before a toolchain-driven performance release. It runs the baseline benchmark set with Go 1.25.13 and Go 1.26.3, stores raw outputs under `.tmp/perf/`, and writes a benchstat report.
-- Do not recapture `tools/perf_baseline.json` or publish a performance release when the Go 1.26.3 comparison is neutral, noisy, slower, or shows unexplained allocation regressions.
-- `tools/perfgate` evaluates repeated samples and uses the median result per benchmark to reduce single-run noise.
-- Use benchmark groups in `tools/perf_baseline.json` only for known volatile microbenchmarks; keep the default threshold for the rest.
+- Keep `tools/perf_baseline.json` unchanged and use `tools/perf_reference.json` to pin the reference commit, benchmark harness, and Go 1.26.10 toolchain.
+- The module minimum remains Go 1.25; Go 1.25.13 is the compatibility toolchain and Go 1.26.10 is the release and performance toolchain.
+- `make perf-check` compares six alternating same-runner pairs for each benchmark; every pair is evaluated, with mixed results blocking as inconclusive.
+- Use `make perf-compare-toolchains` for a diagnostic comparison of exact Go 1.25.13 and Go 1.27.3; it stores raw outputs and a benchstat report under `.tmp/perf/`.
+- Do not refresh `tools/perf_baseline.json` or promote a performance-only release for neutral or noisy comparisons, or for unexplained allocation regressions.
+- Keep the existing benchmark group overrides in the baseline and the unchanged default threshold for the rest.
 - Capture tails with `tools/perfreport capture-go` for broader profiles.
+
+The full pairing, normalization, result, and artifact contract is in
+[Performance Gate](performance_gate.md).
 
 1. Internal comparison artifacts
 
@@ -90,16 +93,10 @@ Sub-benchmark dimensions order:
 
 ## Gate Policy
 
-PR (`micro` and selected `component`):
-
-- `ns/op` regression > 7% fails.
-- `allocs/op` regression > 5% (or +1 alloc for small baselines) fails.
-
-Nightly (`integration`, `ha_integration`, `soak`):
-
-- Alert on >10% regressions.
-- Fail nightly after two consecutive breaches.
-- HA reconnect/recovery regressions >15% follow same policy.
+The blocking micro gate applies the committed 10% default or 25% configured
+group limit, plus the existing 0.1 ns comparison slack. Each candidate sample
+must also meet its committed allocation budget. PR, push, nightly and release
+gates use the same rules; `FAIL` and `INCONCLUSIVE` both block.
 
 ## Tooling Targets
 

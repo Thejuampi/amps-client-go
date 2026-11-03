@@ -33,8 +33,8 @@ func TestSummarizeBenchOutputUsesMedianSamples(t *testing.T) {
 	if summary["BenchmarkFoo"].NSOp != 11 {
 		t.Fatalf("expected median ns/op 11, got %v", summary["BenchmarkFoo"].NSOp)
 	}
-	if summary["BenchmarkFoo"].AllocsOp != 2 {
-		t.Fatalf("expected median allocs/op 2, got %v", summary["BenchmarkFoo"].AllocsOp)
+	if summary["BenchmarkFoo"].AllocsOp != 3 {
+		t.Fatalf("expected maximum allocs/op 3, got %v", summary["BenchmarkFoo"].AllocsOp)
 	}
 }
 
@@ -64,7 +64,7 @@ func TestFinalFailureExitCodeFailsRegressions(t *testing.T) {
 	}
 }
 
-func TestRunPerfGatePassesAfterConfirmatoryRerun(t *testing.T) {
+func TestRunPerfGateCollectsOneFixedSampleWithoutFavorableRetries(t *testing.T) {
 	baseline := baselineFile{
 		MaxRegression: 10,
 		Benchmarks: map[string]benchmarkBaseline{
@@ -93,21 +93,21 @@ func TestRunPerfGatePassesAfterConfirmatoryRerun(t *testing.T) {
 		}, nil
 	}
 
-	attempts, err := runPerfGate(runner, baseline, 10, []string{"BenchmarkBar", "BenchmarkFoo"}, "1s", 5, "2s", 7, 1)
+	attempts, err := runPerfGate(runner, baseline, 10, []string{"BenchmarkBar", "BenchmarkFoo"}, "1s", 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(attempts) != 2 {
-		t.Fatalf("expected two attempts, got %d", len(attempts))
+	if len(attempts) != 1 {
+		t.Fatalf("expected one fixed sample, got %d", len(attempts))
 	}
-	if len(attempts[1].Failures) != 0 {
-		t.Fatalf("expected confirmatory rerun to clear failures, got %d", len(attempts[1].Failures))
+	if len(attempts[0].Failures) != 1 {
+		t.Fatalf("expected the regression to remain visible, got %d", len(attempts[0].Failures))
 	}
-	if len(namesPerCall) != 2 || len(namesPerCall[1]) != 1 || namesPerCall[1][0] != "BenchmarkFoo" {
-		t.Fatalf("expected rerun to target only failing benchmark, got %#v", namesPerCall)
+	if len(namesPerCall) != 1 || len(namesPerCall[0]) != 2 {
+		t.Fatalf("expected one collection of all benchmarks, got %#v", namesPerCall)
 	}
-	if attempts[1].Benchtime != "2s" || attempts[1].Samples != 7 {
-		t.Fatalf("expected retry settings to apply, got benchtime=%q samples=%d", attempts[1].Benchtime, attempts[1].Samples)
+	if attempts[0].Benchtime != "1s" || attempts[0].Samples != 5 {
+		t.Fatalf("unexpected fixed collection settings: %+v", attempts[0])
 	}
 }
 
@@ -126,17 +126,17 @@ func TestRunPerfGateFailsWhenConfirmatoryRerunStillFails(t *testing.T) {
 		}, nil
 	}
 
-	attempts, err := runPerfGate(runner, baseline, 10, []string{"BenchmarkFoo"}, "1s", 5, "2s", 5, 1)
+	attempts, err := runPerfGate(runner, baseline, 10, []string{"BenchmarkFoo"}, "1s", 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(attempts) != 2 {
-		t.Fatalf("expected two attempts, got %d", len(attempts))
+	if len(attempts) != 1 {
+		t.Fatalf("expected one sample, got %d", len(attempts))
 	}
-	if len(attempts[1].Failures) != 1 {
-		t.Fatalf("expected final failure to persist, got %d", len(attempts[1].Failures))
+	if len(attempts[0].Failures) != 1 {
+		t.Fatalf("expected final failure to persist, got %d", len(attempts[0].Failures))
 	}
-	if attempts[1].Failures[0].Name != "BenchmarkFoo" {
-		t.Fatalf("unexpected failing benchmark %q", attempts[1].Failures[0].Name)
+	if attempts[0].Failures[0].Name != "BenchmarkFoo" {
+		t.Fatalf("unexpected failing benchmark %q", attempts[0].Failures[0].Name)
 	}
 }

@@ -44,7 +44,7 @@ If you're building on AMPS and you need a Go-native client that doesn't compromi
 
 ## Performance: Internal Regression Benchmarks
 
-Every hot path in the client is micro-benchmarked and tracked across commits. Here are the current numbers at p95 (20 samples each):
+These historical internal p95 snapshots use 20 samples each; timings depend on the host and are not a result for the current checkout:
 
 | Hot Path | p95 (ns/op) | Allocs/Op |
 |:---|---:|---:|
@@ -63,7 +63,7 @@ Every hot path in the client is micro-benchmarked and tracked across commits. He
 ### How We Measure
 
 - **Methodology**: `go test -bench=. -benchtime=1s -count=20` with nearest-rank percentile extraction  
-- **Regression gates**: the blocking perf gate runs in `main` pre-production and release workflows against committed baselines; pull requests still run the broader scan, test, and coverage matrix  
+- **Regression gates**: pull requests, pushes to `main`, nightly analysis, and releases run the paired gate against the committed baseline and reference; see the [performance gate method](docs/performance_gate.md)
 - **Artifacts**: internal Go baseline data is committed in [`tools/perf_tail_baseline.json`](tools/perf_tail_baseline.json), [`tools/perf_tail_current.json`](tools/perf_tail_current.json), and [`tools/perf_tail_comparison.json`](tools/perf_tail_comparison.json)
 - **Publication safety**: external-client comparison results remain untracked unless publication is expressly authorized; `make publication-scan` enforces this policy
 

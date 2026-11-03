@@ -459,7 +459,7 @@ func (client *Client) applyAckBookkeeping(message *Message) {
 
 func (client *Client) callGlobalCommandTypeHandler(commandType int, message *Message) (error, bool) {
 	state := ensureClientState(client)
-	if state == nil {
+	if state == nil || !state.hasGlobalHandlers.Load() {
 		return nil, false
 	}
 
@@ -1326,6 +1326,7 @@ func (client *Client) SetGlobalCommandTypeMessageHandler(commandType int, handle
 	} else {
 		state.globalCommandHandlers[commandType] = handler
 	}
+	state.hasGlobalHandlers.Store(len(state.globalCommandHandlers) != 0)
 	state.lock.Unlock()
 	return client
 }

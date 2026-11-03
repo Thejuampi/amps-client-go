@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,8 +35,13 @@ type baselineFile struct {
 }
 
 type benchmarkResult struct {
-	NSOp     float64
-	AllocsOp float64
+	NSOp       float64 `json:"ns_op"`
+	AllocsOp   float64 `json:"allocs_op"`
+	BytesOp    float64 `json:"bytes_op"`
+	N          uint64  `json:"n"`
+	MemAllocs  uint64  `json:"mem_allocs"`
+	MemBytes   uint64  `json:"mem_bytes"`
+	DurationNS int64   `json:"duration_ns"`
 }
 
 type gateFailure struct {
@@ -44,8 +50,10 @@ type gateFailure struct {
 }
 
 type benchmarkRun struct {
-	Output  string
-	Summary map[string]benchmarkResult
+	Output       string
+	Summary      map[string]benchmarkResult
+	Measurements map[string][]benchmarkResult
+	Environment  benchmarkEnvironment
 }
 
 type gateAttempt struct {
@@ -111,21 +119,25 @@ func medianFloat64(values []float64) float64 {
 	}
 	var sorted = slices.Clone(values)
 	slices.Sort(sorted)
-	return sorted[len(sorted)/2]
+	var middle = len(sorted) / 2
+	if len(sorted)%2 == 0 {
+		return sorted[middle-1]/2 + sorted[middle]/2
+	}
+	return sorted[middle]
 }
 
 func summarizeBenchOutput(parsed map[string][]benchmarkResult) map[string]benchmarkResult {
 	summary := make(map[string]benchmarkResult, len(parsed))
 	for name, samples := range parsed {
 		nsValues := make([]float64, 0, len(samples))
-		allocValues := make([]float64, 0, len(samples))
+		var maxAllocs float64
 		for _, sample := range samples {
 			nsValues = append(nsValues, sample.NSOp)
-			allocValues = append(allocValues, sample.AllocsOp)
+			maxAllocs = max(maxAllocs, sample.AllocsOp)
 		}
 		summary[name] = benchmarkResult{
 			NSOp:     medianFloat64(nsValues),
-			AllocsOp: medianFloat64(allocValues),
+			AllocsOp: maxAllocs,
 		}
 	}
 	return summary
@@ -162,12 +174,13 @@ func runGoBenchmarks(packagePath string) benchmarkRunner {
 		var pattern = benchmarkPattern(names)
 		command := exec.Command("go", "test", packagePath, "-run", "^$", "-bench", pattern, "-benchmem", "-count="+strconv.Itoa(samples), "-benchtime="+benchtime) // #nosec G204 -- arguments are passed without shell expansion
 		hiddenprocess.HideConsole(command)
+		command.Env = benchmarkEnv(runtime.Version())
 		outputBytes, err := command.CombinedOutput()
 		output := string(outputBytes)
-		return benchmarkRun{
-			Output:  output,
-			Summary: summarizeBenchOutput(parseBenchOutput(output)),
-		}, err
+		if err != nil {
+			return benchmarkRun{Output: output}, err
+		}
+		return parseBenchmarkRun(output, names, samples, 4)
 	}
 }
 
@@ -185,6 +198,10 @@ func benchmarkFailures(baseline baselineFile, results map[string]benchmarkResult
 				Name:    name,
 				Message: fmt.Sprintf("missing benchmark result: %s", name),
 			})
+			continue
+		}
+		if !validMetric(actual) || !validMetric(benchmarkResult{NSOp: expected.NSOp, AllocsOp: expected.AllocsOp}) {
+			failures = append(failures, gateFailure{Name: name, Message: fmt.Sprintf("%s: invalid measurement or baseline", name)})
 			continue
 		}
 
@@ -232,45 +249,12 @@ func failureNames(failures []gateFailure) []string {
 	return slices.Compact(names)
 }
 
-func runPerfGate(runner benchmarkRunner, baseline baselineFile, defaultRegression float64, names []string, benchtime string, samples int, retryBenchtime string, retrySamples int, retryCount int) ([]gateAttempt, error) {
-	if retryBenchtime == "" {
-		retryBenchtime = benchtime
-	}
-	if retrySamples <= 0 {
-		retrySamples = samples
-	}
-
-	var attempts []gateAttempt
-	var currentNames = slices.Clone(names)
-	var currentBenchtime = benchtime
-	var currentSamples = samples
-
-	for attemptIndex := 0; ; attemptIndex++ {
-		var attemptName = "initial"
-		if attemptIndex > 0 {
-			attemptName = fmt.Sprintf("confirmatory rerun %d", attemptIndex)
-		}
-
-		run, err := runner(currentNames, currentBenchtime, currentSamples)
-		var failures = benchmarkFailures(baseline, run.Summary, defaultRegression, currentNames)
-		attempts = append(attempts, gateAttempt{
-			Name:      attemptName,
-			Benchtime: currentBenchtime,
-			Samples:   currentSamples,
-			Failures:  failures,
-			Output:    run.Output,
-		})
-		if err != nil {
-			return attempts, err
-		}
-		if len(failures) == 0 || attemptIndex >= retryCount {
-			return attempts, nil
-		}
-
-		currentNames = failureNames(failures)
-		currentBenchtime = retryBenchtime
-		currentSamples = retrySamples
-	}
+func runPerfGate(runner benchmarkRunner, baseline baselineFile, defaultRegression float64, names []string, benchtime string, samples int) ([]gateAttempt, error) {
+	var run, err = runner(names, benchtime, samples)
+	return []gateAttempt{{
+		Name: "fixed sample", Benchtime: benchtime, Samples: samples,
+		Failures: benchmarkFailures(baseline, run.Summary, defaultRegression, names), Output: run.Output,
+	}}, err
 }
 
 func finalFailureExitCode(finalFailures []gateFailure, reportOnly bool) int {
@@ -281,16 +265,28 @@ func finalFailureExitCode(finalFailures []gateFailure, reportOnly bool) int {
 }
 
 func main() {
+	mode := flag.String("mode", "paired", "paired gate, or absolute diagnostic (requires -report-only)")
 	baselinePath := flag.String("baseline", "tools/perf_baseline.json", "path to benchmark baseline JSON")
+	referencePath := flag.String("reference", "tools/perf_reference.json", "immutable performance reference manifest")
+	outputPath := flag.String("output", ".tmp/perf/gate", "parent directory for raw observations and JSON reports")
+	pairs := flag.Int("pairs", requiredPairs, "number of alternating reference/candidate pairs (exactly six)")
 	packagePath := flag.String("package", "./amps", "package path for benchmarks")
 	benchtime := flag.String("benchtime", "1s", "go test benchmark duration")
 	samples := flag.Int("samples", 5, "number of benchmark samples to collect")
-	retryCount := flag.Int("retry-count", 2, "number of confirmatory reruns for initially failing benchmarks")
-	retryBenchtime := flag.String("retry-benchtime", "2s", "go test benchmark duration for confirmatory reruns")
-	retrySamples := flag.Int("retry-samples", 5, "number of benchmark samples to collect for confirmatory reruns")
 	maxRegression := flag.Float64("max-regression", 10.0, "max allowed regression percentage")
 	reportOnly := flag.Bool("report-only", false, "print benchmark output and threshold failures without failing on regressions")
 	flag.Parse()
+	if *mode != "paired" && *mode != "absolute" || *mode == "absolute" && !*reportOnly {
+		fmt.Fprintln(os.Stderr, "absolute timings are diagnostic only; use the paired gate or -mode absolute -report-only")
+		os.Exit(1)
+	}
+	if *mode == "paired" && (*reportOnly || *maxRegression != 10 || *packagePath != "./amps") {
+		fmt.Fprintln(os.Stderr, "paired gate uses the committed AMPS baseline and budgets; report-only and budget/package overrides are diagnostic only")
+		os.Exit(1)
+	}
+	if *mode == "paired" {
+		os.Exit(executePaired(*baselinePath, *referencePath, *outputPath, *benchtime, *pairs))
+	}
 
 	data, err := os.ReadFile(*baselinePath)
 	if err != nil {
@@ -314,12 +310,9 @@ func main() {
 	}
 
 	var benchmarkNames = benchmarkNamesForBaseline(baseline)
-	var attempts, runErr = runPerfGate(runGoBenchmarks(*packagePath), baseline, defaultRegression, benchmarkNames, *benchtime, *samples, *retryBenchtime, *retrySamples, *retryCount)
+	var attempts, runErr = runPerfGate(runGoBenchmarks(*packagePath), baseline, defaultRegression, benchmarkNames, *benchtime, *samples)
 	for _, attempt := range attempts {
 		fmt.Print(attempt.Output)
-		if len(attempt.Failures) > 0 && attempt.Name != attempts[len(attempts)-1].Name {
-			fmt.Printf("perf gate: %s found %d issue(s); rerunning only failing benchmark(s) with benchtime=%s count=%d\n", attempt.Name, len(attempt.Failures), *retryBenchtime, *retrySamples)
-		}
 	}
 	if runErr != nil {
 		fmt.Fprintf(os.Stderr, "benchmark command failed: %v\n", runErr)
@@ -327,20 +320,7 @@ func main() {
 	}
 
 	var finalFailures = attempts[len(attempts)-1].Failures
-	if len(finalFailures) == 0 {
-		if len(attempts) > 1 {
-			fmt.Println("perf gate: PASS after confirmatory rerun")
-			return
-		}
-		fmt.Println("perf gate: PASS")
-		return
-	}
-
-	if *reportOnly {
-		fmt.Println("perf gate: REPORT ONLY")
-	} else {
-		fmt.Println("perf gate: FAIL")
-	}
+	fmt.Println("perf gate: REPORT ONLY (absolute times are not comparable across hardware)")
 	for _, failure := range finalFailures {
 		fmt.Printf("- %s\n", failure.Message)
 	}

@@ -207,6 +207,7 @@ type clientParityState struct {
 	unhandledHandler       func(*Message) error
 	lastChanceHandler      func(*Message) error
 	globalCommandHandlers  map[int]func(*Message) error
+	hasGlobalHandlers      atomic.Bool
 	connectionListeners    map[uintptr]ConnectionStateListener
 	httpPreflightHeaders   []string
 	transportFilter        TransportFilter
