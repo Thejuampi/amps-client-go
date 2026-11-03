@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 	"github.com/gorilla/websocket"
 )
 
@@ -375,7 +376,11 @@ func (wc *websocketNetConn) readFrame() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(frame)-4))
+	var frameLength, ok = safecast.Uint32FromIntChecked(len(frame) - 4)
+	if !ok {
+		return nil, NewError(ProtocolError, "AMPS WebSocket frame length exceeds uint32 bounds")
+	}
+	binary.BigEndian.PutUint32(frame[:4], frameLength)
 	return frame, nil
 }
 
@@ -412,11 +417,15 @@ func (wc *websocketNetConn) readSOWRecord() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	var frameLength, ok = safecast.Uint32FromIntChecked(len(frame) - 4)
+	if !ok {
+		return nil, NewError(ProtocolError, "AMPS WebSocket frame length exceeds uint32 bounds")
+	}
 	wc.sowRemaining--
 	if wc.sowRemaining == 0 {
 		wc.sowHeader = nil
 	}
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(frame)-4))
+	binary.BigEndian.PutUint32(frame[:4], frameLength)
 	return frame, nil
 }
 

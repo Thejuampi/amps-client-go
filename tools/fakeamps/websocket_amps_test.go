@@ -161,6 +161,43 @@ func TestAMPSWebSocketWriteRejectsInvalidFrames(t *testing.T) {
 	}
 }
 
+func TestAMPSWebSocketNumberFieldBoundaries(t *testing.T) {
+	var cases = []struct {
+		name      string
+		header    string
+		value     int
+		want      string
+		wantError bool
+	}{
+		{"negative absent", `{"c":"p"}`, -1, "", true},
+		{"negative present", `{"c":"p","l":0}`, -1, "", true},
+		{"zero absent", `{"c":"p"}`, 0, `{"c":"p","l":0}`, false},
+		{"zero present", `{"c":"p","l":0}`, 0, `{"c":"p","l":0}`, false},
+		{"positive absent", `{"c":"p"}`, 3, `{"c":"p","l":3}`, false},
+		{"positive present", `{"c":"p","l":3}`, 3, `{"c":"p","l":3}`, false},
+		{"mismatch", `{"c":"p","l":2}`, 3, "", true},
+	}
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			var header, _, fields, err = ampsWebSocketObject([]byte(entry.header))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []byte
+			got, err = ampsWebSocketNumberField(header, fields, "l", entry.value)
+			if entry.wantError {
+				if err == nil || got != nil {
+					t.Fatalf("got %q, %v; want error", got, err)
+				}
+				return
+			}
+			if err != nil || string(got) != entry.want {
+				t.Fatalf("got %q, %v; want %q", got, err, entry.want)
+			}
+		})
+	}
+}
+
 type failingOnceAMPSWebSocketConn struct {
 	written  bytes.Buffer
 	failAt   int

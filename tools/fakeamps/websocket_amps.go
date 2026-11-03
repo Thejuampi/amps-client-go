@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 )
 
 const ampsWebSocketMaxParts = 1 << 20
@@ -99,7 +101,11 @@ func (c *ampsWebsocketConn) readCommand() ([]byte, error) {
 		}
 		frame = append(frame, payload...)
 	}
-	binary.BigEndian.PutUint32(frame[:4], uint32(len(frame)-4))
+	var frameLength, ok = safecast.Uint32FromIntChecked(len(frame) - 4)
+	if !ok {
+		return nil, errors.New("AMPS websocket command too large")
+	}
+	binary.BigEndian.PutUint32(frame[:4], frameLength)
 	return frame, nil
 }
 
@@ -256,8 +262,8 @@ func (c *ampsWebsocketConn) writeAMPSFrame(frame []byte) error {
 			if sizeErr != nil || !present || size > uint64(len(rest)) {
 				return errors.New("invalid AMPS websocket SOW record length")
 			}
-			records = append(records, ampsWebSocketMessage{1, recordHeader}, ampsWebSocketMessage{payloadOpcode, rest[:int(size)]})
-			body = rest[int(size):]
+			records = append(records, ampsWebSocketMessage{1, recordHeader}, ampsWebSocketMessage{payloadOpcode, rest[:size]})
+			body = rest[size:]
 		}
 		header, err = ampsWebSocketNumberField(header, fields, "bs", len(records)/2)
 		if err != nil {
@@ -315,12 +321,16 @@ func ampsWebSocketObject(data []byte) ([]byte, []byte, map[string]json.RawMessag
 }
 
 func ampsWebSocketNumberField(header []byte, fields map[string]json.RawMessage, name string, value int) ([]byte, error) {
+	var unsignedValue, ok = safecast.Uint64FromIntChecked(value)
+	if !ok {
+		return nil, fmt.Errorf("invalid AMPS websocket %s", name)
+	}
 	var got, present, err = ampsWebSocketInteger(fields, name)
 	if err != nil {
 		return nil, err
 	}
 	if present {
-		if got != uint64(value) {
+		if got != unsignedValue {
 			return nil, fmt.Errorf("inconsistent AMPS websocket %s", name)
 		}
 		return header, nil

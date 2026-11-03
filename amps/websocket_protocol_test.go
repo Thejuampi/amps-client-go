@@ -12,14 +12,45 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Thejuampi/amps-client-go/internal/safecast"
 	"github.com/gorilla/websocket"
 )
+
+func TestWebSocketCheckedFrameLengthBoundaries(t *testing.T) {
+	type frameLengthCase struct {
+		name  string
+		input int
+		want  uint32
+		ok    bool
+	}
+	var cases = []frameLengthCase{
+		{"negative", -1, 0, false},
+		{"zero", 0, 0, true},
+		{"one", 1, 1, true},
+	}
+	if strconv.IntSize == 64 {
+		var maximum = uint64(^uint32(0))
+		cases = append(cases,
+			frameLengthCase{"maximum", int(maximum), ^uint32(0), true},
+			frameLengthCase{"overflow", int(maximum + 1), 0, false},
+		)
+	}
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			var got, ok = safecast.Uint32FromIntChecked(entry.input)
+			if got != entry.want || ok != entry.ok {
+				t.Fatalf("checked length %d = %d, %t; want %d, %t", entry.input, got, ok, entry.want, entry.ok)
+			}
+		})
+	}
+}
 
 func TestWebSocketProtocolConnectAndLogon(t *testing.T) {
 	var results = make(chan error, 1)

@@ -580,7 +580,6 @@ type _MessageQueue struct {
 
 	lock       sync.Mutex
 	notEmptyCh chan struct{}
-	notFull    *sync.Cond
 	waiters    uint64
 }
 
@@ -590,7 +589,6 @@ func newQueue(initialSize uint64) *_MessageQueue {
 		ring:       make([]*Message, initialSize),
 		notEmptyCh: make(chan struct{}),
 	}
-	queue.notFull = sync.NewCond(&queue.lock)
 	return queue
 }
 
@@ -670,7 +668,6 @@ func (queue *_MessageQueue) dequeueLocked() *Message {
 		queue.last = 0
 	}
 
-	queue.notFull.Signal()
 	return message
 }
 
@@ -765,31 +762,26 @@ func (queue *_MessageQueue) clear() {
 	queue.closed = false
 
 	queue.ring = make([]*Message, queue.capacity)
-	queue.notFull.Broadcast()
 }
 
 func (queue *_MessageQueue) close() {
 	queue.lock.Lock()
 	queue.closed = true
 	queue.notifyNotEmptyLocked()
-	queue.notFull.Broadcast()
 	queue.lock.Unlock()
 }
 
 func (queue *_MessageQueue) resize() {
 	newRing := make([]*Message, queue.capacity*2)
 
-	currentLength := queue._length
-	i, j := queue.first, uint64(0)
-	for ; j < currentLength; j++ {
-		newRing[j] = queue.ring[i]
-		i = (i + 1) % queue.capacity
-	}
+	var firstLength = min(queue._length, queue.capacity-queue.first)
+	copy(newRing, queue.ring[queue.first:queue.first+firstLength])
+	copy(newRing[firstLength:], queue.ring[:queue._length-firstLength])
 
 	queue.ring = newRing
 	queue.first = 0
-	if j > 0 {
-		queue.last = j - 1
+	if queue._length > 0 {
+		queue.last = queue._length - 1
 	} else {
 		queue.last = 0
 	}
