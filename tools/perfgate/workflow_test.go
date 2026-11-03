@@ -113,6 +113,19 @@ func TestPerformanceMakeComparisonIsDiagnostic(t *testing.T) {
 	}
 }
 
+func TestSecurityMakeTargetsKeepScratchBuildsOutsideScanScope(t *testing.T) {
+	for _, target := range []string{"gosec-scan", "gosec-report"} {
+		t.Run(target, func(t *testing.T) {
+			var command = makeDryRun(t, target)
+			requireWorkflowText(t, command, "-exclude-dir=.tmp", "./...")
+			var exclusions = regexp.MustCompile(`(?:^|\s)-exclude-dir=([^\s]+)`).FindAllStringSubmatch(command, -1)
+			if len(exclusions) != 1 || exclusions[0][1] != ".tmp" || strings.Contains(command, "-exclude=") || strings.Contains(command, "-no-fail") {
+				t.Fatalf("security scan changes rule or source coverage: %s", command)
+			}
+		})
+	}
+}
+
 func TestPerformanceCIBlocksPullRequestsAndPushes(t *testing.T) {
 	var workflow = readPerformanceWorkflow(t, "ci.yml")
 	requireWorkflowText(t, workflow, "  pull_request:", "  push:")

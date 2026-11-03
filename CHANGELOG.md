@@ -17,6 +17,10 @@
 - Copy active queue entries in two contiguous spans when growing the ring,
   and remove an unused condition variable and its notifications. Preserve FIFO,
   depth rejection, close behavior and waiting consumers.
+- Avoid conflation-map locking for streams that have never enabled conflation;
+  preserve synchronization after activation, reconfiguration and close.
+- Keep GoSec's blocking and SARIF scans out of ignored compiler scratch files,
+  so parallel test builds cannot be mistaken for project sources.
 
 ## [1.1.0] - 2026-11-02
 

@@ -39,10 +39,11 @@ type MessageStream struct {
 	previousAckQueued bool
 	sowKeyMap         map[string]*Message
 
-	state    int32
-	depth    atomic.Uint64
-	timeout  atomic.Uint64
-	timedOut atomic.Bool
+	state         int32
+	everConflated atomic.Bool
+	depth         atomic.Uint64
+	timeout       atomic.Uint64
+	timedOut      atomic.Bool
 
 	queue *_MessageQueue
 
@@ -292,7 +293,7 @@ func (ms *MessageStream) handleWaitDequeueTimeoutResult(message *Message, ok boo
 }
 
 func (ms *MessageStream) consumeConflateState() {
-	if ms == nil || ms.current == nil {
+	if ms == nil || ms.current == nil || !ms.everConflated.Load() {
 		return
 	}
 
@@ -385,6 +386,8 @@ func (ms *MessageStream) Conflate() {
 	}
 
 	if ms.sowKeyMap == nil {
+		// A queued copy can be dequeued before its map entry is published.
+		ms.everConflated.Store(true)
 		ms.sowKeyMap = make(map[string]*Message)
 	}
 }

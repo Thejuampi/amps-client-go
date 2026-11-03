@@ -193,3 +193,26 @@ not replace the blocking gate or change its pinned harness.
 | 1,024 | yes | 5,182 | 1,658 |
 | 16,384 | no | 91,652 | 44,367 |
 | 16,384 | yes | 91,499 | 61,951 |
+
+The next hosted fixed-count run retained a concurrent-stream difference of
+20.98% to 32.08% across all six pairs at N=16,252,420. All sides assigned
+approximately 256 MiB and ran for more than one second. Three comparisons
+crossed the unchanged 25% budget; the gate remained inconclusive. Equal work
+removed the first confounder and did not erase the remaining difference.
+
+`consumeConflateState` also locked the map for every dequeued message before
+the stream had ever enabled conflation. An atomic, monotonic history marker
+now permits an early return only for those streams. The marker is published
+under the map lock before the first map is created, and never reset. Streams
+that have enabled conflation retain the original lock around key reads,
+identity checks and deletion, including a closed stream's drain.
+
+Race regressions exercise first activation, publication of an enqueued copy
+before its map entry, key replacement, reconfiguration and close. Mutations
+that omit the marker, reset it, read a key before locking or skip closed-stream
+cleanup fail. A separate canonical-harness diagnostic on Windows, with the
+same N and five samples for each variant, measured median 53.437 ns/op before
+and 44.431 ns/op after; the historical reference measured 54.978 ns/op.
+All sides assigned approximately 256 MiB. CPU profiles accompany that local
+diagnostic; it does not establish the cause or outcome on the hosted Linux
+runner. The complete paired gate remains required.

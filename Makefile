@@ -176,11 +176,12 @@ preprod-check-hosted: scan leak-check fuzz-smoke stress-check coverage-check per
 
 security-scan: gosec-scan vuln-scan secret-scan
 
+# Go's package walk excludes .tmp; it contains compiler-generated scratch files.
 gosec-scan:
-	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -exclude-dir=.tmp ./...
 
 gosec-report:
-	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -fmt sarif -out $(GOSEC_REPORT) ./...
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -exclude-dir=.tmp -fmt sarif -out $(GOSEC_REPORT) ./...
 
 secret-scan:
 	$(GO) run github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION) dir . --no-banner --redact --exit-code 1
