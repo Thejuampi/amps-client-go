@@ -1,9 +1,9 @@
 {
-  "base_commit": "22c28b481fc150cd984a21bac8bc97f67c9d855d",
+  "base_commit": "333efdb62a74cbf5187e7a625b7e25e025b80920",
   "uncommitted_sources": false,
   "files": {
-    "amps/client.go": "a90c47da313aab79de91fb82e634ddc8ad3b8ec1f98c25219de3a80add41ce7a",
-    "amps/client_parity_methods.go": "c08b50a121d8514b59fb64cfc36d8c1d10d82414ba66b9c39e5d5a26c794140d",
+    "amps/client.go": "1bc2b3cf386de45b3b797d4484e172205c4341de33743eceb32ac763d5bec47e",
+    "amps/client_parity_methods.go": "634971ac7ce551631e930a3f4ca580cda30c29e3ff2f5d750afeffdc87a8d103",
     "amps/ha_client.go": "370ec98aa047104b3170da5aeb944c205b00810b8454535dc50b4adff922067e",
     "amps/publish_store.go": "015daf1a46939dd28cc034b237d547bb04b209cdd5c4a19058bf42192f1b7be7",
     "amps/internal/wal/wal.go": "beb405164575b74704683ffd6d49e9ce2c91058048d8adb4fbc1b1e07e4e0528",
