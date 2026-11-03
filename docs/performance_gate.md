@@ -39,8 +39,11 @@ provenance, so local `refs/replace` cannot substitute a different source tree.
 
 For each baseline benchmark, the gate calibrates the reference and candidate
 once with the requested duration (at least one second). It selects the larger
-iteration count, then executes exactly six pairs at that same count with four
-Go processors. The order alternates reference/candidate and candidate/reference.
+iteration count and adds a fixed 25% headroom (rounded up and capped at Go's
+one-billion-iteration limit), then executes exactly six pairs at that same count
+with four Go processors. This margin reduces underduration samples after a
+calibration that barely clears the minimum; it does not change the duration veto
+or the regression limits. The order alternates reference/candidate and candidate/reference.
 The report retains both calibrations, the chosen count and every observation;
 there are no selective retries or medians that hide an outlying pair.
 
