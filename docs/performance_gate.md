@@ -37,10 +37,18 @@ provenance, so local `refs/replace` cannot substitute a different source tree.
 
 ## Paired measurement
 
-For each baseline benchmark, the gate executes exactly six pairs on one runner with
-four Go processors and a one-second benchmark time. The order alternates
-reference/candidate and candidate/reference. Every sample is retained; there
-are no selective retries or medians that hide an outlying pair.
+For each baseline benchmark, the gate calibrates the reference and candidate
+once with the requested duration (at least one second). It selects the larger
+iteration count, then executes exactly six pairs at that same count with four
+Go processors. The order alternates reference/candidate and candidate/reference.
+The report retains both calibrations, the chosen count and every observation;
+there are no selective retries or medians that hide an outlying pair.
+
+Both sides and every pair must use the chosen count. A measured duration below
+the requested minimum blocks approval, with one explicit exception: Go caps
+benchmarks at one billion iterations, so extremely fast operations can reach
+that cap before one second. The gate never increases the count or repeats
+samples after seeing their results.
 
 For each pair the comparison is:
 
@@ -138,7 +146,7 @@ duplicates after each callback, and observes global handlers installed or
 removed by callbacks. Ordinary semantic tests and source mutations cover
 those boundaries.
 
-On the same Windows host with Go 1.26.10, the subsequent complete run passed
+On the same Windows host with Go 1.26.10, an initial complete run passed
 all 21 benchmarks, retaining all 252 reference/candidate observations. Its
 time results for those four paths were:
 
@@ -152,3 +160,36 @@ time results for those four paths were:
 Values are normalized ns/op, not absolute time on that host. The complete
 run took 5 minutes 42 seconds. These measurements establish the result for
 that source and environment; each future candidate still runs the gate.
+
+The first hosted run of the initial paired implementation passed 20 benchmarks and blocked
+`BenchmarkStreamConcurrentDequeue` as inconclusive. In its second pair, Go's
+independent duration calibration selected 15,916,533 operations for the
+reference and 17,733,211 for the candidate. Allocation totals were
+268,519,720 and 537,148,248 bytes respectively. The candidate alone crossed
+the queue's next power-of-two capacity boundary. The other five pairs were
+between 1.48% and 4.97% slower, while that pair was 30.02% slower.
+
+That result is retained as inconclusive. It revealed a variable the initial
+design had failed to control: the amount of work in a pair. The fixed-count
+plan above compares identical operation counts without changing the harness
+or budgets. Equal counts still do not guarantee equal backlog or scheduling;
+conflicting observations remain blocking, and bytes alone do not establish
+a GC-related cause.
+
+The queue optimization replaces per-entry modulo/copy operations with two
+contiguous copies of active entries. It also removes a condition variable
+that had no waiters. Tests preserve FIFO, pointer identity, depth rejection,
+close and wakeup behavior, empty/partial/wrapped rings, and capacities that are
+not powers of two. Deliberate copy, offset and stale-pointer mutations fail.
+
+A separate five-sample diagnostic on Windows/Go 1.26.10/GOMAXPROCS=4 measured
+these median resize times. Both versions reported one allocation per operation;
+the input ring is reused and setup is outside the timer. This diagnostic does
+not replace the blocking gate or change its pinned harness.
+
+| Capacity | Wrapped | Before ns/op | After ns/op |
+| ---: | --- | ---: | ---: |
+| 1,024 | no | 5,161 | 1,626 |
+| 1,024 | yes | 5,182 | 1,658 |
+| 16,384 | no | 91,652 | 44,367 |
+| 16,384 | yes | 91,499 | 61,951 |

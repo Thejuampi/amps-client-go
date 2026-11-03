@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVerifyBenchmarkBuildInfoPreservesReadFailure(t *testing.T) {
@@ -64,11 +65,11 @@ func TestFinalizePairedReportPreservesCleanupAndPersistenceErrors(t *testing.T) 
 
 func TestCollectPairsRejectsSeventhPairBeforeRunningCommands(t *testing.T) {
 	var calls int
-	var runner = func(string, string, int) (benchmarkRun, error) {
+	var runner = func(benchmarkRequest) (benchmarkRun, error) {
 		calls++
 		return benchmarkRun{}, errors.New("runner should not execute")
 	}
-	var _, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 7)
+	var _, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 7, time.Second)
 	if err == nil || calls != 0 {
 		t.Fatalf("seven pairs were not rejected before execution: error=%v calls=%d", err, calls)
 	}
@@ -132,12 +133,12 @@ func TestFinalizePairedReportDoesNotApproveIfReportCannotBeSaved(t *testing.T) {
 func TestCollectPairsAlternatesOrderAndRetainsEveryObservation(t *testing.T) {
 	var calls []string
 	var environment = benchmarkEnvironment{GOOS: "linux", GOARCH: "amd64", CPU: "cpu", Package: "amps", Procs: 4}
-	var runner pairedRunner = func(side, name string, pair int) (benchmarkRun, error) {
-		calls = append(calls, side)
-		return benchmarkRun{Environment: environment, Measurements: map[string][]benchmarkResult{name: {{NSOp: 100}}}}, nil
+	var runner pairedRunner = func(request benchmarkRequest) (benchmarkRun, error) {
+		calls = append(calls, request.Side)
+		return benchmarkRun{Environment: environment, Measurements: map[string][]benchmarkResult{request.Name: {{NSOp: 100, N: 100, DurationNS: int64(time.Second)}}}}, nil
 	}
-	var results, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 6)
-	var want = []string{"reference", "candidate", "candidate", "reference", "reference", "candidate", "candidate", "reference", "reference", "candidate", "candidate", "reference"}
+	var results, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 6, time.Second)
+	var want = []string{"reference", "candidate", "reference", "candidate", "candidate", "reference", "reference", "candidate", "candidate", "reference", "reference", "candidate", "candidate", "reference"}
 	if err != nil || !reflect.DeepEqual(calls, want) || len(results) != 1 || len(results[0].Pairs) != 6 || results[0].Verdict != "PASS" {
 		t.Fatalf("calls=%v results=%+v error=%v", calls, results, err)
 	}
@@ -146,9 +147,9 @@ func TestCollectPairsAlternatesOrderAndRetainsEveryObservation(t *testing.T) {
 func TestCollectPairsRejectsEnvironmentChangesAndExecutionFailure(t *testing.T) {
 	for _, field := range []string{"cpu", "os", "arch", "package", "workers", "command", "samples"} {
 		t.Run(field, func(t *testing.T) {
-			var runner pairedRunner = func(side, name string, pair int) (benchmarkRun, error) {
-				var run = benchmarkRun{Environment: benchmarkEnvironment{GOOS: "linux", GOARCH: "amd64", CPU: "cpu", Package: "amps", Procs: 4}, Measurements: map[string][]benchmarkResult{name: {{NSOp: 100}}}}
-				if side == "candidate" {
+			var runner pairedRunner = func(request benchmarkRequest) (benchmarkRun, error) {
+				var run = testBenchmarkRun(request.Name, 100, time.Second)
+				if request.Side == "candidate" && request.Pair == 1 {
 					switch field {
 					case "cpu":
 						run.Environment.CPU = "faster"
@@ -163,12 +164,12 @@ func TestCollectPairsRejectsEnvironmentChangesAndExecutionFailure(t *testing.T) 
 					case "command":
 						return run, errors.New("benchmark process failed")
 					case "samples":
-						run.Measurements[name] = nil
+						run.Measurements[request.Name] = nil
 					}
 				}
 				return run, nil
 			}
-			var _, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 6)
+			var _, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 6, time.Second)
 			if err == nil {
 				t.Fatal("invalid comparison was accepted")
 			}
@@ -177,17 +178,18 @@ func TestCollectPairsRejectsEnvironmentChangesAndExecutionFailure(t *testing.T) 
 }
 
 func TestCollectPairsPreservesConfirmedAllocationFailureBeforeCommandError(t *testing.T) {
-	var runner pairedRunner = func(side, name string, pair int) (benchmarkRun, error) {
-		if pair > 0 {
+	var runner pairedRunner = func(request benchmarkRequest) (benchmarkRun, error) {
+		if request.Pair > 0 {
 			return benchmarkRun{}, errors.New("sample process failed")
 		}
-		var result = benchmarkResult{NSOp: 100}
-		if side == "candidate" {
+		var result = benchmarkResult{NSOp: 100, N: 100, DurationNS: int64(time.Second)}
+		if request.Pair == 0 && request.Side == "candidate" {
 			result.AllocsOp = 1
+			result.MemAllocs = 100
 		}
-		return benchmarkRun{Environment: benchmarkEnvironment{GOOS: "linux", GOARCH: "amd64", CPU: "cpu", Package: "amps", Procs: 4}, Measurements: map[string][]benchmarkResult{name: {result}}}, nil
+		return benchmarkRun{Environment: testBenchmarkEnvironment, Measurements: map[string][]benchmarkResult{request.Name: {result}}}, nil
 	}
-	var results, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 6)
+	var results, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 6, time.Second)
 	var verdict, code = pairedVerdict(results)
 	if err == nil || verdict != "FAIL" || code != 2 {
 		t.Fatalf("confirmed failure was lost: results=%+v, error=%v", results, err)

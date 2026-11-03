@@ -14,18 +14,33 @@ type benchmarkPair struct {
 	Candidate benchmarkResult `json:"candidate"`
 }
 
+type benchmarkCalibration struct {
+	Reference  *benchmarkResult `json:"reference,omitempty"`
+	Candidate  *benchmarkResult `json:"candidate,omitempty"`
+	Iterations uint64           `json:"iterations"`
+}
+
+type incompleteBenchmarkPair struct {
+	Number    int              `json:"number"`
+	Reference *benchmarkResult `json:"reference,omitempty"`
+	Candidate *benchmarkResult `json:"candidate,omitempty"`
+}
+
 type pairedResult struct {
-	Name                 string          `json:"name"`
-	Verdict              string          `json:"verdict"`
-	NormalizedNS         float64         `json:"normalized_ns_op"`
-	MinimumNS            float64         `json:"minimum_normalized_ns_op"`
-	MaximumNS            float64         `json:"maximum_normalized_ns_op"`
-	LimitNS              float64         `json:"limit_ns_op"`
-	MaxAllocs            float64         `json:"maximum_allocs_op"`
-	MaxExactAllocs       float64         `json:"maximum_exact_allocs_op"`
-	FractionalRegression bool            `json:"consistent_fractional_allocation_regression"`
-	LimitAllocs          float64         `json:"limit_allocs_op"`
-	Pairs                []benchmarkPair `json:"pairs"`
+	Name                 string                   `json:"name"`
+	Verdict              string                   `json:"verdict"`
+	NormalizedNS         float64                  `json:"normalized_ns_op"`
+	MinimumNS            float64                  `json:"minimum_normalized_ns_op"`
+	MaximumNS            float64                  `json:"maximum_normalized_ns_op"`
+	LimitNS              float64                  `json:"limit_ns_op"`
+	MaxAllocs            float64                  `json:"maximum_allocs_op"`
+	MaxExactAllocs       float64                  `json:"maximum_exact_allocs_op"`
+	FractionalRegression bool                     `json:"consistent_fractional_allocation_regression"`
+	LimitAllocs          float64                  `json:"limit_allocs_op"`
+	Pairs                []benchmarkPair          `json:"pairs"`
+	Calibration          benchmarkCalibration     `json:"calibration"`
+	IncompletePair       *incompleteBenchmarkPair `json:"incomplete_pair,omitempty"`
+	MeasurementIssues    []string                 `json:"measurement_issues,omitempty"`
 }
 
 func finite(value float64) bool {

@@ -217,6 +217,37 @@ func TestSnapshotRelativeFileRejectsNonlocalPaths(t *testing.T) {
 	}
 }
 
+func TestSnapshotRelativeFileResolvesEquivalentDirectoryAlias(t *testing.T) {
+	var base = t.TempDir()
+	var root = filepath.Join(base, "root")
+	var source = filepath.Join(root, "amps", "client.go")
+	writeSnapshotFixture(t, source, "package amps\n")
+	var alias = filepath.Join(base, "root-alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("creating a directory symlink is unavailable: %v", err)
+	}
+	var got, err = snapshotRelativeFile(root, filepath.Join(alias, "amps"), "client.go")
+	if err != nil || got != "amps/client.go" {
+		t.Fatalf("equivalent directory alias resolved to %q, error=%v", got, err)
+	}
+}
+
+func TestSnapshotRelativeFileRejectsDirectoryAliasOutsideRoot(t *testing.T) {
+	var root = filepath.Join(t.TempDir(), "root")
+	var outside = t.TempDir()
+	writeSnapshotFixture(t, filepath.Join(outside, "outside.go"), "package amps\n")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	var alias = filepath.Join(root, "outside-alias")
+	if err := os.Symlink(outside, alias); err != nil {
+		t.Skipf("creating a directory symlink is unavailable: %v", err)
+	}
+	if got, err := snapshotRelativeFile(root, alias, "outside.go"); err == nil {
+		t.Fatalf("accepted escaping directory alias as %q", got)
+	}
+}
+
 func TestCandidateSnapshotRejectsEscapingSymlink(t *testing.T) {
 	var root = snapshotFixture(t)
 	var outside = filepath.Join(t.TempDir(), "outside.go")

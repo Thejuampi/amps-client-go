@@ -161,8 +161,13 @@ func snapshotRelativeFile(root, directory, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	var resolvedDirectory string
+	resolvedDirectory, err = filepath.EvalSymlinks(directory)
+	if err != nil {
+		return "", fmt.Errorf("resolve candidate source directory %q: %w", directory, err)
+	}
 	var relativeDir string
-	relativeDir, err = filepath.Rel(absoluteRoot, directory)
+	relativeDir, err = filepath.Rel(absoluteRoot, resolvedDirectory)
 	if err != nil || relativeDir != "." && !filepath.IsLocal(relativeDir) {
 		return "", fmt.Errorf("source directory %q is outside candidate root", directory)
 	}

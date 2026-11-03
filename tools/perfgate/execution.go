@@ -53,64 +53,122 @@ func loadPinnedBaseline(path string) (baselineFile, error) {
 	return baseline, err
 }
 
-type pairedRunner func(side, name string, pair int) (benchmarkRun, error)
-
-func preserveAllocationFailure(results []pairedResult, name string, expected benchmarkBaseline, fallback float64, baseline baselineFile, pairs []benchmarkPair, pending benchmarkPair) []pairedResult {
-	var _, budget = regressionLimits(baseline, expected, fallback)
-	var limit = expected.AllocsOp * (1 + budget/100)
-	var observations = append(append([]benchmarkPair(nil), pairs...), pending)
-	var maximum, exact float64
-	for _, pair := range observations {
-		if !validMetric(pair.Candidate) {
-			continue
-		}
-		maximum = max(maximum, reportedAllocations(pair.Candidate))
-		exact = max(exact, pair.Candidate.AllocsOp)
-	}
-	if maximum > limit {
-		results = append(results, pairedResult{Name: name, Verdict: "FAIL", MaxAllocs: maximum, MaxExactAllocs: exact, LimitAllocs: limit, Pairs: observations})
-	}
-	return results
+type benchmarkRequest struct {
+	Side       string
+	Name       string
+	Pair       int
+	Iterations uint64
 }
 
-func collectPairs(runner pairedRunner, baseline baselineFile, fallback float64, count int) ([]pairedResult, benchmarkEnvironment, error) {
+type pairedRunner func(benchmarkRequest) (benchmarkRun, error)
+
+func sufficientlyLong(result benchmarkResult, duration time.Duration) bool {
+	return result.N == maximumBenchmarkIterations || result.DurationNS >= int64(duration)
+}
+
+func partialPairResult(name string, calibration benchmarkCalibration, pairs []benchmarkPair, pending *incompleteBenchmarkPair, issues []string, expected benchmarkBaseline, baseline baselineFile, fallback float64, duration time.Duration) pairedResult {
+	var _, budget = regressionLimits(baseline, expected, fallback)
+	var result = pairedResult{Name: name, Verdict: "INCONCLUSIVE", Calibration: calibration, Pairs: pairs, IncompletePair: pending, MeasurementIssues: issues, LimitAllocs: expected.AllocsOp * (1 + budget/100)}
+	var observe = func(candidate benchmarkResult) {
+		if validMetric(candidate) && sufficientlyLong(candidate, duration) {
+			result.MaxAllocs = max(result.MaxAllocs, reportedAllocations(candidate))
+			result.MaxExactAllocs = max(result.MaxExactAllocs, candidate.AllocsOp)
+		}
+	}
+	for _, pair := range pairs {
+		observe(pair.Candidate)
+	}
+	if pending != nil && pending.Candidate != nil {
+		observe(*pending.Candidate)
+	}
+	if result.MaxAllocs > result.LimitAllocs {
+		result.Verdict = "FAIL"
+	}
+	return result
+}
+
+func collectPairs(runner pairedRunner, baseline baselineFile, fallback float64, count int, duration time.Duration) ([]pairedResult, benchmarkEnvironment, error) {
 	var results []pairedResult
 	var environment benchmarkEnvironment
-	if count != requiredPairs {
-		return nil, environment, fmt.Errorf("need exactly %d fixed pairs", requiredPairs)
+	if count != requiredPairs || duration < time.Second {
+		return nil, environment, fmt.Errorf("need exactly %d fixed pairs and calibration duration >= 1s", requiredPairs)
 	}
 	for _, name := range benchmarkNamesForBaseline(baseline) {
 		var expected = baseline.Benchmarks[name]
 		var pairs = make([]benchmarkPair, 0, count)
+		var calibration benchmarkCalibration
+		var issues []string
+		var pending *incompleteBenchmarkPair
+		var partial = func() []pairedResult {
+			return append(results, partialPairResult(name, calibration, pairs, pending, issues, expected, baseline, fallback, duration))
+		}
+		var collect = func(request benchmarkRequest) (benchmarkResult, error) {
+			var run, err = runner(request)
+			if err != nil {
+				return benchmarkResult{}, err
+			}
+			if environment == (benchmarkEnvironment{}) {
+				environment = run.Environment
+			}
+			if run.Environment != environment || environment.GOOS == "" || environment.GOARCH == "" || environment.Package == "" || environment.CPU == "" || environment.Procs != 4 || len(run.Measurements[name]) != 1 {
+				return benchmarkResult{}, fmt.Errorf("environment or sample count changed")
+			}
+			var observation = run.Measurements[name][0]
+			if !validMetric(observation) || observation.N == 0 || observation.N > maximumBenchmarkIterations || observation.DurationNS <= 0 {
+				return benchmarkResult{}, fmt.Errorf("invalid benchmark counters")
+			}
+			if request.Pair >= 0 && observation.N != request.Iterations {
+				return benchmarkResult{}, fmt.Errorf("iteration count %d does not match planned %d", observation.N, request.Iterations)
+			}
+			return observation, nil
+		}
+		for _, side := range []string{"reference", "candidate"} {
+			var observation, err = collect(benchmarkRequest{Side: side, Name: name, Pair: -1})
+			if err != nil {
+				return partial(), environment, fmt.Errorf("%s calibration %s: %w", name, side, err)
+			}
+			if side == "reference" {
+				calibration.Reference = &observation
+			} else {
+				calibration.Candidate = &observation
+			}
+		}
+		calibration.Iterations = max(calibration.Reference.N, calibration.Candidate.N)
 		for index := 0; index < count; index++ {
 			var order = [2]string{"reference", "candidate"}
 			if index%2 != 0 {
 				order[0], order[1] = order[1], order[0]
 			}
 			var pair benchmarkPair
+			pending = &incompleteBenchmarkPair{Number: index + 1}
 			for _, side := range order {
-				var run, err = runner(side, name, index)
+				var observation, err = collect(benchmarkRequest{Side: side, Name: name, Pair: index, Iterations: calibration.Iterations})
 				if err != nil {
-					return preserveAllocationFailure(results, name, expected, fallback, baseline, pairs, pair), environment, fmt.Errorf("%s pair %d %s: %w", name, index+1, side, err)
+					return partial(), environment, fmt.Errorf("%s pair %d %s: %w", name, index+1, side, err)
 				}
-				if environment == (benchmarkEnvironment{}) {
-					environment = run.Environment
-				}
-				if run.Environment != environment || environment.CPU == "" || environment.Procs != 4 || len(run.Measurements[name]) != 1 {
-					return preserveAllocationFailure(results, name, expected, fallback, baseline, pairs, pair), environment, fmt.Errorf("%s pair %d %s: environment or sample count changed", name, index+1, side)
+				if !sufficientlyLong(observation, duration) {
+					issues = append(issues, fmt.Sprintf("pair %d %s duration %s is shorter than %s", index+1, side, time.Duration(observation.DurationNS), duration))
 				}
 				if side == "reference" {
-					pair.Reference = run.Measurements[name][0]
+					pair.Reference = observation
+					pending.Reference = &observation
 				} else {
-					pair.Candidate = run.Measurements[name][0]
+					pair.Candidate = observation
+					pending.Candidate = &observation
 				}
 			}
 			pairs = append(pairs, pair)
+			pending = nil
 		}
 		var timeBudget, allocBudget = regressionLimits(baseline, expected, fallback)
 		var result, err = comparePairs(name, expected, timeBudget, allocBudget, pairs)
 		if err != nil {
-			return results, environment, err
+			return partial(), environment, err
+		}
+		result.Calibration = calibration
+		result.MeasurementIssues = issues
+		if len(issues) > 0 {
+			result.Verdict = partialPairResult(name, calibration, pairs, nil, issues, expected, baseline, fallback, duration).Verdict
 		}
 		results = append(results, result)
 	}
@@ -395,6 +453,53 @@ func writeReportAtomic(path string, data []byte) error {
 	return os.Rename(temporaryPath, path)
 }
 
+func benchmarkArguments(request benchmarkRequest, duration time.Duration) ([]string, error) {
+	if duration < time.Second || (request.Side != "reference" && request.Side != "candidate") || request.Pair < -1 || request.Pair >= requiredPairs {
+		return nil, fmt.Errorf("invalid benchmark request or calibration duration")
+	}
+	var benchtime = duration.String()
+	if request.Pair == -1 {
+		if request.Iterations != 0 {
+			return nil, fmt.Errorf("calibration cannot request fixed iterations")
+		}
+	} else {
+		if request.Iterations == 0 || request.Iterations > maximumBenchmarkIterations {
+			return nil, fmt.Errorf("sample requires bounded fixed iterations")
+		}
+		benchtime = fmt.Sprintf("%dx", request.Iterations)
+	}
+	return []string{"-test.run=^TestPerfGateMeasure$", "-test.count=1", "-test.benchtime=" + benchtime, "-test.cpu=4", "-test.timeout=" + max(time.Minute, duration*10).String()}, nil
+}
+
+func benchmarkLogName(request benchmarkRequest) string {
+	if request.Pair < 0 {
+		return fmt.Sprintf("%s-calibration-%s.txt", request.Name, request.Side)
+	}
+	return fmt.Sprintf("%s-%02d-%s.txt", request.Name, request.Pair+1, request.Side)
+}
+
+func parseRequestedBenchmarkRun(output string, request benchmarkRequest) (benchmarkRun, error) {
+	var run, err = parseExactBenchmarkRun(output, request.Name)
+	if err != nil {
+		return run, err
+	}
+	if request.Pair >= 0 && run.Measurements[request.Name][0].N != request.Iterations {
+		return run, fmt.Errorf("iteration count %d does not match planned %d", run.Measurements[request.Name][0].N, request.Iterations)
+	}
+	return run, nil
+}
+
+func recordBenchmarkOutput(logPath string, output []byte, commandErr error) error {
+	var writeErr = os.WriteFile(logPath, output, 0600)
+	if writeErr != nil {
+		writeErr = fmt.Errorf("write benchmark log %s: %w", logPath, writeErr)
+	}
+	if commandErr != nil {
+		commandErr = fmt.Errorf("benchmark command failed: %w; see %s", commandErr, logPath)
+	}
+	return errors.Join(writeErr, commandErr)
+}
+
 func executePaired(baselinePath, referencePath, outputPath, benchtime string, pairs int) (exitCode int) {
 	var duration, err = time.ParseDuration(benchtime)
 	if err != nil || duration < time.Second || pairs != requiredPairs {
@@ -546,29 +651,34 @@ func executePaired(baselinePath, referencePath, outputPath, benchtime string, pa
 		}
 		cpu = run.Environment.CPU
 	}
-	var runner pairedRunner = func(side, name string, pair int) (benchmarkRun, error) {
-		if pair == 0 && side == "reference" {
-			fmt.Println("perf gate measuring:", name)
+	var runner pairedRunner = func(request benchmarkRequest) (benchmarkRun, error) {
+		if request.Pair == -1 && request.Side == "reference" {
+			fmt.Println("perf gate calibrating:", request.Name)
+		}
+		var args, argsErr = benchmarkArguments(request, duration)
+		if argsErr != nil {
+			return benchmarkRun{}, argsErr
 		}
 		var sampleCtx, sampleCancel = context.WithTimeout(ctx, max(time.Minute, duration*10))
 		defer sampleCancel()
-		var args = []string{"-test.run=^TestPerfGateMeasure$", "-test.count=1", "-test.benchtime=" + benchtime, "-test.cpu=4", "-test.timeout=" + max(time.Minute, duration*10).String()}
-		var env = append(benchmarkEnv(report.Reference.Toolchain), "PERFGATE_BENCHMARK="+name, "PERFGATE_CPU="+cpu)
-		var output, commandErr = commandOutput(sampleCtx, root, binaries[side], args, env)
-		var logPath = filepath.Join(artifactPath, fmt.Sprintf("%s-%02d-%s.txt", name, pair+1, side))
-		if writeErr := os.WriteFile(logPath, output, 0600); writeErr != nil {
-			return benchmarkRun{}, writeErr
+		var env = append(benchmarkEnv(report.Reference.Toolchain), "PERFGATE_BENCHMARK="+request.Name, "PERFGATE_CPU="+cpu)
+		var output, commandErr = commandOutput(sampleCtx, root, binaries[request.Side], args, env)
+		var logPath = filepath.Join(artifactPath, benchmarkLogName(request))
+		var recordErr = recordBenchmarkOutput(logPath, output, commandErr)
+		if recordErr != nil {
+			return benchmarkRun{}, recordErr
 		}
-		if commandErr != nil {
-			return benchmarkRun{}, fmt.Errorf("benchmark command failed: %w; see %s", commandErr, logPath)
+		var run, parseErr = parseRequestedBenchmarkRun(string(output), request)
+		if parseErr != nil {
+			return run, fmt.Errorf("benchmark output invalid: %w; see %s", parseErr, logPath)
 		}
-		return parseExactBenchmarkRun(string(output), name)
+		return run, nil
 	}
 	var fallback = 10.0
 	if baseline.MaxRegression > 0 {
 		fallback = baseline.MaxRegression
 	}
-	report.Results, report.Environment, err = collectPairs(runner, baseline, fallback, pairs)
+	report.Results, report.Environment, err = collectPairs(runner, baseline, fallback, pairs, duration)
 	if err != nil {
 		return fail(err)
 	}
