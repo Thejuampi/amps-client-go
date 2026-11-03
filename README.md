@@ -16,7 +16,7 @@
   <a href="https://github.com/Thejuampi/amps-client-go/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Thejuampi/amps-client-go?style=social"></a>
 </p>
 
-Version: `1.1.0`
+Version: `1.1.1`
 
 See the [changelog and upgrade notes](CHANGELOG.md) for the breaking changes in 1.0.0.
 

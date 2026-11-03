@@ -117,6 +117,9 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate prepared release markers
+        run: go test ./amps -run '^(TestReleaseVersionMarkers|TestReadmeReleaseVersion|TestChangelogReleaseVersion)$' -count=1
+
       - name: Release gates
         run: make release-hosted FUZZTIME=2s STRESS_COUNT=3
 
