@@ -150,7 +150,13 @@ func TestConnectUsesCompressionFromURIAndClientDefaults(t *testing.T) {
 			}
 			defer func() { _ = serverConn.Close() }()
 
-			_, isCompressed := client.connection.(*compressedNetConn)
+			client.connectionStateLock.Lock()
+			var connection = client.connection
+			client.connectionStateLock.Unlock()
+			if connection == nil {
+				t.Fatal("Connect returned without an active connection")
+			}
+			_, isCompressed := connection.(*compressedNetConn)
 			if isCompressed != tc.wantCompressed {
 				t.Fatalf("internal connection compressed=%v want %v", isCompressed, tc.wantCompressed)
 			}

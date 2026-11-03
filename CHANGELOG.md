@@ -61,6 +61,8 @@ separate files, without an atomic transaction across a power failure.
 - Promote diagnostic regressions into the normal suite, strengthen mutation
   checks, and restore unit tests accidentally excluded by the Integration name
   filter.
+- Read the transport under its state lock in the compression regression test,
+  fixing the race found by the Linux pre-production stress run.
 - Add a strict native C++ interoperability gate to local `make release`, using
   the unmodified pinned SDK library against isolated fakeamps processes.
 - Add bounded TLA+/TLC checks for recovery, reconnect ownership, publisher

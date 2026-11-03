@@ -59,6 +59,21 @@ La integración usa fakeamps, ahora también con el cliente C++ real. El
 [informe de interoperabilidad](cpp_fakeamps_interop.md) y el
 [alcance formal](cpp_fakeamps_formal.md) detallan qué queda sin verificar.
 
+## Seguimiento durante la publicación
+
+El CI del PR de release pasó en Linux y Windows. El smoke posterior del merge
+corrió con race y detectó una lectura no sincronizada de `client.connection`
+en `TestConnectUsesCompressionFromURIAndClientDefaults`, en el caso
+`default-disabled`, semilla `1793666088900465692`. El escritor del cliente ya
+utilizaba `connectionStateLock`; la prueba leía el campo directamente.
+
+La corrección toma un snapshot bajo ese mismo lock y exige una conexión no
+nula antes de comprobar su tipo. No cambia el cliente, el broker, los límites
+ni el baseline. El release estricto de 37 min corresponde a la implementación
+preparada antes de esta corrección exclusiva del test; el gate remoto se repite
+con la prueba corregida. El log original se conserva en
+`.tmp/release-publish/main-ci-failed.log`.
+
 ## Release anterior completo después de optimizar
 
 El release final terminó con **exit code 0** y el mensaje de aprobación. Su
