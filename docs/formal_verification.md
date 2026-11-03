@@ -1,7 +1,7 @@
 # Verificación formal acotada de recuperación AMPS
 
-Creación: 2026-11-01. Última sincronización: 2026-11-02, sobre el commit
-`22c28b481fc150cd984a21bac8bc97f67c9d855d`. Todas las fuentes cubiertas están
+Creación: 2026-11-01. Última sincronización: 2026-11-03, sobre el commit
+`333efdb62a74cbf5187e7a625b7e25e025b80920`. Todas las fuentes cubiertas están
 commiteadas y coinciden con [source-sync.json](../formal/source-sync.json).
 
 Se aplicó el flujo de pstack `create-formal-verification-skill`, su control de
@@ -38,6 +38,8 @@ Los overlays no modifican las fuentes del checkout.
 Estos números describen los grafos alcanzables de los modelos. No son cantidad
 de mensajes ensayados, cobertura del Go, ni una demostración de equivalencia
 Go/C++. El hash del modelo y los parámetros exactos quedan en cada resultado.
+Tampoco modelan los bytes, el handshake o la fragmentación WebSocket, ni prueban
+el comportamiento de un servidor AMPS real.
 
 Para publicación, si A son los identificadores aceptados, R los retenidos y B
 los aplicados por el broker, se comprueba:
@@ -171,6 +173,10 @@ actualizar el registro con --record-sync sólo después de revisar el mapeo.
 El registro conserva el commit de fuentes confirmado y sus hashes. En la
 sincronización actual ese commit contiene todas las fuentes cubiertas; los
 registros anteriores identificaban por separado las correcciones sin commit.
+`--record-sync` siempre escribe `uncommitted_sources=true`; sólo se corrige a
+`false` después de comprobar con Git que las ocho fuentes están commiteadas y
+sin modificaciones. La comprobación de hashes sigue siendo independiente de
+esa metadata.
 
 El control exige el conjunto exacto de ocho fuentes: rechaza registros vacíos,
 incompletos, ampliados o con hashes distintos. La prueba RED detectó nueve
@@ -178,6 +184,19 @@ aceptaciones incorrectas del registro parcial o ampliado antes de agregar esa
 guarda. Las diez pruebas del runner pasan; cuatro mutaciones de sus controles
 de fuentes, exit status y cantidad de estados fallan por aserciones. Son tests
 del verificador, separados de las mutaciones de comportamiento del cliente.
+
+En la revisión de `22c28b481fc150cd984a21bac8bc97f67c9d855d` a
+`333efdb62a74cbf5187e7a625b7e25e025b80920`, sólo cambiaron `client.go` y
+`client_parity_methods.go` entre las fuentes cubiertas. `onMessage` evita
+llamar a `applyAckBookkeeping` para mensajes que no son ACK y evita
+`detectAndTrackDuplicate` cuando falta el bookmark; ambos helpers ya retornaban
+sin efectos en esos casos. También mueve la lectura del heartbeat a su rama.
+El acceso rápido a handlers globales usa un indicador atómico y un mapa
+protegido por lock, fuera del alcance de los modelos. No cambiaron las
+transiciones de retención, replay, WAL o HA, por lo que no se modificaron los
+modelos ni sus invariantes. El rechazo inicial del verificador identificó
+deriva de hashes, no una violación del modelo. Las ocho fuentes cubiertas no
+tenían modificaciones pendientes al registrar esta sincronización.
 
 El release completo es una condición independiente. La pasada 1.1.0 terminó
 en PASS el 2026-11-02 a las 23:36 UTC, en 37 min 5,7 s, con veinte rondas de
@@ -188,7 +207,25 @@ evitar suspensión por inactividad; no cambia el plan de energía ni mantiene
 encendida la pantalla. El intento anterior interrumpido por suspensión,
 confirmada por eventos Windows 42/1, no se cuenta como release aprobado.
 
-La repetición sobre el commit de fuentes confirmado queda en
+La repetición sobre el commit de fuentes anterior `22c28b481fc150cd984a21bac8bc97f67c9d855d` queda en
 `G:/dev/caches/tmp/amps-client-go-second-fixes/formal-v1.1.0-committed`.
 Sus veintidós resultados TLC, hashes y parámetros coinciden con los gráficos
 ya interpretados, y las cinco mutaciones Go fueron detectadas otra vez.
+
+La repetición normal sobre `333efdb62a74cbf5187e7a625b7e25e025b80920` quedó en
+`G:/dev/caches/tmp/amps-recovery-ws-final-20261103`: siete configuraciones
+normales pasaron, quince variantes produjeron el contraejemplo esperado y las
+cinco mutaciones Go fueron detectadas. La comprobación C++ independiente
+también pasó y sus resultados están en
+`G:/dev/caches/tmp/amps-cpp-ws-final-20261103`. Los informes y trazas de
+statechart se conservan fuera del checkout en
+`G:/dev/caches/tmp/amps-statecharts-ws-final-20261103`.
+
+Al explorar más allá del contraejemplo intencional `BrokenGate`, statechart
+también marca `NoDeadlock`: el estado defectuoso retiene mensajes fuera del
+snapshot y llega a la última generación permitida, donde la cota impide otra
+reconexión. La configuración normal pasó; esa marca adicional describe la
+variante rota bajo la cota y no demuestra un deadlock del programa real.
+En otras variantes rotas, statechart también encontró que enviar un replay de
+una generación vieja puede producir `NoLoss` al descartar con un ACK acumulado,
+y que no restaurar el watermark de delete viola `NewRowSurvivesOldDelete`.

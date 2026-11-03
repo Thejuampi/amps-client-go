@@ -1,8 +1,10 @@
 package amps
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,10 +47,14 @@ func TestDialWebSocketWithPreflightHeadersAndNetConnCoverage(t *testing.T) {
 		}
 		defer conn.Close()
 
-		_ = conn.WriteMessage(websocket.BinaryMessage, []byte("hello"))
-		_, payload, err := conn.ReadMessage()
+		_, _, _ = conn.ReadMessage() // transport preface
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"c":"ack"}`))
+		_, _, err = conn.ReadMessage() // part count
 		if err == nil {
-			writeCh <- string(payload)
+			_, payload, readErr := conn.ReadMessage()
+			if readErr == nil {
+				writeCh <- string(payload)
+			}
 		}
 	}))
 	defer server.Close()
@@ -70,20 +76,20 @@ func TestDialWebSocketWithPreflightHeadersAndNetConnCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read() first chunk error = %v", err)
 	}
-	if got := string(buffer[:n]); got != "he" {
-		t.Fatalf("Read() first chunk = %q, want he", got)
+	if got := buffer[:n]; !bytes.Equal(got, []byte{0, 0}) {
+		t.Fatalf("Read() first chunk = %x, want initial length bytes", got)
 	}
 
-	buffer = make([]byte, 8)
+	buffer = make([]byte, 32)
 	n, err = conn.Read(buffer)
 	if err != nil {
 		t.Fatalf("Read() second chunk error = %v", err)
 	}
-	if got := string(buffer[:n]); got != "llo" {
-		t.Fatalf("Read() second chunk = %q, want llo", got)
+	if got := buffer[:n]; len(got) != 2+len(`{"c":"ack"}`) || binary.BigEndian.Uint16(got[:2]) != uint16(len(`{"c":"ack"}`)) || string(got[2:]) != `{"c":"ack"}` {
+		t.Fatalf("Read() second chunk = %x, want remaining length and ack", got)
 	}
 
-	if _, err = conn.Write([]byte("ping")); err != nil {
+	if _, err = conn.Write(websocketTCPFrame(`{"c":"flush"}`, nil)); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
 
@@ -107,8 +113,8 @@ func TestDialWebSocketWithPreflightHeadersAndNetConnCoverage(t *testing.T) {
 	if got := <-headerCh; got != "value" {
 		t.Fatalf("preflight header = %q, want value", got)
 	}
-	if got := <-writeCh; got != "ping" {
-		t.Fatalf("server received payload = %q, want ping", got)
+	if got := <-writeCh; got != `{"c":"flush"}` {
+		t.Fatalf("server received header = %q, want flush", got)
 	}
 	if _, ok := conn.(*websocketNetConn); !ok {
 		t.Fatalf("expected websocketNetConn, got %T", conn)
@@ -142,7 +148,7 @@ func TestWebSocketNetConnSetDeadlineAppliesToWrites(t *testing.T) {
 	if err = conn.SetDeadline(time.Now().Add(-time.Second)); err != nil {
 		t.Fatalf("SetDeadline() error = %v", err)
 	}
-	if _, err = conn.Write([]byte("deadline must apply to writes")); err == nil {
+	if _, err = conn.Write(websocketTCPFrame(`{"c":"flush"}`, nil)); err == nil {
 		t.Fatalf("Write() after expired SetDeadline succeeded")
 	}
 }
@@ -154,6 +160,7 @@ func TestDialWebSocketWSSCoverage(t *testing.T) {
 		if err != nil {
 			return
 		}
+		_, _, _ = conn.ReadMessage()
 		_ = conn.Close()
 	}))
 	defer server.Close()

@@ -118,7 +118,15 @@ jobs:
           fi
 
       - name: Release gates
-        run: make release-hosted FUZZTIME=2s STRESS_COUNT=3 PERF_BASELINE=tools/perf_baseline.github.json
+        run: make release-hosted FUZZTIME=2s STRESS_COUNT=3
+
+      - name: Upload performance artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: performance-release
+          path: .tmp/perf/gate/
+          if-no-files-found: warn
 
       - name: Live broker smoke
         if: env.AMPS_TEST_URI != ''

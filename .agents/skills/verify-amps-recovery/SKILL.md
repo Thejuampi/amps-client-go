@@ -34,13 +34,20 @@ ha_client.go (attempt and worker handoff), publish_store.go and internal/wal/wal
 (WAL/checkpoint outcomes), and fakeamps dedupe.go, handler.go and journal.go
 (named publisher identity and normal reopen). Exact hashes are in
 formal/source-sync.json. The confirmed source commit is
-22c28b481fc150cd984a21bac8bc97f67c9d855d. All covered sources were committed and
+333efdb62a74cbf5187e7a625b7e25e025b80920. All covered sources were committed and
 matched those hashes at synchronization. Verification-only commits may follow
 without changing that source commit; the hash guard still applies.
 
+At this synchronization the `onMessage` fast paths skipped helpers only when
+their existing guards returned without side effects, and moved a heartbeat
+load into its branch. The global-handler lookup optimization is outside these
+models. Retention, replay, WAL and HA transitions were unchanged; see the report.
+
 After reviewing every covered source change against the transitions, run
 `python tools/formalcheck/check.py --record-sync` to advance the source record.
-Do not use that option merely to bypass a drift failure. When the fixes are
+Do not use that option merely to bypass a drift failure. This command always
+sets `uncommitted_sources` to true; check Git status for every covered source
+and set it to false only when all are committed and clean. When the fixes are
 committed, review the source again and record that actual sync commit.
 
 The model bounds and exclusions in the report are part of the result. This

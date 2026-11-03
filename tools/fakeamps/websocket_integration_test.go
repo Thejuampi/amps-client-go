@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Thejuampi/amps-client-go/amps"
 )
 
 func writeWebSocketBinaryFrame(t *testing.T, conn net.Conn, payload []byte) {
@@ -106,13 +108,12 @@ func readWebSocketPayload(t *testing.T, conn net.Conn, timeout time.Duration) []
 	return payload
 }
 
-func TestWebSocketUpgradeAndLogonCommandFlow(t *testing.T) {
+func dialAMPSWebSocket(t *testing.T) net.Conn {
+	t.Helper()
 	var listener, err = net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
-	defer listener.Close()
-
 	var done = make(chan struct{})
 	go func() {
 		var conn, acceptErr = listener.Accept()
@@ -128,6 +129,15 @@ func TestWebSocketUpgradeAndLogonCommandFlow(t *testing.T) {
 	if dialErr != nil {
 		t.Fatalf("failed to dial test server: %v", dialErr)
 	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("handleConnection did not exit")
+		}
+	})
 
 	var request = strings.Join([]string{
 		"GET /amps/json HTTP/1.1",
@@ -181,20 +191,182 @@ func TestWebSocketUpgradeAndLogonCommandFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed clearing read deadline: %v", err)
 	}
+	return client
+}
 
-	var logonFrame = buildCommandFrame(`{"c":"logon","cid":"log-1","a":"processed","client_name":"ws-client"}`, nil)
-	writeWebSocketBinaryFrame(t, client, logonFrame)
+func TestWebSocketUpgradeAndLogonCommandFlow(t *testing.T) {
+	var client = dialAMPSWebSocket(t)
+	writeTextWebSocketFrame(t, client, []byte("text"))
+	writeWebSocketBinaryFrame(t, client, []byte{1, 0, 0, 0})
+	writeTextWebSocketFrame(t, client, []byte(`{"c":"logon","cid":"log-1","a":"processed","client_name":"ws-client"}`))
 
-	var payload = readWebSocketPayload(t, client, 500*time.Millisecond)
-	if !strings.Contains(string(payload), `"c":"ack"`) || !strings.Contains(string(payload), `"a":"processed"`) {
-		t.Fatalf("expected websocket logon ack payload, got %s", string(payload))
+	var opcode, payload = readWebSocketFrame(t, client, 500*time.Millisecond)
+	if opcode != 0x1 || !strings.HasPrefix(string(payload), `{"c":"ack"`) || !strings.Contains(string(payload), `"a":"processed"`) {
+		t.Fatalf("expected text websocket logon ack header, got opcode=%d payload=%q", opcode, payload)
 	}
 
-	_ = client.Close()
+}
 
+func TestWebSocketRejectsLegacyAMPSFrame(t *testing.T) {
+	var client = dialAMPSWebSocket(t)
+	writeWebSocketBinaryFrame(t, client, buildCommandFrame(`{"c":"logon","cid":"legacy","a":"processed"}`, nil))
+	var opcode, body, err = tryReadWebSocketFrame(client, time.Second)
+	if err == nil {
+		t.Fatalf("legacy frame accepted: opcode=%d body=%q", opcode, body)
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		t.Fatalf("legacy frame was not rejected: %v", err)
+	}
+}
+
+func TestWebSocketAMPSMultipartPublishAndSOW(t *testing.T) {
+	var oldSOW, oldJournal = sow, journal
+	sow, journal = newSOWCache(), newMessageJournal(100)
+	t.Cleanup(func() { sow, journal = oldSOW, oldJournal })
+	for _, mode := range []string{"text", "binary"} {
+		t.Run(mode, func(t *testing.T) {
+			var client = dialAMPSWebSocket(t)
+			writeTextWebSocketFrame(t, client, []byte(mode))
+			writeWebSocketBinaryFrame(t, client, []byte{1, 0, 0, 0})
+			writeTextWebSocketFrame(t, client, []byte(`{"c":"logon","cid":"logon","a":"processed","client_name":"ws-test"}`))
+			var opcode, response = readWebSocketFrame(t, client, time.Second)
+			if opcode != 1 || !strings.Contains(string(response), `"cid":"logon"`) {
+				t.Fatalf("logon ack opcode=%d data=%q", opcode, response)
+			}
+
+			var topic = "ws-multipart-" + mode
+			writeWebSocketBinaryFrame(t, client, []byte{3, 0, 0, 0})
+			writeTextWebSocketFrame(t, client, []byte(`{"c":"publish","cid":"pub","t":"`+topic+`","k":"key-1","a":"processed"}`))
+			writeTextWebSocketFrame(t, client, []byte(`{"id":`))
+			writeWebSocketBinaryFrame(t, client, []byte(`1}`))
+			opcode, response = readWebSocketFrame(t, client, time.Second)
+			if opcode != 1 || !strings.Contains(string(response), `"cid":"pub"`) {
+				t.Fatalf("publish ack opcode=%d data=%q", opcode, response)
+			}
+
+			writeWebSocketBinaryFrame(t, client, []byte{1, 0, 0, 0})
+			writeTextWebSocketFrame(t, client, []byte(`{"c":"sow","cid":"query","query_id":"q","t":"`+topic+`","a":"processed,completed"}`))
+			var want = []string{`"a":"processed"`, `"c":"group_begin"`, `"c":"sow"`, `"k":"key-1"`, `{"id":1}`, `"c":"group_end"`, `"a":"completed"`}
+			for i, fragment := range want {
+				opcode, response = readWebSocketFrame(t, client, time.Second)
+				var wantOpcode byte = 1
+				if i == 4 && mode == "binary" {
+					wantOpcode = 2
+				}
+				if opcode != wantOpcode || !strings.Contains(string(response), fragment) {
+					t.Fatalf("SOW frame %d opcode=%d data=%q, want opcode=%d containing %q", i, opcode, response, wantOpcode, fragment)
+				}
+				if i == 2 && !strings.Contains(string(response), `"bs":1`) {
+					t.Fatalf("SOW batch has no record count: %q", response)
+				}
+			}
+		})
+	}
+}
+
+func TestIntegrationGoClientWebSocketPublishSubscribeAndSOW(t *testing.T) {
+	var oldSOW, oldJournal, oldEcho = sow, journal, *flagEcho
+	sow, journal, *flagEcho = newSOWCache(), newMessageJournal(100), true
+	var listener, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var done = make(chan struct{})
+	go func() {
+		defer close(done)
+		var conn, acceptErr = listener.Accept()
+		if acceptErr == nil {
+			handleConnection(conn)
+		}
+	}()
+	var client = amps.NewClient("go-websocket-integration")
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = listener.Close()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("fakeamps handler did not exit")
+		}
+		sow, journal, *flagEcho = oldSOW, oldJournal, oldEcho
+	})
+	var errors = make(chan error, 1)
+	client.SetErrorHandler(func(err error) {
+		select {
+		case errors <- err:
+		default:
+		}
+	})
+	if err := client.Connect("ws://" + listener.Addr().String() + "/amps/json"); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if err := client.Logon(); err != nil {
+		t.Fatalf("logon: %v", err)
+	}
+	var live = make(chan string, 1)
+	if _, err := client.SubscribeAsync(func(message *amps.Message) error {
+		if command, _ := message.Command(); command == amps.CommandPublish {
+			select {
+			case live <- string(message.Data()):
+			default:
+			}
+		}
+		return nil
+	}, "go-ws-orders"); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := client.Publish("go-ws-orders", `{"id":1}`); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if err := client.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
 	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("handleConnection did not exit in time")
+	case payload := <-live:
+		if payload != `{"id":1}` {
+			t.Fatalf("live payload = %q", payload)
+		}
+	case err := <-errors:
+		t.Fatalf("client error: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("live delivery timed out")
+	}
+	var rows = make(chan string, 1)
+	var completed = make(chan struct{}, 1)
+	if _, err := client.ExecuteAsync(amps.NewCommand("sow").SetTopic("go-ws-orders").AddAckType(amps.AckTypeCompleted), func(message *amps.Message) error {
+		switch command, _ := message.Command(); command {
+		case amps.CommandSOW:
+			select {
+			case rows <- string(message.Data()):
+			default:
+			}
+		case amps.CommandAck:
+			if ack, _ := message.AckType(); ack == amps.AckTypeCompleted {
+				select {
+				case completed <- struct{}{}:
+				default:
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("SOW query: %v", err)
+	}
+	select {
+	case row := <-rows:
+		if row != `{"id":1}` {
+			t.Fatalf("SOW row = %q", row)
+		}
+	case err := <-errors:
+		t.Fatalf("client error: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("SOW row timed out")
+	}
+	select {
+	case <-completed:
+	case err := <-errors:
+		t.Fatalf("client error: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("SOW completed ack timed out")
 	}
 }

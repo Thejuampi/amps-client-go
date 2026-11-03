@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+- Correct AMPS WebSocket negotiation and multipart framing in the Go client
+  and fakeamps. Deliver complete SOW records before waiting for the rest of a
+  batch; preserve terminal write errors without retransmitting partial frames.
+- Honor cancellation during WebSocket initialization and make concurrent
+  deadlines interrupt active writes over both WS and WSS.
+- Replace cross-host absolute performance approval and favorable retries with
+  a fixed historical reference, frozen inputs, equal iteration counts in
+  alternating pairs, exact allocation counters and retained evidence. Existing
+  baseline values, regression budgets and comparison slack remain unchanged.
+- Reduce header parsing and message routing overhead while preserving escaped
+  headers, per-route duplicate checks, acknowledgements and reentrant global
+  handlers. The paired gate checks these paths against the fixed reference.
+- Copy active queue entries in two contiguous spans when growing the ring,
+  and remove an unused condition variable and its notifications. Preserve FIFO,
+  depth rejection, close behavior and waiting consumers.
+- Avoid conflation-map locking for streams that have never enabled conflation;
+  preserve synchronization after activation, reconfiguration and close.
+- Keep GoSec's blocking and SARIF scans out of ignored compiler scratch files,
+  so parallel test builds cannot be mistaken for project sources.
+
 ## [1.1.0] - 2026-11-02
 
 This minor release corrects the 16 finding groups from the second behavioral review,

@@ -32,7 +32,6 @@ PERF_COMPARE_OLD_LABEL ?= go1.25.13
 PERF_COMPARE_NEW_LABEL ?= go1.27.3
 PERF_COMPARE_BENCHTIME ?= 1s
 PERF_COMPARE_SAMPLES ?= 10
-PERF_COMPARE_MAX_REGRESSION ?= 1000000
 PERF_COMPARE_OLD_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_OLD_LABEL).bench.txt
 PERF_COMPARE_NEW_OUTPUT ?= $(PERF_COMPARE_DIR)/$(PERF_COMPARE_NEW_LABEL).bench.txt
 PERF_COMPARE_REPORT ?= $(PERF_COMPARE_DIR)/benchstat.txt
@@ -177,11 +176,12 @@ preprod-check-hosted: scan leak-check fuzz-smoke stress-check coverage-check per
 
 security-scan: gosec-scan vuln-scan secret-scan
 
+# Go's package walk excludes .tmp; it contains compiler-generated scratch files.
 gosec-scan:
-	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) ./...
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -exclude-dir="(^|/)[.]tmp(/|$$)" ./...
 
 gosec-report:
-	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -fmt sarif -out $(GOSEC_REPORT) ./...
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -exclude-dir="(^|/)[.]tmp(/|$$)" -fmt sarif -out $(GOSEC_REPORT) ./...
 
 secret-scan:
 	$(GO) run github.com/zricethezav/gitleaks/v8@$(GITLEAKS_VERSION) dir . --no-banner --redact --exit-code 1
@@ -223,13 +223,13 @@ coverage-check:
 
 perf-check:
 	@$(ENSURE_FUZZ_TMPDIR)
-	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_GO_TOOLCHAIN) -- run ./tools/perfgate -baseline tools/perf_baseline.json
+	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_GO_TOOLCHAIN) -- run ./tools/perfgate -mode paired -baseline tools/perf_baseline.json -reference tools/perf_reference.json -pairs 6 -benchtime 1s -package ./amps
 
 perf-compare-toolchains:
 	@$(ENSURE_FUZZ_TMPDIR)
 	@$(ENSURE_PERF_COMPARE_DIR)
-	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_COMPARE_OLD_TOOLCHAIN) -- run ./tools/perfgate -baseline tools/perf_baseline.json -benchtime $(PERF_COMPARE_BENCHTIME) -samples $(PERF_COMPARE_SAMPLES) -retry-count 0 -max-regression $(PERF_COMPARE_MAX_REGRESSION) -report-only > "$(PERF_COMPARE_OLD_OUTPUT)"
-	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_COMPARE_NEW_TOOLCHAIN) -- run ./tools/perfgate -baseline tools/perf_baseline.json -benchtime $(PERF_COMPARE_BENCHTIME) -samples $(PERF_COMPARE_SAMPLES) -retry-count 0 -max-regression $(PERF_COMPARE_MAX_REGRESSION) -report-only > "$(PERF_COMPARE_NEW_OUTPUT)"
+	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_COMPARE_OLD_TOOLCHAIN) -- run ./tools/perfgate -mode absolute -baseline tools/perf_baseline.json -benchtime $(PERF_COMPARE_BENCHTIME) -samples $(PERF_COMPARE_SAMPLES) -report-only > "$(PERF_COMPARE_OLD_OUTPUT)"
+	$(FUZZ_ENV) $(GO) run ./tools/withtoolchain -toolchain $(PERF_COMPARE_NEW_TOOLCHAIN) -- run ./tools/perfgate -mode absolute -baseline tools/perf_baseline.json -benchtime $(PERF_COMPARE_BENCHTIME) -samples $(PERF_COMPARE_SAMPLES) -report-only > "$(PERF_COMPARE_NEW_OUTPUT)"
 	$(GO) run golang.org/x/perf/cmd/benchstat@$(BENCHSTAT_VERSION) "$(PERF_COMPARE_OLD_OUTPUT)" "$(PERF_COMPARE_NEW_OUTPUT)" > "$(PERF_COMPARE_REPORT)"
 	@echo Perf comparison written to $(PERF_COMPARE_REPORT)
 

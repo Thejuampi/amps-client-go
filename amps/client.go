@@ -913,12 +913,14 @@ func (client *Client) onMessage(message *Message) (err error) {
 	subIDBytes := message.header.subID
 	commandIDBytes := message.header.commandID
 	heartbeatInterval := client.heartbeatInterval.Load()
-	heartbeatTimestamp := client.heartbeatTimestamp.Load()
 	hasHeartbeat := heartbeatInterval > 0
-	client.applyAckBookkeeping(message)
+	if command == CommandAck {
+		client.applyAckBookkeeping(message)
+	}
 
 	if command == commandHeartbeat {
 		if hasHeartbeat {
+			heartbeatTimestamp := client.heartbeatTimestamp.Load()
 			nowUnix := time.Now().Unix()
 			if nowUnix < 0 {
 				return nil
@@ -935,7 +937,7 @@ func (client *Client) onMessage(message *Message) (err error) {
 	var dataMessage = command == CommandPublish || command == CommandSOW || command == CommandOOF
 	var normalDelivery bool
 	var deliver = func(handler func(*Message) error) error {
-		if dataMessage && client.detectAndTrackDuplicate(message) {
+		if dataMessage && message.header.bookmark != nil && client.detectAndTrackDuplicate(message) {
 			return client.callDuplicateHandler(message)
 		}
 		normalDelivery = true
