@@ -68,3 +68,25 @@ func TestReleaseWorkflowAcceptsPreparedVersion(t *testing.T) {
 		t.Fatal("prepared releases must not fail because version markers already match")
 	}
 }
+
+func TestReleaseWorkflowValidatesPreparedMarkersBeforeGates(t *testing.T) {
+	var workflow, err = os.ReadFile("../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var content = string(workflow)
+	var update = strings.Index(content, "- name: Update version files")
+	var validation = strings.Index(content, "- name: Validate prepared release markers")
+	var gates = strings.Index(content, "- name: Release gates")
+	if update < 0 || validation <= update || gates <= validation {
+		t.Fatal("release marker validation must run after version updates and before release gates")
+	}
+	var step = content[validation:gates]
+	var command = "go test ./amps -run '^(TestReleaseVersionMarkers|TestReadmeReleaseVersion|TestChangelogReleaseVersion)$' -count=1"
+	if !strings.Contains(step, command) {
+		t.Fatal("release preflight must run all three release marker tests without cached results")
+	}
+	if strings.Contains(step, "continue-on-error:") || strings.Contains(step, "if:") || strings.Contains(step, "||") {
+		t.Fatal("release marker validation must be unconditional and blocking")
+	}
+}

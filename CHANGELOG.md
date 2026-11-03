@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-03
+
 - Correct AMPS WebSocket negotiation and multipart framing in the Go client
   and fakeamps. Deliver complete SOW records before waiting for the rest of a
   batch; preserve terminal write errors without retransmitting partial frames.
