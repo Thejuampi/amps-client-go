@@ -22,6 +22,8 @@ func TestMessageQueueResizePreservesOnlyLiveFIFO(t *testing.T) {
 		{"full-unwrapped", 4, 0, 4},
 		{"full-wrapped", 5, 4, 5},
 		{"non-power-of-two-wrapped", 7, 6, 3},
+		{"large-full-wrapped", 65536, 65535, 65536},
+		{"large-partial-wrapped", 65537, 65530, 65535},
 	}
 	for _, entry := range cases {
 		t.Run(entry.name, func(t *testing.T) {
@@ -80,7 +82,7 @@ func TestMessageQueueResizePreservesOnlyLiveFIFO(t *testing.T) {
 var benchmarkMessageQueueResizeSink []*Message
 
 func BenchmarkMessageQueueResize(b *testing.B) {
-	for _, capacity := range []uint64{1024, 16384} {
+	for _, capacity := range []uint64{1024, 16384, 1048576} {
 		for _, wrapped := range []bool{false, true} {
 			b.Run(fmt.Sprintf("capacity=%d/wrapped=%t", capacity, wrapped), func(b *testing.B) {
 				var ring = make([]*Message, capacity)

@@ -777,9 +777,15 @@ func (queue *_MessageQueue) close() {
 func (queue *_MessageQueue) resize() {
 	newRing := make([]*Message, queue.capacity*2)
 
+	// Scalar writes avoid large bulk write-barrier/memmove bursts while the
+	// producer holds the queue lock. Preserve FIFO across both live spans.
 	var firstLength = min(queue._length, queue.capacity-queue.first)
-	copy(newRing, queue.ring[queue.first:queue.first+firstLength])
-	copy(newRing[firstLength:], queue.ring[:queue._length-firstLength])
+	for i := uint64(0); i < firstLength; i++ {
+		newRing[i] = queue.ring[queue.first+i]
+	}
+	for i := firstLength; i < queue._length; i++ {
+		newRing[i] = queue.ring[i-firstLength]
+	}
 
 	queue.ring = newRing
 	queue.first = 0
