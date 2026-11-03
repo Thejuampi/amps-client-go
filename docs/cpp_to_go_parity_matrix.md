@@ -69,6 +69,11 @@ Current gate result (manifest in this repository revision):
 
 ## Related Documentation
 
+WebSocket is a Go transport extension. Its framing is checked against the
+official JavaScript client and strict wire tests, rather than inferred from
+native C++ TCP framing. See the [WebSocket correction](websocket_protocol_fix.md)
+for the protocol, regression coverage and remaining deployment limits.
+
 - [Supported Scope and Constraints](supported_scope.md)
 - [Reference: C API Compatibility](capi_reference.md)
 - [Reference: C++ Compatibility](cppcompat_reference.md)

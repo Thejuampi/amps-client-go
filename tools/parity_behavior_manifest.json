@@ -2,6 +2,14 @@
   "version": "1",
   "gaps": [
     {
+      "id": "websocket-wire-framing",
+      "domain": "transport",
+      "description": "The Go WebSocket extension must negotiate the AMPS mode and use multipart WebSocket framing rather than wrapping a TCP frame; fakeamps must reject the former incorrect format.",
+      "pass_criteria": "Strict WebSocket tests, Go-to-fakeamps publish/subscribe/SOW integration and the independent official JavaScript client pass; complete SOW records survive a subsequent truncated record, and cancellation/deadlines/terminal errors preserve connection ownership and prevent retransmission.",
+      "status": "closed",
+      "resolution_evidence": "docs/websocket_protocol_fix.md"
+    },
+    {
       "id": "contract-parity-gating",
       "domain": "parity-contract",
       "description": "Symbol presence and manually closed statuses do not establish behavioral equivalence; the second audit reproduces additional divergences against C++ 5.3.5.14.",

@@ -323,12 +323,12 @@ func prepareProtocolConn(conn net.Conn) (net.Conn, error) {
 		return nil, err
 	}
 
-	return &websocketConn{Conn: conn, reader: reader}, nil
+	return newAMPSWebsocketConn(&websocketConn{Conn: conn, reader: reader}), nil
 }
 
 func connectionProtocolLabel(conn net.Conn) string {
 	switch conn.(type) {
-	case *websocketConn:
+	case *websocketConn, *ampsWebsocketConn:
 		return "websocket"
 	default:
 		return "tcp"
