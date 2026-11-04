@@ -27,6 +27,9 @@
   runtime flags, fixing a race detected by the release stress gate.
 - Check WebSocket header capacity arithmetic before allocating, preserving the
   existing wire format and one-buffer allocation for valid headers.
+- Preserve optional fields in publish headers when the fast writer cannot
+  serialize them. Write eligible headers into available buffer capacity while
+  retaining escaping, numeric values and existing contents.
 
 ## [1.1.0] - 2026-11-02
 

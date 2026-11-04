@@ -249,3 +249,24 @@ The timed rounds recorded zero or one allocation per 20.8 million operations,
 which is zero in the historical whole-allocs/op unit. Profiles and all samples
 were retained separately. These measurements support the implementation choice;
 the complete blocking gate still decides release approval.
+
+The next CI run, `41755728755`, passed all six multi-subscription comparisons
+(worst 98.569 ns/op, limit 114.720), but blocked header writing: one pair reached
+117.557 ns/op against 117.030. The unchanged run remains inconclusive. Its
+header-writing pairs used the same N=27,138,605 and sufficient duration.
+
+The publish writers now append into available buffer capacity and commit that
+region with one write. A capacity check subtracts the fixed overhead and field
+lengths without an overflowing size sum. Insufficient capacity uses the previous
+writer, preserving its allocation behavior. Additional fields that the strict
+path cannot serialize use the general writer, including present numeric zeros
+and empty text values. This preserves the Go writer's behavior; it does not
+certify which aliases a real AMPS server accepts.
+
+A second canonical-harness diagnostic used five alternating rounds at that
+same N on the Windows host described above. Header-writing medians were
+62.424 ns/op for the pinned reference, 64.992 for the previous candidate and
+31.799 for the fused writer. Raw observations and profiles were retained.
+Growing-buffer tests compare allocations against the previous writer under the
+same compiler and race instrumentation; preallocated buffers require zero.
+Release approval still requires the complete unchanged gate.

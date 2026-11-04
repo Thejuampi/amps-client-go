@@ -2,6 +2,14 @@
   "version": "1",
   "gaps": [
     {
+      "id": "header-fast-path-preserves-present-fields",
+      "domain": "header-serialization",
+      "description": "The Go publish header fast path preserves every field emitted by the general Go writer, including optional numeric fields set to zero and optional text fields set to an empty string.",
+      "pass_criteria": "TestHeaderWriteStrictParityAdditionalFields, TestHeaderWriteStrictParityEmptyAdditionalFields, and TestHeaderWriteStrictParityAllAdditionalFieldsInOrder cover the ten fields individually and together; TestHeaderWriteStrictParityStringFields, TestHeaderWriteStrictParityNilAndEmptyStrings, TestHeaderWriteStrictParityBufferAndNumericChanges, TestHeaderWriteStrictParityCacheInvalidatedBySettersAndReset, and TestHeaderWriteStrictParityPreallocatedBufferAllocations cover escaping, presence, buffer reuse, numeric boundaries, cache invalidation, and the allocation budget. TestHeaderWriteSimplePublishBuffersAndEscapes, TestHeaderWriteSimplePublishCacheAndAllocations, and TestHeaderWriteSimplePublishNilStrings cover the simple publish path.",
+      "status": "closed",
+      "evidence": "docs/cpp_to_go_parity_matrix.md#header-serialization"
+    },
+    {
       "id": "websocket-wire-framing",
       "domain": "transport",
       "description": "The Go WebSocket extension must negotiate the AMPS mode and use multipart WebSocket framing rather than wrapping a TCP frame; fakeamps must reject the former incorrect format.",

@@ -8,7 +8,7 @@ certify complete server compatibility.
 
 The behavior review uses **C++ 5.3.5.14** (verified again 2026-11-01).
 The [audit](behavior_parity_audit.md) records the original implementation differences,
-with a [753-declaration inventory](behavior_parity_inventory.md).
+with a [755-declaration inventory](behavior_parity_inventory.md).
 The original 23 finding groups have their
 [corrections and regression tests](behavior_parity_fixes.md). The
 [second audit](behavior_parity_second_audit.md) reproduced **16 finding
@@ -16,7 +16,7 @@ groups**, including the previously noted fakeamps reconnect limitation, with
 19 probe functions. Those functions now run in the normal suite alongside
 additional boundary regressions. The [correction report](behavior_parity_second_fixes.md)
 records the fixes, independent review and release gates. The
-[gap register](gap_register.md) has **0 open entries** across 53 contracts, including the native C++ interoperability contracts.
+[gap register](gap_register.md) has **0 open entries** across 55 contracts, including the native C++ interoperability contracts.
 Symbol presence is not behavioral equivalence.
 
 The 2026-10-26 [stress follow-up](behavior_parity_fixes.md#seguimiento-del-stress-2026-10-26)
@@ -66,6 +66,30 @@ Current gate result (manifest in this repository revision):
 - Deprecated C++ APIs are excluded from required parity scope.
 - C API thread counters map to cumulative receive-lifecycle counters (`create`/`join-like wait`/`detach-like stop`) rather than raw OS thread primitives.
 - `Options` helpers from `Message.hpp` map onto `Command` option helpers in Go, including `send_keys`, `fully_durable`, `max_backlog`, and `bookmark_not_found`.
+
+## Header serialization
+
+The Go publish header fast path must produce the fields that the general Go
+writer would produce. When any of the five additional numeric fields
+(`group_sequence_number`, `skip_n`, `maximum_messages`, `timeout_interval`,
+`grace_period`) or five additional text fields (`data_only`, `send_empty`,
+`send_keys`, `send_oof`, `lease_period`) is present, serialization uses the
+general writer. A present numeric zero or empty text value remains present.
+The normal-suite `TestHeaderWriteStrictParityAdditionalFields` and
+`TestHeaderWriteStrictParityEmptyAdditionalFields` regressions check each
+field; `TestHeaderWriteStrictParityAllAdditionalFieldsInOrder` checks them
+together. The related strict-parity and simple-publish tests check escaping,
+buffer reuse, numeric boundaries, cache invalidation, and the allocation budget.
+
+This is a Go serializer consistency contract. In the C++ 5.3.5.14 SDK,
+`src/amps_protocol_generated.h` names the corresponding group sequence, lease
+period, and timeout fields `gseq`, `lp`, and `time_interval`; its
+`include/Message.hpp` constructs `skip_n` as an option. Go's `SetSendKeys`
+also operates on command options, separately from the `send_keys` header
+field covered here. The [AMPS protocol reference](https://crankuptheamps.com/docs/amps-command-reference/protocol/amps-protocol)
+specifies that header applicability depends on the command. These tests do not
+establish which alternate field names a running AMPS server accepts or prove
+equivalence of their server-side effects.
 
 ## Related Documentation
 
