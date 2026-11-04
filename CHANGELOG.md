@@ -23,6 +23,10 @@
   preserve synchronization after activation, reconfiguration and close.
 - Keep GoSec's blocking and SARIF scans out of ignored compiler scratch files,
   so parallel test builds cannot be mistaken for project sources.
+- Join fakeamps test connection handlers before restoring broker state and
+  runtime flags, fixing a race detected by the release stress gate.
+- Check WebSocket header capacity arithmetic before allocating, preserving the
+  existing wire format and one-buffer allocation for valid headers.
 
 ## [1.1.0] - 2026-11-02
 

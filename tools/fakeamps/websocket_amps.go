@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 
 	"github.com/Thejuampi/amps-client-go/internal/safecast"
@@ -320,6 +321,17 @@ func ampsWebSocketObject(data []byte) ([]byte, []byte, map[string]json.RawMessag
 	return data[:end], data[end:], fields, nil
 }
 
+func ampsWebSocketHeaderCapacity(headerLength, nameLength int) (int, error) {
+	if headerLength < 0 || nameLength < 0 || nameLength > math.MaxInt-16 {
+		return 0, errors.New("AMPS websocket header capacity out of range")
+	}
+	var extra = nameLength + 16
+	if headerLength > math.MaxInt-extra {
+		return 0, errors.New("AMPS websocket header capacity out of range")
+	}
+	return headerLength + extra, nil
+}
+
 func ampsWebSocketNumberField(header []byte, fields map[string]json.RawMessage, name string, value int) ([]byte, error) {
 	var unsignedValue, ok = safecast.Uint64FromIntChecked(value)
 	if !ok {
@@ -335,7 +347,12 @@ func ampsWebSocketNumberField(header []byte, fields map[string]json.RawMessage, 
 		}
 		return header, nil
 	}
-	var result = make([]byte, 0, len(header)+len(name)+16)
+	var capacity int
+	capacity, err = ampsWebSocketHeaderCapacity(len(header), len(name))
+	if err != nil {
+		return nil, err
+	}
+	var result = make([]byte, 0, capacity)
 	result = append(result, header[:len(header)-1]...)
 	if len(fields) > 0 {
 		result = append(result, ',')
