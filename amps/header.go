@@ -483,6 +483,21 @@ func (header *_Header) writeStrictParityEscapedFastPath(buffer *bytes.Buffer) {
 	_, _ = buffer.WriteString(`}`)
 }
 
+func headerBufferHasRoom(buffer *bytes.Buffer, fixed int, fields ...[]byte) bool {
+	var available = buffer.Available()
+	if available < fixed {
+		return false
+	}
+	available -= fixed
+	for _, field := range fields {
+		if available < len(field) {
+			return false
+		}
+		available -= len(field)
+	}
+	return true
+}
+
 func (header *_Header) writeStrictParityFastPath(buffer *bytes.Buffer) bool {
 	if header == nil {
 		return false
@@ -495,6 +510,9 @@ func (header *_Header) writeStrictParityFastPath(buffer *bytes.Buffer) bool {
 	if header.batchSize != nil || header.bookmark != nil || header.correlationID != nil || header.ackType != nil || header.clientName != nil || header.userID != nil || header.password != nil || header.orderBy != nil || header.sowKey != nil || header.sowKeys != nil || header.subIDs != nil || header.topN != nil || header.version != nil || header.messageType != nil {
 		return false
 	}
+	if header.groupSequenceNumber != nil || header.skipN != nil || header.maximumMessages != nil || header.timeoutInterval != nil || header.gracePeriod != nil || headerHasTextExtras(header) {
+		return false
+	}
 
 	if header.strictParityEscapeState == 0 {
 		header.strictParityEscapeState = 2
@@ -504,6 +522,29 @@ func (header *_Header) writeStrictParityFastPath(buffer *bytes.Buffer) bool {
 	}
 	if header.strictParityEscapeState != 1 {
 		header.writeStrictParityEscapedFastPath(buffer)
+		return true
+	}
+	const fixedSize = len(`{"c":"p","cid":"`) + len(`","t":"`) + len(`","e":`) + len(`,"filter":"`) + len(`","opts":"`) + len(`","query_id":"`) + len(`","s":`) + len(`,"sub_id":"`) + len(`"}`) + 40
+	if headerBufferHasRoom(buffer, fixedSize, header.commandID, header.topic, header.filter, header.options, header.queryID, header.subID) {
+		var encoded = buffer.AvailableBuffer()
+		encoded = append(encoded, `{"c":"p","cid":"`...)
+		encoded = append(encoded, header.commandID...)
+		encoded = append(encoded, `","t":"`...)
+		encoded = append(encoded, header.topic...)
+		encoded = append(encoded, `","e":`...)
+		encoded = strconv.AppendUint(encoded, uint64(*header.expiration), 10)
+		encoded = append(encoded, `,"filter":"`...)
+		encoded = append(encoded, header.filter...)
+		encoded = append(encoded, `","opts":"`...)
+		encoded = append(encoded, header.options...)
+		encoded = append(encoded, `","query_id":"`...)
+		encoded = append(encoded, header.queryID...)
+		encoded = append(encoded, `","s":`...)
+		encoded = strconv.AppendUint(encoded, *header.sequenceID, 10)
+		encoded = append(encoded, `,"sub_id":"`...)
+		encoded = append(encoded, header.subID...)
+		encoded = append(encoded, `"}`...)
+		_, _ = buffer.Write(encoded)
 		return true
 	}
 	_, _ = buffer.WriteString(`{"c":"p","cid":"`)
@@ -553,6 +594,17 @@ func (header *_Header) writeSimplePublishFastPath(buffer *bytes.Buffer) bool {
 	}
 	if header.strictParityEscapeState != 1 {
 		header.writeSimplePublishEscapedFastPath(buffer)
+		return true
+	}
+	const fixedSize = len(`{"c":"p","cid":"`) + len(`","t":"`) + len(`"}`)
+	if headerBufferHasRoom(buffer, fixedSize, header.commandID, header.topic) {
+		var encoded = buffer.AvailableBuffer()
+		encoded = append(encoded, `{"c":"p","cid":"`...)
+		encoded = append(encoded, header.commandID...)
+		encoded = append(encoded, `","t":"`...)
+		encoded = append(encoded, header.topic...)
+		encoded = append(encoded, `"}`...)
+		_, _ = buffer.Write(encoded)
 		return true
 	}
 	_, _ = buffer.WriteString(`{"c":"p","cid":"`)

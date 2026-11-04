@@ -62,6 +62,21 @@ type benchmarkRequest struct {
 
 type pairedRunner func(benchmarkRequest) (benchmarkRun, error)
 
+// calibratedIterations adds fixed headroom before sampling, because a timed
+// calibration can finish barely above the minimum and later samples can be faster.
+// Both sides use this count, including the same existing Go benchmark cap.
+func calibratedIterations(reference, candidate uint64) uint64 {
+	var n = max(reference, candidate)
+	var extra = n / 4
+	if n%4 != 0 {
+		extra++
+	}
+	if n >= maximumBenchmarkIterations || extra >= maximumBenchmarkIterations-n {
+		return maximumBenchmarkIterations
+	}
+	return n + extra
+}
+
 func sufficientlyLong(result benchmarkResult, duration time.Duration) bool {
 	return result.N == maximumBenchmarkIterations || result.DurationNS >= int64(duration)
 }
@@ -133,7 +148,7 @@ func collectPairs(runner pairedRunner, baseline baselineFile, fallback float64, 
 				calibration.Candidate = &observation
 			}
 		}
-		calibration.Iterations = max(calibration.Reference.N, calibration.Candidate.N)
+		calibration.Iterations = calibratedIterations(calibration.Reference.N, calibration.Candidate.N)
 		for index := 0; index < count; index++ {
 			var order = [2]string{"reference", "candidate"}
 			if index%2 != 0 {

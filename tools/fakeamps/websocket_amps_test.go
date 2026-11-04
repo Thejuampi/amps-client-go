@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"io"
+	"math"
 	"net"
 	"os"
 	"strings"
@@ -193,6 +195,63 @@ func TestAMPSWebSocketNumberFieldBoundaries(t *testing.T) {
 			}
 			if err != nil || string(got) != entry.want {
 				t.Fatalf("got %q, %v; want %q", got, err, entry.want)
+			}
+			if _, present := fields["l"]; !present && cap(got) != len(header)+len("l")+16 {
+				t.Fatalf("capacity = %d, want %d", cap(got), len(header)+len("l")+16)
+			}
+		})
+	}
+}
+
+var ampsWebSocketNumberFieldAllocationSink []byte
+
+func TestAMPSWebSocketNumberFieldAllocationCount(t *testing.T) {
+	var header = []byte(`{"c":"p"}`)
+	var fields = map[string]json.RawMessage{"c": []byte(`"p"`)}
+	var allocations = testing.AllocsPerRun(100, func() {
+		var result, err = ampsWebSocketNumberField(header, fields, "l", 42)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ampsWebSocketNumberFieldAllocationSink = result
+	})
+	if allocations != 1 {
+		t.Fatalf("allocations = %v, want exactly one result buffer", allocations)
+	}
+}
+
+func TestAMPSWebSocketHeaderCapacityBoundaries(t *testing.T) {
+	var cases = []struct {
+		name         string
+		headerLength int
+		nameLength   int
+		want         int
+		wantError    bool
+	}{
+		{"negative header", -1, 0, 0, true},
+		{"negative name", 0, -1, 0, true},
+		{"both negative", -1, -1, 0, true},
+		{"empty", 0, 0, 16, false},
+		{"one each", 1, 1, 18, false},
+		{"typical", 42, 2, 60, false},
+		{"maximum header", math.MaxInt - 16, 0, math.MaxInt, false},
+		{"maximum with name", math.MaxInt - 17, 1, math.MaxInt, false},
+		{"maximum name", 0, math.MaxInt - 16, math.MaxInt, false},
+		{"header overflow one", math.MaxInt - 16, 1, 0, true},
+		{"name overhead overflow", 0, math.MaxInt - 15, 0, true},
+		{"both large", math.MaxInt, math.MaxInt, 0, true},
+	}
+	for _, entry := range cases {
+		t.Run(entry.name, func(t *testing.T) {
+			var capacity, err = ampsWebSocketHeaderCapacity(entry.headerLength, entry.nameLength)
+			if entry.wantError {
+				if err == nil {
+					t.Fatalf("capacity(%d,%d) = %d, want error", entry.headerLength, entry.nameLength, capacity)
+				}
+				return
+			}
+			if err != nil || capacity != entry.want {
+				t.Fatalf("capacity(%d,%d) = %d, %v; want %d", entry.headerLength, entry.nameLength, capacity, err, entry.want)
 			}
 		})
 	}

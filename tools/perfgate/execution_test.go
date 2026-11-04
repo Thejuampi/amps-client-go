@@ -135,7 +135,11 @@ func TestCollectPairsAlternatesOrderAndRetainsEveryObservation(t *testing.T) {
 	var environment = benchmarkEnvironment{GOOS: "linux", GOARCH: "amd64", CPU: "cpu", Package: "amps", Procs: 4}
 	var runner pairedRunner = func(request benchmarkRequest) (benchmarkRun, error) {
 		calls = append(calls, request.Side)
-		return benchmarkRun{Environment: environment, Measurements: map[string][]benchmarkResult{request.Name: {{NSOp: 100, N: 100, DurationNS: int64(time.Second)}}}}, nil
+		var n uint64 = 100
+		if request.Pair >= 0 {
+			n = request.Iterations
+		}
+		return benchmarkRun{Environment: environment, Measurements: map[string][]benchmarkResult{request.Name: {{NSOp: 100, N: n, DurationNS: int64(time.Second)}}}}, nil
 	}
 	var results, _, err = collectPairs(runner, baselineFile{Benchmarks: map[string]benchmarkBaseline{"BenchmarkFoo": {NSOp: 100}}}, 10, 6, time.Second)
 	var want = []string{"reference", "candidate", "reference", "candidate", "candidate", "reference", "reference", "candidate", "candidate", "reference", "reference", "candidate", "candidate", "reference"}
@@ -148,7 +152,11 @@ func TestCollectPairsRejectsEnvironmentChangesAndExecutionFailure(t *testing.T) 
 	for _, field := range []string{"cpu", "os", "arch", "package", "workers", "command", "samples"} {
 		t.Run(field, func(t *testing.T) {
 			var runner pairedRunner = func(request benchmarkRequest) (benchmarkRun, error) {
-				var run = testBenchmarkRun(request.Name, 100, time.Second)
+				var n uint64 = 100
+				if request.Pair >= 0 {
+					n = request.Iterations
+				}
+				var run = testBenchmarkRun(request.Name, n, time.Second)
 				if request.Side == "candidate" && request.Pair == 1 {
 					switch field {
 					case "cpu":
@@ -182,10 +190,14 @@ func TestCollectPairsPreservesConfirmedAllocationFailureBeforeCommandError(t *te
 		if request.Pair > 0 {
 			return benchmarkRun{}, errors.New("sample process failed")
 		}
-		var result = benchmarkResult{NSOp: 100, N: 100, DurationNS: int64(time.Second)}
+		var n uint64 = 100
+		if request.Pair >= 0 {
+			n = request.Iterations
+		}
+		var result = benchmarkResult{NSOp: 100, N: n, DurationNS: int64(time.Second)}
 		if request.Pair == 0 && request.Side == "candidate" {
 			result.AllocsOp = 1
-			result.MemAllocs = 100
+			result.MemAllocs = n
 		}
 		return benchmarkRun{Environment: testBenchmarkEnvironment, Measurements: map[string][]benchmarkResult{request.Name: {result}}}, nil
 	}

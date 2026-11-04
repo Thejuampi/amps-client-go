@@ -1,7 +1,7 @@
 # Verificación formal acotada de recuperación AMPS
 
 Creación: 2026-11-01. Última sincronización: 2026-11-03, sobre el commit
-`333efdb62a74cbf5187e7a625b7e25e025b80920`. Todas las fuentes cubiertas están
+`801afa2600a36df5516fa9a5ca27b09659a4a3fe`. Todas las fuentes cubiertas están
 commiteadas y coinciden con [source-sync.json](../formal/source-sync.json).
 
 Se aplicó el flujo de pstack `create-formal-verification-skill`, su control de
@@ -198,6 +198,18 @@ modelos ni sus invariantes. El rechazo inicial del verificador identificó
 deriva de hashes, no una violación del modelo. Las ocho fuentes cubiertas no
 tenían modificaciones pendientes al registrar esta sincronización.
 
+En la revisión posterior de `333efdb62a74cbf5187e7a625b7e25e025b80920` a
+`801afa2600a36df5516fa9a5ca27b09659a4a3fe`, la única fuente cubierta que
+cambió fue `client.go`: actualiza la versión a 1.1.1 y optimiza el despacho a
+varios subscription IDs. El despacho directo se limita a los casos que no
+requieren comprobar duplicados; la ruta con bookmark sigue revisándose por
+destinatario. Tras un stream lleno, la extracción a `client_routing.go`
+conserva el orden de comprobación de conexión, heartbeat, pausa y reintento. Estos modelos
+no verifican el parsing o routing de subscription IDs ni callbacks
+personalizados. No cambiaron las transiciones modeladas de retención, replay,
+ACK persistido, WAL o HA; no se modificaron cotas ni invariantes. El guard
+rechazó inicialmente el hash anterior de `client.go`, como corresponde.
+
 El release completo es una condición independiente. La pasada 1.1.0 terminó
 en PASS el 2026-11-02 a las 23:36 UTC, en 37 min 5,7 s, con veinte rondas de
 integración, límites originales y diez escenarios con el cliente C++ oficial.
@@ -229,3 +241,11 @@ variante rota bajo la cota y no demuestra un deadlock del programa real.
 En otras variantes rotas, statechart también encontró que enviar un replay de
 una generación vieja puede producir `NoLoss` al descartar con un ACK acumulado,
 y que no restaurar el watermark de delete viola `NewRowSurvivesOldDelete`.
+
+La repetición sobre `801afa2600a36df5516fa9a5ca27b09659a4a3fe` pasó las
+siete configuraciones normales, produjo los quince contraejemplos esperados y
+detectó las cinco mutaciones Go. Los resultados crudos están en
+`G:/dev/caches/tmp/amps-recovery-v111-801afa2-20261103` y los 22 informes de
+statechart en `G:/dev/caches/tmp/amps-statechart-v111-801afa2-20261103`.
+Los informes coinciden con los previamente revisados; el control de hashes del
+modelo C++ y su SDK también pasó sin cambios en sus fuentes cubiertas.

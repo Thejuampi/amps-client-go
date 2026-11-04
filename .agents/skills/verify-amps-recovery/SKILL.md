@@ -34,14 +34,16 @@ ha_client.go (attempt and worker handoff), publish_store.go and internal/wal/wal
 (WAL/checkpoint outcomes), and fakeamps dedupe.go, handler.go and journal.go
 (named publisher identity and normal reopen). Exact hashes are in
 formal/source-sync.json. The confirmed source commit is
-333efdb62a74cbf5187e7a625b7e25e025b80920. All covered sources were committed and
+801afa2600a36df5516fa9a5ca27b09659a4a3fe. All covered sources were committed and
 matched those hashes at synchronization. Verification-only commits may follow
 without changing that source commit; the hash guard still applies.
 
 At this synchronization the `onMessage` fast paths skipped helpers only when
 their existing guards returned without side effects, and moved a heartbeat
 load into its branch. The global-handler lookup optimization is outside these
-models. Retention, replay, WAL and HA transitions were unchanged; see the report.
+models. A later multi-subscription routing fast path and extracted stream-full
+retry do not change the modeled retention, replay, WAL or HA transitions; the
+models do not verify routing or custom callbacks. See the report.
 
 After reviewing every covered source change against the transitions, run
 `python tools/formalcheck/check.py --record-sync` to advance the source record.

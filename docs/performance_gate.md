@@ -39,8 +39,11 @@ provenance, so local `refs/replace` cannot substitute a different source tree.
 
 For each baseline benchmark, the gate calibrates the reference and candidate
 once with the requested duration (at least one second). It selects the larger
-iteration count, then executes exactly six pairs at that same count with four
-Go processors. The order alternates reference/candidate and candidate/reference.
+iteration count and adds a fixed 25% headroom (rounded up and capped at Go's
+one-billion-iteration limit), then executes exactly six pairs at that same count
+with four Go processors. This margin reduces underduration samples after a
+calibration that barely clears the minimum; it does not change the duration veto
+or the regression limits. The order alternates reference/candidate and candidate/reference.
 The report retains both calibrations, the chosen count and every observation;
 there are no selective retries or medians that hide an outlying pair.
 
@@ -176,14 +179,15 @@ or budgets. Equal counts still do not guarantee equal backlog or scheduling;
 conflicting observations remain blocking, and bytes alone do not establish
 a GC-related cause.
 
-The queue optimization replaces per-entry modulo/copy operations with two
-contiguous copies of active entries. It also removes a condition variable
+The initial queue optimization replaced per-entry modulo/copy operations with
+two contiguous bulk copies of active entries. It also removed a condition variable
 that had no waiters. Tests preserve FIFO, pointer identity, depth rejection,
 close and wakeup behavior, empty/partial/wrapped rings, and capacities that are
 not powers of two. Deliberate copy, offset and stale-pointer mutations fail.
 
 A separate five-sample diagnostic on Windows/Go 1.26.10/GOMAXPROCS=4 measured
-these median resize times. Both versions reported one allocation per operation;
+these historical median resize times for the original and bulk-copy versions.
+Both versions reported one allocation per operation;
 the input ring is reused and setup is outside the timer. This diagnostic does
 not replace the blocking gate or change its pinned harness.
 
@@ -193,6 +197,12 @@ not replace the blocking gate or change its pinned harness.
 | 1,024 | yes | 5,182 | 1,658 |
 | 16,384 | no | 91,652 | 44,367 |
 | 16,384 | yes | 91,499 | 61,951 |
+
+The current implementation copies the same two live spans with scalar loops.
+This avoids large bulk write-barrier bursts while the producer holds the queue
+lock. The table above does not measure that implementation. Its approval still
+requires the full paired gate, including concurrent dequeue; comparisons across
+different runners or iteration counts do not isolate the effect of this change.
 
 The next hosted fixed-count run retained a concurrent-stream difference of
 20.98% to 32.08% across all six pairs at N=16,252,420. All sides assigned
@@ -216,3 +226,47 @@ and 44.431 ns/op after; the historical reference measured 54.978 ns/op.
 All sides assigned approximately 256 MiB. CPU profiles accompany that local
 diagnostic; it does not establish the cause or outcome on the hosted Linux
 runner. The complete paired gate remains required.
+
+## Finalizing v1.1.1
+
+CI run `41688617698` blocked `BenchmarkRouteHotMultiSIDs`: five comparisons
+were within the unchanged 114.720 ns/op limit, while one reached 116.790.
+All samples had the same iteration count and sufficient duration. This result
+remains inconclusive; it is not approval from a favorable retry.
+
+The multi-subscription path now calls ordinary handlers directly and keeps
+duplicate handling on the bookmarked-data path. Both paths retain the full-stream
+retry behavior in a shared helper. Subscription IDs are still installed before
+each callback and restored afterward; callbacks can change routes, replace the
+message or add a bookmark before the next route is evaluated.
+
+A diagnostic using only the pinned harness and identical bootstrap compared
+the reference, commit `38ffbf5`, and the optimized source on one Windows/i7-12700K
+host with Go 1.26.10, four processors and CGO disabled. Five alternating rounds
+used N=20,814,018 for every side. Median times were 59.075, 59.504 and 55.801
+ns/op respectively; the optimized/base ratios ranged from 0.9340 to 0.9421.
+The timed rounds recorded zero or one allocation per 20.8 million operations,
+which is zero in the historical whole-allocs/op unit. Profiles and all samples
+were retained separately. These measurements support the implementation choice;
+the complete blocking gate still decides release approval.
+
+The next CI run, `41755728755`, passed all six multi-subscription comparisons
+(worst 98.569 ns/op, limit 114.720), but blocked header writing: one pair reached
+117.557 ns/op against 117.030. The unchanged run remains inconclusive. Its
+header-writing pairs used the same N=27,138,605 and sufficient duration.
+
+The publish writers now append into available buffer capacity and commit that
+region with one write. A capacity check subtracts the fixed overhead and field
+lengths without an overflowing size sum. Insufficient capacity uses the previous
+writer, preserving its allocation behavior. Additional fields that the strict
+path cannot serialize use the general writer, including present numeric zeros
+and empty text values. This preserves the Go writer's behavior; it does not
+certify which aliases a real AMPS server accepts.
+
+A second canonical-harness diagnostic used five alternating rounds at that
+same N on the Windows host described above. Header-writing medians were
+62.424 ns/op for the pinned reference, 64.992 for the previous candidate and
+31.799 for the fused writer. Raw observations and profiles were retained.
+Growing-buffer tests compare allocations against the previous writer under the
+same compiler and race instrumentation; preallocated buffers require zero.
+Release approval still requires the complete unchanged gate.

@@ -941,17 +941,11 @@ func (client *Client) onMessage(message *Message) (err error) {
 			return client.callDuplicateHandler(message)
 		}
 		normalDelivery = true
-		for {
-			var handlerErr = handler(message)
-			if handlerErr == nil || !errors.Is(handlerErr, errMessageStreamFull) {
-				return handlerErr
-			}
-			if !client.connected.Load() {
-				return NewError(DisconnectedError, "disconnected while waiting for stream capacity")
-			}
-			client.checkAndSendHeartbeat(false)
-			time.Sleep(time.Millisecond)
+		var handlerErr = handler(message)
+		if handlerErr == nil || !errors.Is(handlerErr, errMessageStreamFull) {
+			return handlerErr
 		}
+		return client.retryFullMessageStream(handler, message)
 	}
 	var routeID string
 	switch {
@@ -977,7 +971,18 @@ func (client *Client) onMessage(message *Message) (err error) {
 				if messageHandler, exists := client.routes.Load(unsafeStringFromBytes(candidateRoute)); exists {
 					handled = true
 					message.header.subID = candidateRoute
-					if handlerErr := deliver(messageHandler.(func(*Message) error)); handlerErr != nil && err == nil {
+					var handler = messageHandler.(func(*Message) error)
+					var handlerErr error
+					if dataMessage && message.header.bookmark != nil {
+						handlerErr = deliver(handler)
+					} else {
+						normalDelivery = true
+						handlerErr = handler(message)
+						if handlerErr != nil && errors.Is(handlerErr, errMessageStreamFull) {
+							handlerErr = client.retryFullMessageStream(handler, message)
+						}
+					}
+					if handlerErr != nil && err == nil {
 						err = handlerErr
 					}
 				}

@@ -43,11 +43,11 @@ func TestCollectPairsCalibratesOnceAndUsesCommonCountInEveryPair(t *testing.T) {
 		t.Fatalf("results=%+v environment=%+v error=%v", results, environment, err)
 	}
 	var result = results[0]
-	if result.Verdict != "PASS" || len(result.Pairs) != 6 || result.Calibration.Iterations != 200 || result.Calibration.Reference.N != 100 || result.Calibration.Candidate.N != 200 || result.Calibration.Candidate.MemBytes != 600 {
+	if result.Verdict != "PASS" || len(result.Pairs) != 6 || result.Calibration.Iterations != 250 || result.Calibration.Reference.N != 100 || result.Calibration.Candidate.N != 200 || result.Calibration.Candidate.MemBytes != 600 {
 		t.Fatalf("calibration or samples lost: %+v", result)
 	}
 	for index, pair := range result.Pairs {
-		if pair.Reference.N != 200 || pair.Candidate.N != 200 {
+		if pair.Reference.N != 250 || pair.Candidate.N != 250 {
 			t.Fatalf("pair %d did not retain the selected count: %+v", index+1, pair)
 		}
 	}
@@ -55,7 +55,7 @@ func TestCollectPairsCalibratesOnceAndUsesCommonCountInEveryPair(t *testing.T) {
 	var sides []string
 	for index, call := range calls {
 		sides = append(sides, call.Side)
-		if call.Name != "BenchmarkFoo" || (index < 2 && (call.Pair != -1 || call.Iterations != 0)) || (index >= 2 && (call.Pair != (index-2)/2 || call.Iterations != 200)) {
+		if call.Name != "BenchmarkFoo" || (index < 2 && (call.Pair != -1 || call.Iterations != 0)) || (index >= 2 && (call.Pair != (index-2)/2 || call.Iterations != 250)) {
 			t.Fatalf("incorrect request %d: %+v", index, call)
 		}
 	}
@@ -82,7 +82,7 @@ func TestCollectPairsCalibratesEachBenchmarkSeparately(t *testing.T) {
 		return testBenchmarkRun(request.Name, n, time.Second), nil
 	}
 	var results, _, err = collectPairs(runner, baseline, 10, 6, time.Second)
-	if err != nil || len(results) != 2 || results[0].Name != "BenchmarkA" || results[0].Calibration.Iterations != 101 || results[1].Name != "BenchmarkB" || results[1].Calibration.Iterations != 201 || seen["BenchmarkA"] != 14 || seen["BenchmarkB"] != 14 {
+	if err != nil || len(results) != 2 || results[0].Name != "BenchmarkA" || results[0].Calibration.Iterations != 127 || results[1].Name != "BenchmarkB" || results[1].Calibration.Iterations != 252 || seen["BenchmarkA"] != 14 || seen["BenchmarkB"] != 14 {
 		t.Fatalf("independent plans not retained: results=%+v calls=%v error=%v", results, seen, err)
 	}
 }
@@ -92,9 +92,9 @@ func TestCollectPairsChoosesBoundedMaximumCalibration(t *testing.T) {
 		name                 string
 		ref, candidate, want uint64
 	}{
-		{"minimum", 1, 1, 1},
-		{"reference is larger", 1000, 1, 1000},
-		{"candidate is larger", 1, 1000, 1000},
+		{"minimum", 1, 1, 2},
+		{"reference is larger", 1000, 1, 1250},
+		{"candidate is larger", 1, 1000, 1250},
 		{"maximum", maximumBenchmarkIterations, 1, maximumBenchmarkIterations},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestCollectPairsRejectsIncorrectOrChangingCounts(t *testing.T) {
 				return testBenchmarkRun(request.Name, n, time.Second), nil
 			}
 			var results, _, err = collectPairs(runner, testBenchmarkBaseline(), 10, 6, time.Second)
-			if err == nil || !strings.Contains(err.Error(), "iteration") || len(results) != 1 || results[0].Verdict == "PASS" || results[0].Calibration.Iterations != 100 || len(results[0].Pairs) != tc.pair {
+			if err == nil || !strings.Contains(err.Error(), "iteration") || len(results) != 1 || results[0].Verdict == "PASS" || results[0].Calibration.Iterations != 125 || len(results[0].Pairs) != tc.pair {
 				t.Fatalf("results=%+v error=%v", results, err)
 			}
 		})
@@ -214,14 +214,18 @@ func TestCollectPairsInsufficientDurationIsInconclusiveWithoutRetry(t *testing.T
 		{"one ns short", 100, time.Second - 1, time.Second, "INCONCLUSIVE"},
 		{"exact duration", 100, time.Second, time.Second, "PASS"},
 		{"longer request", 100, time.Second, 2 * time.Second, "INCONCLUSIVE"},
-		{"below cap", maximumBenchmarkIterations - 1, time.Second - 1, time.Second, "INCONCLUSIVE"},
+		{"below cap", 799999999, time.Second - 1, time.Second, "INCONCLUSIVE"},
 		{"at cap", maximumBenchmarkIterations, time.Nanosecond, time.Second, "PASS"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls int
 			var runner pairedRunner = func(request benchmarkRequest) (benchmarkRun, error) {
 				calls++
-				return testBenchmarkRun(request.Name, tc.n, tc.duration), nil
+				var n = tc.n
+				if request.Pair >= 0 {
+					n = request.Iterations
+				}
+				return testBenchmarkRun(request.Name, n, tc.duration), nil
 			}
 			var results, _, err = collectPairs(runner, testBenchmarkBaseline(), 10, 6, tc.minimum)
 			if err != nil || len(results) != 1 || results[0].Verdict != tc.want || calls != 14 || len(results[0].Pairs) != 6 || (tc.want == "INCONCLUSIVE") != (len(results[0].MeasurementIssues) > 0) {
@@ -237,7 +241,11 @@ func TestIncompleteMeasurementRetainsPlanAndCompletedHalfPair(t *testing.T) {
 		if request.Pair == 0 && request.Side == "candidate" {
 			return benchmarkRun{}, failure
 		}
-		return testBenchmarkRun(request.Name, 100, time.Second), nil
+		var n uint64 = 100
+		if request.Pair >= 0 {
+			n = request.Iterations
+		}
+		return testBenchmarkRun(request.Name, n, time.Second), nil
 	}
 	var results, environment, err = collectPairs(runner, testBenchmarkBaseline(), 10, 6, time.Second)
 	if !errors.Is(err, failure) || len(results) != 1 || environment != testBenchmarkEnvironment || results[0].IncompletePair == nil || results[0].IncompletePair.Reference == nil || results[0].IncompletePair.Candidate != nil {
@@ -248,7 +256,7 @@ func TestIncompleteMeasurementRetainsPlanAndCompletedHalfPair(t *testing.T) {
 		t.Fatal(marshalErr)
 	}
 	var saved pairedReport
-	if err = json.Unmarshal(data, &saved); err != nil || saved.Benchtime != "1s" || saved.PairCount != 6 || saved.Environment != environment || len(saved.Results) != 1 || saved.Results[0].Calibration.Reference.N != 100 || saved.Results[0].Calibration.Candidate.N != 100 || saved.Results[0].Calibration.Iterations != 100 || saved.Results[0].IncompletePair.Reference.N != 100 || !strings.Contains(saved.Error, failure.Error()) {
+	if err = json.Unmarshal(data, &saved); err != nil || saved.Benchtime != "1s" || saved.PairCount != 6 || saved.Environment != environment || len(saved.Results) != 1 || saved.Results[0].Calibration.Reference.N != 100 || saved.Results[0].Calibration.Candidate.N != 100 || saved.Results[0].Calibration.Iterations != 125 || saved.Results[0].IncompletePair.Reference.N != 125 || !strings.Contains(saved.Error, failure.Error()) {
 		t.Fatalf("saved report=%+v error=%v", saved, err)
 	}
 }
@@ -259,9 +267,13 @@ func TestShortMeasurementsDoNotHideValidAllocationFailure(t *testing.T) {
 		if request.Pair == 1 && request.Side == "reference" {
 			duration--
 		}
-		var run = testBenchmarkRun(request.Name, 100, duration)
+		var n uint64 = 100
+		if request.Pair >= 0 {
+			n = request.Iterations
+		}
+		var run = testBenchmarkRun(request.Name, n, duration)
 		if request.Pair == 0 && request.Side == "candidate" {
-			run.Measurements[request.Name][0].MemAllocs = 100
+			run.Measurements[request.Name][0].MemAllocs = n
 			run.Measurements[request.Name][0].AllocsOp = 1
 		}
 		return run, nil
@@ -278,9 +290,13 @@ func TestShortMeasurementAloneCannotEstablishAllocationFailure(t *testing.T) {
 		if request.Pair == 0 && request.Side == "candidate" {
 			duration--
 		}
-		var run = testBenchmarkRun(request.Name, 100, duration)
+		var n uint64 = 100
+		if request.Pair >= 0 {
+			n = request.Iterations
+		}
+		var run = testBenchmarkRun(request.Name, n, duration)
 		if request.Pair == 0 && request.Side == "candidate" {
-			run.Measurements[request.Name][0].MemAllocs = 100
+			run.Measurements[request.Name][0].MemAllocs = n
 			run.Measurements[request.Name][0].AllocsOp = 1
 		}
 		return run, nil

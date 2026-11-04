@@ -2,14 +2,16 @@
 
 Behavioral review reference: **C++ 5.3.5.14**, verified again 2026-11-01.
 
-The symbol mapping covers 261 entries. The public-declaration inventory covers 753 entries. Neither count establishes behavioral equivalence. See the [initial audit](behavior_parity_audit.md), [individual inventory](behavior_parity_inventory.md) and [second audit](behavior_parity_second_audit.md).
+The symbol mapping covers 261 entries. The public-declaration inventory covers 755 entries. Neither count establishes behavioral equivalence. See the [initial audit](behavior_parity_audit.md), [individual inventory](behavior_parity_inventory.md) and [second audit](behavior_parity_second_audit.md).
 
 The source of truth for current open/closed state is `tools/parity_behavior_manifest.json`.
 
-Current contract status: **OPEN_GAPS=0** across 53 entries. All 16 groups from the second audit and the three reopened general contracts have normal-suite regressions and [recorded corrections](behavior_parity_second_fixes.md). The 19 original diagnostic functions no longer require an overlay. Release validation is tracked separately in that correction report; a closed manifest does not establish behavioral equivalence or replace the gates. The original 23 groups retain their [fixes and regression tests](behavior_parity_fixes.md).
+Current contract status: **OPEN_GAPS=0** across 55 entries. All 16 groups from the second audit and the three reopened general contracts have normal-suite regressions and [recorded corrections](behavior_parity_second_fixes.md). The 19 original diagnostic functions no longer require an overlay. Release validation is tracked separately in that correction report; a closed manifest does not establish behavioral equivalence or replace the gates. The original 23 groups retain their [fixes and regression tests](behavior_parity_fixes.md).
 
 | ID | Priority/domain | Status | Contract |
 | --- | --- | --- | --- |
+| `header-fast-path-preserves-present-fields` | header serialization | closed | The Go publish fast path preserves the general writer's present fields, including numeric zero and empty text values. |
+| `websocket-wire-framing` | transport | closed | AMPS WebSocket negotiation and multipart framing pass strict wire and independent JavaScript client checks. |
 | `contract-parity-gating` | parity-contract | closed | Symbol presence and manually closed statuses do not establish behavioral equivalence; the second audit reproduces additional divergences against C++ 5.3.5.14. |
 | `correctness-parser-builder-hardening` | correctness | closed | Composite/FIX/NVFIX and header/message parsing paths handle invalid ranges and malformed wire data without panics. |
 | `logon-timeout-enforcement` | session | closed | LogonParams.Timeout is enforced during logon ack wait. |
@@ -76,4 +78,4 @@ go run ./tools/paritycheck -headers .tmp/parity-audit/reference/amps-c++-client-
 pwsh -NoProfile -File tools/paritycheck/run_deep_audit.ps1
 ```
 
-Expected result: `PARITY_ENTRIES=261`, both missing-symbol counts zero, `BEHAVIOR_ENTRIES=53`, `OPEN_GAPS=0`, and exit code 0. The normal regressions and release gates remain required; changing metadata alone cannot validate a contract.
+Expected result: `PARITY_ENTRIES=261`, both missing-symbol counts zero, `BEHAVIOR_ENTRIES=55`, `OPEN_GAPS=0`, and exit code 0. The normal regressions and release gates remain required; changing metadata alone cannot validate a contract.

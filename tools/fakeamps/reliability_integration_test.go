@@ -1007,22 +1007,8 @@ func TestQueueMaxBacklogBlocksDeliveryUntilAck(t *testing.T) {
 		*flagQueue = oldQueue
 	}()
 
-	var listener, err = net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
-
-	var serverDone = make(chan struct{})
-	go func() {
-		defer close(serverDone)
-		for {
-			var conn, acceptErr = listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go handleConnection(conn)
-		}
-	}()
+	var listener, stopServer = startJoinedTestServer(t, handleConnection)
+	defer stopServer()
 
 	var consumer, consumerErr = net.Dial("tcp", listener.Addr().String())
 	if consumerErr != nil {
@@ -1070,8 +1056,6 @@ func TestQueueMaxBacklogBlocksDeliveryUntilAck(t *testing.T) {
 		t.Fatalf("expected queued delivery key k-2 after ack, got %s", secondDelivery)
 	}
 
-	_ = listener.Close()
-	<-serverDone
 }
 
 func TestQueuePullOnlyDeliversOnPullRequest(t *testing.T) {
@@ -1088,22 +1072,8 @@ func TestQueuePullOnlyDeliversOnPullRequest(t *testing.T) {
 		*flagQueue = oldQueue
 	}()
 
-	var listener, err = net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
-
-	var serverDone = make(chan struct{})
-	go func() {
-		defer close(serverDone)
-		for {
-			var conn, acceptErr = listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go handleConnection(conn)
-		}
-	}()
+	var listener, stopServer = startJoinedTestServer(t, handleConnection)
+	defer stopServer()
 
 	var consumer, consumerErr = net.Dial("tcp", listener.Addr().String())
 	if consumerErr != nil {
@@ -1155,8 +1125,6 @@ func TestQueuePullOnlyDeliversOnPullRequest(t *testing.T) {
 		t.Fatalf("expected two pulled queue deliveries, got %d", pulled)
 	}
 
-	_ = listener.Close()
-	<-serverDone
 }
 
 func TestQueueDisconnectRequeuesLeaseImmediately(t *testing.T) {
@@ -1177,22 +1145,8 @@ func TestQueueDisconnectRequeuesLeaseImmediately(t *testing.T) {
 		resetQueueStateForTest()
 	}()
 
-	var listener, err = net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
-
-	var serverDone = make(chan struct{})
-	go func() {
-		defer close(serverDone)
-		for {
-			var conn, acceptErr = listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go handleConnection(conn)
-		}
-	}()
+	var listener, stopServer = startJoinedTestServer(t, handleConnection)
+	defer stopServer()
 
 	var consumerA, consumerAErr = net.Dial("tcp", listener.Addr().String())
 	if consumerAErr != nil {
@@ -1242,8 +1196,6 @@ func TestQueueDisconnectRequeuesLeaseImmediately(t *testing.T) {
 		t.Fatalf("expected immediate queue redelivery on consumer B after disconnect, got %s", redelivery)
 	}
 
-	_ = listener.Close()
-	<-serverDone
 }
 
 func TestLogonChallengeFlowRequiresChallengeResponse(t *testing.T) {
